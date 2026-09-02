@@ -4,6 +4,101 @@ info:
   version: 1.0.0
   description: Role-based academic learning platform with source-grounded AI tutoring.
 paths:
+  /api/admin/ai/status/:
+    get:
+      operationId: get_admin_ai_status
+      description: Fresh (uncached) Ollama status for the admin dashboard.
+      tags:
+      - admin
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
   /api/admin/analytics/overview/:
     get:
       operationId: get_admin_analytics_overview
@@ -12288,6 +12383,12 @@ paths:
   /api/health/:
     get:
       operationId: get_health
+      description: |-
+        Liveness plus a cached view of the AI host.
+
+        ``status`` stays ``ok`` when Ollama is down because the application keeps
+        serving reading, quizzes and grading through its fallbacks; ``ai.ready``
+        is the field to alert on.
       tags:
       - health
       security:

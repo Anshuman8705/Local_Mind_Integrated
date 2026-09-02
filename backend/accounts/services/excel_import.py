@@ -5,6 +5,7 @@ Parsing (this module) is deliberately separate from user creation
 row-level errors; the importer feeds valid rows through create_user with a
 savepoint per row so one bad row never poisons the batch.
 """
+import re
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -21,10 +22,15 @@ OPTIONAL_HEADERS = {
     Role.FACULTY: {"employee_id", "department", "designation", "phone", "subject_codes"},
     Role.STUDENT: {"roll_number", "program", "batch", "phone"},
 }
+# Keys are in canonical form: lower-case, with spaces, hyphens and dots
+# collapsed to single underscores (see _normalize_header).
 HEADER_ALIASES = {
-    "full_name": "name", "full name": "name", "e-mail": "email", "email address": "email",
-    "roll no": "roll_number", "roll number": "roll_number", "employee id": "employee_id",
-    "subjects": "subject_codes", "subject codes": "subject_codes",
+    "full_name": "name", "student_name": "name", "faculty_name": "name",
+    "e_mail": "email", "email_address": "email", "e_mail_address": "email", "mail": "email",
+    "roll_no": "roll_number", "roll": "roll_number", "rollno": "roll_number",
+    "employee_id": "employee_id", "emp_id": "employee_id", "employee_no": "employee_id",
+    "subjects": "subject_codes", "subject_code": "subject_codes", "subject": "subject_codes",
+    "programme": "program", "course": "program", "phone_number": "phone", "mobile": "phone",
 }
 MAX_ROWS = 5000
 
@@ -57,8 +63,9 @@ class ImportReport:
 
 
 def _normalize_header(value):
-    key = str(value or "").strip().lower().replace("-", "_")
-    return HEADER_ALIASES.get(key, key.replace(" ", "_"))
+    """'E-mail Address' -> 'email', 'Roll No.' -> 'roll_number', 'Batch' -> 'batch'."""
+    key = re.sub(r"[\s\-.]+", "_", str(value or "").strip().lower()).strip("_")
+    return HEADER_ALIASES.get(key, key)
 
 
 def parse_workbook(file_obj, role) -> list[ParsedRow]:

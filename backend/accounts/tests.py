@@ -253,3 +253,14 @@ class ExcelImportTests(TestCase):
         buf.name = "users.csv"
         res = self.client.post("/api/admin/students/import/", {"file": buf}, format="multipart")
         self.assertEqual(res.status_code, 400)
+
+
+class ImportHeaderNormalisationTests(TestCase):
+    def test_documented_header_variants_are_accepted(self):
+        from accounts.services.excel_import import _normalize_header
+        cases = {"Full Name": "name", "E-mail": "email", "E-mail Address": "email", "Email": "email",
+                 "Roll No": "roll_number", "Roll No.": "roll_number", "Roll Number": "roll_number",
+                 "Employee ID": "employee_id", "Subjects": "subject_codes", "Subject Codes": "subject_codes",
+                 "Batch": "batch", "Phone": "phone", "Department": "department"}
+        for raw, expected in cases.items():
+            self.assertEqual(_normalize_header(raw), expected, raw)

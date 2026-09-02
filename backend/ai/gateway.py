@@ -4,11 +4,26 @@ Callers describe *what* they want (system prompt, user prompt, JSON schema,
 which model class) and get back an AIResult. They never see HTTP, provider
 payloads, or raw strings. Swapping Ollama for another provider means adding a
 class here that implements AIProvider.
+
+The production model is qwen3:1.7b served by Ollama. Two things about a model
+that small shape this module:
+
+* It must be given an explicit context window (``num_ctx``). Ollama's default
+  is 4096 tokens, which silently truncates the 12-14k character source
+  prompts this application sends, and the model then answers from a partial
+  text without any error.
+* It sometimes returns JSON that parses but misses the schema, or wraps the
+  JSON in a ``<think>`` block or a markdown fence. The gateway strips the
+  wrappers, validates against the schema, and retries once at temperature 0
+  before giving up. Timeouts and connection errors are never retried.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -16,20 +31,108 @@ from django.conf import settings
 
 logger = logging.getLogger("localmind.ai")
 
+# Error codes, in the order a caller is likely to meet them:
+#   disabled       AI_ENABLED is false (or the test runner is active)
+#   unavailable    Ollama unreachable, model not pulled, or HTTP >= 400
+#   timeout        the request exceeded TIMEOUT_SECONDS
+#   empty          the model returned no content
+#   truncated      the model hit NUM_PREDICT before closing the JSON
+#   malformed      content was not valid JSON after cleanup
+#   invalid_schema JSON parsed but did not satisfy the schema
+RETRYABLE = {"empty", "truncated", "malformed", "invalid_schema"}
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+def _ai_setting(name: str, default: Any) -> Any:
+    """Read an AI setting with a default so partial override_settings in tests keep working."""
+    return settings.AI.get(name, default)
+
+
+def clean_model_output(content: str) -> str:
+    """Strip reasoning blocks and markdown fences that small models add around JSON."""
+    text = _THINK_RE.sub("", content or "")
+    # An unterminated <think> (cut off by num_predict) leaves nothing useful.
+    if "<think>" in text and "</think>" not in text:
+        text = text.split("<think>", 1)[0]
+    text = text.strip()
+    text = _FENCE_RE.sub("", text).strip()
+    # Tolerate a stray sentence before the JSON object/array.
+    if text and text[0] not in "{[":
+        for opener in ("{", "["):
+            pos = text.find(opener)
+            if pos != -1:
+                text = text[pos:]
+                break
+    return text
+
+
+def trim_source(text: str, limit: int | None = None) -> str:
+    """Cut source text to the configured character budget on a paragraph or
+    sentence boundary so the model never sees a half-word at the end."""
+    text = text or ""
+    limit = limit or _ai_setting("MAX_SOURCE_CHARS", 14000)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for sep in ("\n\n", "\n", ". "):
+        pos = cut.rfind(sep)
+        if pos > limit // 2:
+            return cut[: pos + (len(sep) if sep == ". " else 0)].rstrip()
+    return cut
+
 
 @dataclass
 class AIResult:
     ok: bool
     data: dict | None = None
-    error_code: str = ""  # disabled | unavailable | timeout | malformed | invalid_schema | empty
+    error_code: str = ""  # see RETRYABLE and the list above
     error: str = ""
     provider: str = ""
     model: str = ""
     raw: str = field(default="", repr=False)
+    attempts: int = 1
+    latency_ms: int = 0
 
     @property
     def failed(self):
         return not self.ok
+
+
+@dataclass
+class AIHealth:
+    enabled: bool
+    provider: str
+    base_url: str
+    reachable: bool
+    models: list[str] = field(default_factory=list)
+    tutor_model: str = ""
+    outline_model: str = ""
+    error: str = ""
+    checked_at: float = 0.0
+
+    def model_present(self, name: str) -> bool:
+        """Ollama lists 'qwen3:1.7b'; a bare 'qwen3' request matches 'qwen3:latest'."""
+        if not self.reachable:
+            return False
+        wanted = name if ":" in name else f"{name}:latest"
+        return wanted in self.models
+
+    @property
+    def ready(self) -> bool:
+        return self.enabled and self.reachable and self.model_present(self.tutor_model) and self.model_present(self.outline_model)
+
+    def as_dict(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "provider": self.provider,
+            "reachable": self.reachable,
+            "ready": self.ready,
+            "tutor_model": {"name": self.tutor_model, "present": self.model_present(self.tutor_model)},
+            "outline_model": {"name": self.outline_model, "present": self.model_present(self.outline_model)},
+            "error": self.error,
+        }
 
 
 class AIProvider(Protocol):
@@ -38,6 +141,8 @@ class AIProvider(Protocol):
     def generate_structured(self, *, model: str, messages: list[dict], schema: dict,
                             temperature: float, timeout: int) -> AIResult: ...
 
+    def list_models(self, timeout: int = 3) -> tuple[bool, list[str], str]: ...
+
 
 class OllamaProvider:
     name = "ollama"
@@ -45,9 +150,20 @@ class OllamaProvider:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
 
+    def _options(self, temperature: float) -> dict:
+        return {
+            "temperature": temperature,
+            "top_p": 0.1 if temperature == 0 else 0.9,
+            "num_ctx": _ai_setting("NUM_CTX", 16384),
+            "num_predict": _ai_setting("NUM_PREDICT", 4096),
+            # Fewer degenerate repetitions from small models on long lists.
+            "repeat_penalty": 1.1,
+        }
+
     def generate_structured(self, *, model, messages, schema, temperature, timeout):
         import requests
 
+        started = time.monotonic()
         try:
             response = requests.post(
                 f"{self.base_url}/api/chat",
@@ -56,31 +172,81 @@ class OllamaProvider:
                     "messages": messages,
                     "format": schema,
                     "stream": False,
+                    # qwen3 is a reasoning model; with structured output the
+                    # reasoning tokens only cost latency. Requires Ollama >= 0.9.
                     "think": False,
-                    "options": {"temperature": temperature, "top_p": 0.1 if temperature == 0 else 0.9},
-                    "keep_alive": "30m",
+                    "options": self._options(temperature),
+                    "keep_alive": _ai_setting("KEEP_ALIVE", "30m"),
                 },
                 timeout=timeout,
             )
         except requests.Timeout:
-            return AIResult(ok=False, error_code="timeout", error="Model request timed out.", provider=self.name, model=model)
+            return AIResult(ok=False, error_code="timeout", error=f"Model request exceeded {timeout}s.", provider=self.name, model=model,
+                            latency_ms=int((time.monotonic() - started) * 1000))
         except requests.RequestException as exc:
             return AIResult(ok=False, error_code="unavailable", error=str(exc), provider=self.name, model=model)
+        latency = int((time.monotonic() - started) * 1000)
 
         if response.status_code == 404:
-            return AIResult(ok=False, error_code="unavailable", error=f"Model {model} is not available.", provider=self.name, model=model)
+            return AIResult(ok=False, error_code="unavailable", error=f"Model {model} is not available; run `ollama pull {model}`.",
+                            provider=self.name, model=model, latency_ms=latency)
         if response.status_code >= 400:
-            return AIResult(ok=False, error_code="unavailable", error=f"Provider returned {response.status_code}.", provider=self.name, model=model)
+            detail = ""
+            try:
+                detail = response.json().get("error", "")
+            except ValueError:
+                pass
+            return AIResult(ok=False, error_code="unavailable", error=f"Provider returned {response.status_code}. {detail}".strip(),
+                            provider=self.name, model=model, latency_ms=latency)
 
         try:
-            content = response.json()["message"]["content"]
-        except (ValueError, KeyError):
-            return AIResult(ok=False, error_code="malformed", error="Provider response had no message content.", provider=self.name, model=model)
+            payload = response.json()
+            content = payload["message"]["content"]
+        except (ValueError, KeyError, TypeError):
+            return AIResult(ok=False, error_code="malformed", error="Provider response had no message content.", provider=self.name, model=model, latency_ms=latency)
+
+        content = clean_model_output(content)
+        if not content:
+            return AIResult(ok=False, error_code="empty", error="Model returned no content.", provider=self.name, model=model, latency_ms=latency)
+        if payload.get("done_reason") == "length":
+            return AIResult(ok=False, error_code="truncated", error="Model output hit the token limit before completing.",
+                            provider=self.name, model=model, raw=content[:2000], latency_ms=latency)
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
-            return AIResult(ok=False, error_code="malformed", error="Model output was not valid JSON.", provider=self.name, model=model, raw=content[:2000])
-        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content)
+            return AIResult(ok=False, error_code="malformed", error="Model output was not valid JSON.", provider=self.name, model=model, raw=content[:2000], latency_ms=latency)
+        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content, latency_ms=latency)
+
+    def list_models(self, timeout: int = 3) -> tuple[bool, list[str], str]:
+        import requests
+
+        try:
+            response = requests.get(f"{self.base_url}/api/tags", timeout=timeout)
+        except requests.RequestException as exc:
+            return False, [], str(exc)
+        if response.status_code >= 400:
+            return False, [], f"Provider returned {response.status_code}."
+        try:
+            names = [m.get("name", "") for m in response.json().get("models", [])]
+        except (ValueError, AttributeError):
+            return False, [], "Unexpected response from /api/tags."
+        return True, [n for n in names if n], ""
+
+    def pull_model(self, model: str, timeout: int = 1800) -> tuple[bool, str]:
+        """Blocking pull used by the check_ai management command, never by request handlers."""
+        import requests
+
+        try:
+            response = requests.post(f"{self.base_url}/api/pull", json={"model": model, "stream": False}, timeout=timeout)
+        except requests.RequestException as exc:
+            return False, str(exc)
+        if response.status_code >= 400:
+            return False, f"Provider returned {response.status_code}."
+        try:
+            status = response.json().get("status", "")
+        except ValueError:
+            status = ""
+        return status == "success", status or "unknown"
 
 
 class DisabledProvider:
@@ -88,6 +254,9 @@ class DisabledProvider:
 
     def generate_structured(self, **kwargs):
         return AIResult(ok=False, error_code="disabled", error="AI is disabled by configuration.", provider=self.name, model=kwargs.get("model", ""))
+
+    def list_models(self, timeout: int = 3):
+        return False, [], "AI is disabled by configuration."
 
 
 _provider_cache: dict[str, AIProvider] = {}
@@ -104,6 +273,11 @@ def get_provider() -> AIProvider:
         else:
             raise RuntimeError(f"Unknown AI provider {cfg['PROVIDER']}")
     return _provider_cache[key]
+
+
+def model_for(kind: str) -> str:
+    cfg = settings.AI
+    return cfg["OUTLINE_MODEL"] if kind == "outline" else cfg["TUTOR_MODEL"]
 
 
 # ---- minimal schema validation (subset of JSON Schema we actually use) ----
@@ -159,24 +333,78 @@ class AIGateway:
     def generate(self, *, purpose: str, system_prompt: str, user_prompt: str, schema: dict,
                  model_kind: str = "tutor", temperature: float = 0.0, timeout: int | None = None) -> AIResult:
         cfg = settings.AI
-        model = cfg["OUTLINE_MODEL"] if model_kind == "outline" else cfg["TUTOR_MODEL"]
-        result = self.provider.generate_structured(
-            model=model,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            schema=schema,
-            temperature=temperature,
-            timeout=timeout or cfg["TIMEOUT_SECONDS"],
-        )
-        if result.ok:
-            problems = validate_against_schema(result.data, schema)
-            if problems:
-                logger.warning("AI output for %s failed schema validation: %s", purpose, problems[:5])
-                return AIResult(ok=False, error_code="invalid_schema", error="; ".join(problems[:5]),
-                                provider=result.provider, model=result.model, raw=result.raw)
-        else:
-            logger.warning("AI call for %s failed: %s (%s)", purpose, result.error_code, result.error)
+        model = model_for(model_kind)
+        timeout = timeout or cfg["TIMEOUT_SECONDS"]
+        max_attempts = 1 + max(0, int(_ai_setting("MAX_RETRIES", 1)))
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+        result: AIResult | None = None
+        for attempt in range(1, max_attempts + 1):
+            attempt_temperature = temperature if attempt == 1 else 0.0
+            attempt_messages = messages
+            if attempt > 1 and result is not None:
+                # Tell the model precisely what was wrong; small models fix
+                # concrete complaints far better than generic "try again".
+                hint = f"Your previous reply was rejected ({result.error_code}: {result.error}). " \
+                       "Reply with one JSON value that exactly matches the required schema and nothing else."
+                attempt_messages = messages + [{"role": "user", "content": hint}]
+            result = self.provider.generate_structured(
+                model=model, messages=attempt_messages, schema=schema, temperature=attempt_temperature, timeout=timeout)
+            result.attempts = attempt
+            if result.ok:
+                problems = validate_against_schema(result.data, schema)
+                if problems:
+                    result = AIResult(ok=False, error_code="invalid_schema", error="; ".join(problems[:5]),
+                                      provider=result.provider, model=result.model, raw=result.raw,
+                                      attempts=attempt, latency_ms=result.latency_ms)
+            if result.ok:
+                logger.info("AI %s ok model=%s attempt=%d latency_ms=%d", purpose, model, attempt, result.latency_ms)
+                return result
+            if result.error_code not in RETRYABLE:
+                break
+            logger.warning("AI %s attempt %d/%d rejected: %s (%s)", purpose, attempt, max_attempts, result.error_code, result.error)
+
+        logger.warning("AI call for %s failed after %d attempt(s): %s (%s)", purpose, result.attempts, result.error_code, result.error)
         return result
 
 
 def gateway() -> AIGateway:
     return AIGateway()
+
+
+# ---- health -----------------------------------------------------------------
+
+_health_lock = threading.Lock()
+_health_cache: AIHealth | None = None
+
+
+def health(force: bool = False, timeout: int = 3) -> AIHealth:
+    """Reachability of Ollama and presence of the configured models.
+
+    Cached for HEALTH_CACHE_SECONDS so /api/health/ polling never turns into a
+    load on the model host. Never raises.
+    """
+    global _health_cache
+    cfg = settings.AI
+    ttl = _ai_setting("HEALTH_CACHE_SECONDS", 30)
+    with _health_lock:
+        if not force and _health_cache and time.monotonic() - _health_cache.checked_at < ttl:
+            return _health_cache
+        provider = get_provider() if cfg["ENABLED"] else DisabledProvider()
+        if isinstance(provider, DisabledProvider):
+            reachable, models, error = False, [], "AI is disabled by configuration."
+        else:
+            reachable, models, error = provider.list_models(timeout=timeout)
+        _health_cache = AIHealth(
+            enabled=bool(cfg["ENABLED"]), provider=cfg["PROVIDER"], base_url=cfg["OLLAMA_BASE_URL"],
+            reachable=reachable, models=models, tutor_model=cfg["TUTOR_MODEL"], outline_model=cfg["OUTLINE_MODEL"],
+            error=error, checked_at=time.monotonic())
+        if cfg["ENABLED"] and not _health_cache.ready:
+            logger.warning("AI not ready: reachable=%s models=%s error=%s", reachable, models, error)
+        return _health_cache
+
+
+def reset_health_cache() -> None:
+    global _health_cache
+    with _health_lock:
+        _health_cache = None

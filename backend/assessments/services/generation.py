@@ -1,8 +1,9 @@
 """Question generation: AI first, deterministic fallback second, both flagged."""
+import hashlib
 import logging
 import random
 
-from ai.gateway import gateway
+from ai.gateway import gateway, trim_source
 from core.exceptions import ValidationFailed
 
 logger = logging.getLogger("localmind.assessments")
@@ -57,6 +58,9 @@ def normalize_questions(raw_questions):
             if sorted(keys) != MCQ_KEYS or any(not o["text"] for o in norm):
                 errors.append(f"q{idx}: options must be A-D with text")
                 continue
+            if len({o["text"].casefold() for o in norm}) != 4:
+                errors.append(f"q{idx}: options must be distinct")
+                continue
             correct = str(q.get("correct_answer") or "").strip().upper()
             if correct not in MCQ_KEYS:
                 errors.append(f"q{idx}: correct_answer must be one of A-D")
@@ -85,7 +89,7 @@ def fallback_questions(source_text, title, num_mcqs, num_subjective):
     sentences = [s.strip() for s in source_text.replace("\n", " ").split(".") if len(s.strip()) > 30]
     if not sentences:
         sentences = [source_text.strip()[:200] or title]
-    rng = random.Random(hash(source_text) & 0xFFFF)
+    rng = random.Random(int(hashlib.sha256(source_text.encode('utf-8')).hexdigest()[:8], 16))
     questions = []
     for i in range(num_mcqs):
         sent = sentences[i % len(sentences)]
@@ -104,30 +108,74 @@ def fallback_questions(source_text, title, num_mcqs, num_subjective):
     return normalize_questions(questions)
 
 
+def _dedupe(questions, previous_questions):
+    """Drop questions that repeat an earlier quiz or another question in the same
+    set (case- and whitespace-insensitive). Returns (kept, repeated_earlier, repeated_within)."""
+    earlier = {" ".join(str(q).split()).casefold() for q in (previous_questions or [])}
+    seen, kept, hit_earlier, hit_within = set(), [], 0, 0
+    for q in questions:
+        key = " ".join(q["question"].split()).casefold()
+        if key in earlier:
+            hit_earlier += 1
+            continue
+        if key in seen:
+            hit_within += 1
+            continue
+        seen.add(key)
+        kept.append(q)
+    return kept, hit_earlier, hit_within
+
+
 def generate_questions(source_text, title, num_mcqs=6, num_subjective=0, previous_questions=None):
-    """Returns (questions, generator, ai_error_or_empty)."""
+    """Returns (questions, generator, ai_error_or_empty).
+
+    generator is "ai" when qwen3 produced a valid set (possibly fewer than
+    requested after de-duplication, noted in the third value) and "fallback"
+    when the model was unavailable or its output failed validation twice.
+    """
     if not source_text.strip():
         raise ValidationFailed("Cannot generate questions without source text.", code="NO_SOURCE")
     exclusion = ""
     if previous_questions:
-        exclusion = "\nDo NOT repeat or rephrase these previously asked questions:\n" + "\n".join(f"- {q}" for q in previous_questions[:20]) + "\n"
+        exclusion = "\nPREVIOUSLY ASKED (do not repeat or rephrase any of these):\n" + "\n".join(f"- {q}" for q in previous_questions[:20]) + "\n"
 
     props, req, tasks = {}, [], []
     if num_mcqs > 0:
-        props["mcq_questions"] = mcq_schema(num_mcqs); req.append("mcq_questions"); tasks.append(f"{num_mcqs} multiple-choice questions with options keyed A-D")
+        props["mcq_questions"] = mcq_schema(num_mcqs); req.append("mcq_questions"); tasks.append(f"exactly {num_mcqs} multiple-choice questions")
     if num_subjective > 0:
-        props["subjective_questions"] = subjective_schema(num_subjective); req.append("subjective_questions"); tasks.append(f"{num_subjective} open-ended questions with a grading rubric")
+        props["subjective_questions"] = subjective_schema(num_subjective); req.append("subjective_questions"); tasks.append(f"exactly {num_subjective} open-ended questions")
     schema = {"type": "object", "properties": props, "required": req}
 
-    system = ("You are a strict exam generator. Every question, option, answer, rubric, explanation and source_reference "
-              "must be grounded solely in the SOURCE TEXT. Never use outside knowledge.")
-    user = f"TITLE: {title}\n\nSOURCE TEXT:\n\"\"\"{source_text[:12000]}\"\"\"\n{exclusion}\nTASK: Generate {' and '.join(tasks)}."
+    system = (
+        "You write exam questions from a textbook excerpt. Follow every rule.\n"
+        "1. Use only facts stated in the SOURCE TEXT. Never use outside knowledge.\n"
+        "2. Each multiple-choice question has four options with keys A, B, C, D in that order. "
+        "Exactly one option is correct; the other three are plausible but wrong according to the source. "
+        "All four option texts must be different.\n"
+        "3. correct_answer is the single letter of the correct option.\n"
+        "4. explanation says in one or two sentences why the correct option is right, citing the source.\n"
+        "5. source_reference is a short phrase copied from the SOURCE TEXT that the question is based on.\n"
+        "6. Open-ended questions need an expected_rubric: the two to four points a full answer must contain.\n"
+        "7. Cover different parts of the source; do not ask two questions about the same sentence.\n"
+        "8. Output JSON only."
+    )
+    user = f"TITLE: {title}\n\nSOURCE TEXT:\n\"\"\"{trim_source(source_text)}\"\"\"\n{exclusion}\nTASK: Write {' and '.join(tasks)} about the source text above."
     result = gateway().generate(purpose="quiz", system_prompt=system, user_prompt=user, schema=schema, temperature=0.7)
     if result.ok:
         raw = [dict(q, type="mcq") for q in result.data.get("mcq_questions", [])] + \
               [dict(q, type="subjective") for q in result.data.get("subjective_questions", [])]
         try:
-            return normalize_questions(raw), "ai", ""
+            questions, hit_earlier, hit_within = _dedupe(normalize_questions(raw), previous_questions)
+            if questions:
+                notes = []
+                if hit_earlier:
+                    notes.append(f"dropped {hit_earlier} question(s) that repeated an earlier quiz")
+                if hit_within:
+                    notes.append(f"dropped {hit_within} duplicate question(s)")
+                if notes:
+                    questions = normalize_questions(questions)  # re-number q1..qN after the drop
+                return questions, "ai", "; ".join(notes)
+            error = "every generated question was a duplicate or repeated an earlier quiz"
         except ValidationFailed as exc:
             logger.warning("AI questions failed validation: %s", exc.details)
             error = f"invalid_questions: {exc.details}"

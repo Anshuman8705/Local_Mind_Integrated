@@ -1,6 +1,6 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
+import { getItem, migrateLegacy, setItem } from "./storage";
 
 export class ApiError extends Error {
   code: string; status: number; details?: Record<string, unknown>;
@@ -9,7 +9,8 @@ export class ApiError extends Error {
   }
 }
 
-const KEY = "localmind.tokens";
+const LEGACY_KEY = "localmind.tokens";
+const K = { access: "localmind.access", refresh: "localmind.refresh", session: "localmind.session" };
 export interface Tokens { access: string; refresh: string; session_id?: string | null }
 
 function resolveBaseUrl(): string {
@@ -27,8 +28,17 @@ let refreshing: Promise<boolean> | null = null;
 
 export const tokenStore = {
   get: () => tokens,
-  async load() { const raw = await AsyncStorage.getItem(KEY); tokens = raw ? JSON.parse(raw) : null; return tokens; },
-  async set(t: Tokens | null) { tokens = t; if (t) await AsyncStorage.setItem(KEY, JSON.stringify(t)); else await AsyncStorage.removeItem(KEY); },
+  async load() {
+    const legacy = await migrateLegacy(LEGACY_KEY);
+    if (legacy) { try { await tokenStore.set(JSON.parse(legacy)); return tokens; } catch { /* fall through */ } }
+    const [access, refresh, session_id] = await Promise.all([getItem(K.access), getItem(K.refresh), getItem(K.session)]);
+    tokens = access && refresh ? { access, refresh, session_id } : null;
+    return tokens;
+  },
+  async set(t: Tokens | null) {
+    tokens = t;
+    await Promise.all([setItem(K.access, t?.access ?? null), setItem(K.refresh, t?.refresh ?? null), setItem(K.session, t?.session_id ?? null)]);
+  },
   setSessionLostHandler(fn: (() => void) | null) { onSessionLost = fn; },
 };
 

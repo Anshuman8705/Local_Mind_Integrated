@@ -44,4 +44,4 @@ Uploads use `expo-document-picker` and send multipart with the picked file; on w
 
 ## What is not here yet
 
-Date and time inputs for `available_from` and `due_at` are plain ISO text fields. There is no offline cache; every screen fetches on focus. Push notifications, a light theme and localisation are not implemented. None of these need backend changes.
+Date and time inputs for `available_from` and `due_at` are plain ISO text fields. Tokens are kept in the device keychain/keystore through `expo-secure-store` on iOS and Android and in `AsyncStorage` on web. There is no offline cache; every screen fetches on focus. Push notifications, a light theme and localisation are not implemented. None of these need backend changes.

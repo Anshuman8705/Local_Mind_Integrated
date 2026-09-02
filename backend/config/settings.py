@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     "core",
+    "ai",
     "accounts",
     "academics",
     "audit",
@@ -144,13 +145,28 @@ SPECTACULAR_SETTINGS = {
 CORS_ALLOWED_ORIGINS = env_list("DJANGO_CORS_ALLOWED_ORIGINS", "http://localhost:8081")
 CORS_ALLOW_CREDENTIALS = False
 
+# Origins allowed to POST to the Django admin site and any session-backed view
+# when the API sits behind a TLS-terminating proxy (scheme + host, no path).
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS", "")
+
 if not DEBUG:
+    if len(SECRET_KEY) < 32:
+        raise RuntimeError("DJANGO_SECRET_KEY must be at least 32 characters when DEBUG is false.")
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_BROWSER_XSS_FILTER = True
     X_FRAME_OPTIONS = "DENY"
     SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", True)
     CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", True)
     SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", False)
+    # nginx/Caddy terminate TLS and forward X-Forwarded-Proto; without this
+    # Django believes every request is plain http and SECURE_SSL_REDIRECT loops.
+    if env_bool("TRUST_PROXY_SSL_HEADER", True):
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # HSTS is off by default because many campus deployments run plain http on
+    # a LAN; set to 31536000 once the site is https-only.
+    SECURE_HSTS_SECONDS = env_int("SECURE_HSTS_SECONDS", 0)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+    SECURE_HSTS_PRELOAD = False
+    SECURE_REFERRER_POLICY = "same-origin"
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = env_int("MAX_UPLOAD_MB", 100) * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
@@ -164,15 +180,40 @@ LOCALMIND = {
     "SESSION_HEARTBEAT_TIMEOUT_MINUTES": env_int("SESSION_HEARTBEAT_TIMEOUT_MINUTES", 10),
     "MAX_QUIZ_DURATION_HOURS": env_int("MAX_QUIZ_DURATION_HOURS", 6),
     "DEFAULT_PASS_PERCENTAGE": env_int("DEFAULT_PASS_PERCENTAGE", 65),
+    # A document still "processing" after this long is treated as abandoned by
+    # a recycled worker and may be claimed again by the next process/ call or
+    # by `manage.py requeue_stuck_documents`.
+    "PROCESSING_STALE_MINUTES": env_int("PROCESSING_STALE_MINUTES", 30),
 }
 
 AI = {
     "ENABLED": env_bool("AI_ENABLED", True) and not TESTING,
     "PROVIDER": env_str("AI_PROVIDER", "ollama"),
     "OLLAMA_BASE_URL": env_str("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+    # qwen3:1.7b is the production default for every AI feature. The tutor
+    # model handles lessons, questions, evaluation and remediation; the
+    # outline model runs only during book processing and may be larger.
     "TUTOR_MODEL": env_str("OLLAMA_TUTOR_MODEL", "qwen3:1.7b"),
     "OUTLINE_MODEL": env_str("OLLAMA_OUTLINE_MODEL", "qwen3:1.7b"),
-    "TIMEOUT_SECONDS": env_int("OLLAMA_TIMEOUT_SECONDS", 90),
+    "TIMEOUT_SECONDS": env_int("OLLAMA_TIMEOUT_SECONDS", 120),
+    # Ollama's default context is 4096 tokens, which silently drops the tail
+    # of a 12-14k character source prompt. qwen3:1.7b supports 32k; 16k
+    # comfortably fits the largest prompt this app sends plus its output.
+    "NUM_CTX": env_int("OLLAMA_NUM_CTX", 16384),
+    # Hard cap on generated tokens so a runaway completion cannot hold a
+    # worker for the full timeout. Lessons and 10-question quizzes fit.
+    "NUM_PREDICT": env_int("OLLAMA_NUM_PREDICT", 4096),
+    # How long Ollama keeps the model resident after a call.
+    "KEEP_ALIVE": env_str("OLLAMA_KEEP_ALIVE", "30m"),
+    # Small models occasionally emit JSON that misses the schema; one retry
+    # at temperature 0 recovers most of those without doubling latency on
+    # genuine outages (timeouts and connection errors are never retried).
+    "MAX_RETRIES": env_int("OLLAMA_MAX_RETRIES", 1),
+    # Character budget for source text embedded in prompts. Roughly 3.5
+    # chars per token for English prose, so 14000 chars is ~4000 tokens.
+    "MAX_SOURCE_CHARS": env_int("AI_MAX_SOURCE_CHARS", 14000),
+    # Seconds to cache the Ollama reachability probe used by /api/health/.
+    "HEALTH_CACHE_SECONDS": env_int("AI_HEALTH_CACHE_SECONDS", 30),
 }
 
 if TESTING:

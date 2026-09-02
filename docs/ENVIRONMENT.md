@@ -45,6 +45,7 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 | `FACULTY_CAN_PUBLISH` | `true` | When false, faculty may mark a book ready but only administrators can publish (`PUBLISH_ADMIN_ONLY`). |
 | `DEFAULT_PASS_PERCENTAGE` | `65` | Pass mark applied when a quiz does not set its own. |
 | `MAX_QUIZ_DURATION_HOURS` | `6` | Upper bound on server-computed attempt time, so an abandoned tab does not record days. |
+| `PROCESSING_STALE_MINUTES` | `30` | A document still `processing` after this long is treated as abandoned by a recycled worker: the next `process/` call re-claims it and `manage.py requeue_stuck_documents` re-runs it. Large scanned PDFs on a slow CPU can legitimately take longer; raise this rather than lower it. |
 
 ## AI
 
@@ -53,9 +54,15 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 | `AI_ENABLED` | `true` | Master switch. When false every AI-dependent feature uses its fallback (source-hierarchy outlines, placeholder quizzes that cannot be published, deterministic lessons) and free-form questions return `AI_UNAVAILABLE`. Always forced false under the test runner. |
 | `AI_PROVIDER` | `ollama` | Only `ollama` is implemented; the gateway is the place to add another. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | |
-| `OLLAMA_TUTOR_MODEL` | `qwen3:1.7b` | Used for lessons, questions, subjective evaluation and remediation. |
-| `OLLAMA_OUTLINE_MODEL` | `qwen3:1.7b` | Used for outline and question generation; a larger model here improves structure quality at the cost of processing time. |
-| `OLLAMA_TIMEOUT_SECONDS` | `90` | Per-call timeout; a timeout is reported as `error_code: timeout` and triggers the fallback. |
+| `OLLAMA_TUTOR_MODEL` | `qwen3:1.7b` | Used for lessons, free-form questions, quiz and assignment generation, subjective evaluation and remediation. Must match an `ollama list` entry exactly. |
+| `OLLAMA_OUTLINE_MODEL` | `qwen3:1.7b` | Used only while a book is processed to group headings into chapters and modules. A larger model (`qwen3:4b`) improves structure quality at the cost of processing time; the default keeps a single model resident. |
+| `OLLAMA_TIMEOUT_SECONDS` | `120` | Per-call timeout; a timeout is reported as `error_code: timeout` and triggers the fallback. Keep this below the gunicorn worker timeout. |
+| `OLLAMA_NUM_CTX` | `16384` | Context window requested per call. Ollama's own default is 4096 tokens, which silently truncates the 14k-character source prompts this app sends. qwen3:1.7b supports 32k; do not go below 8192. |
+| `OLLAMA_NUM_PREDICT` | `4096` | Cap on generated tokens so a runaway completion cannot hold a worker until the timeout. A 10-question quiz or a full lesson fits well inside it. |
+| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a call, so the next student does not pay the load time. |
+| `OLLAMA_MAX_RETRIES` | `1` | Retries when the model returns empty, truncated, malformed or off-schema JSON. The retry runs at temperature 0 with the rejection reason in the prompt. Timeouts and connection errors are never retried. `0` disables. |
+| `AI_MAX_SOURCE_CHARS` | `14000` | Character budget for source text embedded in a prompt, cut on a paragraph boundary. Roughly 4000 tokens; raise only together with `OLLAMA_NUM_CTX`. |
+| `AI_HEALTH_CACHE_SECONDS` | `30` | How long `/api/health/` and the admin dashboard reuse the last Ollama reachability probe. |
 
 ## Production security (applied only when DJANGO_DEBUG is false)
 
@@ -64,8 +71,11 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 | `SESSION_COOKIE_SECURE` | `true` | Only relevant to the Django admin site. |
 | `CSRF_COOKIE_SECURE` | `true` | Same. |
 | `SECURE_SSL_REDIRECT` | `false` | Set true when Django itself terminates TLS; leave false behind a reverse proxy that already redirects. |
+| `TRUST_PROXY_SSL_HEADER` | `true` | Honour `X-Forwarded-Proto: https` from the reverse proxy. Set false only if Django is exposed directly, otherwise a client could spoof the header. |
+| `SECURE_HSTS_SECONDS` | `0` | Off by default because LAN deployments often run plain http. Set `31536000` once the site is https-only; includeSubDomains follows automatically. |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | (empty) | Comma-separated `https://host` origins allowed to POST to the Django admin site through the proxy, e.g. `https://lms.example.edu`. The JSON API uses JWT and does not need this. |
 
-HSTS, `X-Content-Type-Options` and the proxy SSL header are enabled unconditionally in production settings.
+`DJANGO_SECRET_KEY` must be at least 32 characters when `DJANGO_DEBUG` is false; startup refuses shorter keys. `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and a same-origin referrer policy are always on in production.
 
 ## A minimal production `.env`
 
@@ -78,6 +88,8 @@ DATABASE_URL=postgres://localmind:<password>@127.0.0.1:5432/localmind
 MEDIA_ROOT=/var/lib/localmind/media
 INITIAL_USER_PASSWORD=<department policy>
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_TUTOR_MODEL=qwen3:4b
-OLLAMA_OUTLINE_MODEL=qwen3:8b
+OLLAMA_TUTOR_MODEL=qwen3:1.7b
+OLLAMA_OUTLINE_MODEL=qwen3:1.7b
+OLLAMA_NUM_CTX=16384
+OLLAMA_TIMEOUT_SECONDS=120
 ```

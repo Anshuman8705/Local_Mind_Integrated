@@ -1,17 +1,36 @@
 import React from "react";
 import { admin } from "@/api/endpoints";
+import type { AIStatus } from "@/api/types";
 import { useAsync } from "@/hooks/useAsync";
-import { Badge, Card, ErrorBanner, H2, ListRow, Loading, P, ProgressBar, Row, Screen, Stat, colors, fmtSeconds, pct } from "@/ui";
+import { Badge, Card, ErrorBanner, H2, ListRow, Loading, Notice, P, ProgressBar, Row, Screen, Stat, colors, fmtSeconds, pct } from "@/ui";
+
+function AITutorStatus({ status, error }: { status?: AIStatus | null; error?: string | null }) {
+  if (!status && !error) return null;
+  const s = status;
+  const tone = !s ? "warning" : s.ready ? "success" : "warning";
+  const message = !s
+    ? `Could not read the AI tutor status: ${error}`
+    : !s.enabled
+      ? "The AI tutor is switched off (AI_ENABLED=false). Lessons, quizzes and grading use their fallbacks."
+      : !s.reachable
+        ? `Ollama is not reachable at the configured address (${s.error || "no response"}). Students see plain-text lessons and generated quizzes are placeholders until it is back.`
+        : !s.ready
+          ? `Ollama is up but a model is missing: ${[s.tutor_model, s.outline_model].filter((m) => !m.present).map((m) => m.name).join(", ")}. Run \`ollama pull <model>\` on the server.`
+          : `AI tutor online · ${s.tutor_model.name}${s.outline_model.name !== s.tutor_model.name ? ` · outline ${s.outline_model.name}` : ""}`;
+  return <Notice tone={tone} message={message} />;
+}
 
 export default function Overview() {
   const q = useAsync(() => admin.platform(), []);
   const subs = useAsync(() => admin.platformSubjects(), []);
+  const ai = useAsync(() => admin.aiStatus(true), []);
   const d = q.data;
   const n = (o: any) => Object.values(o ?? {}).reduce((t: number, v: any) => t + (v as number), 0);
   const modulePct = d?.modules?.total ? (d.modules.open / d.modules.total) * 100 : 0;
   return (
-    <Screen refreshing={q.loading} onRefresh={() => { q.reload(); subs.reload(); }}>
+    <Screen refreshing={q.loading} onRefresh={() => { q.reload(); subs.reload(); ai.reload(); }}>
       <ErrorBanner message={q.error} onRetry={q.reload} />
+      <AITutorStatus status={ai.data} error={ai.error} />
       {q.loading && !d ? <Loading /> : null}
       {d ? (
         <>

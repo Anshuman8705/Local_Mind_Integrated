@@ -4,7 +4,7 @@ import time
 from django.db import transaction
 from django.utils import timezone
 
-from ai.gateway import gateway
+from ai.gateway import gateway, trim_source
 from assessments.models import AssessmentAttempt, AttemptStatus
 from audit import services as audit
 from core.exceptions import AIUnavailable, NotFound, ValidationFailed
@@ -34,8 +34,14 @@ REMEDIATION_SCHEMA = {"type": "object", "properties": {
         "required": ["question", "misconception", "explanation", "source_reference"]}}},
     "required": ["overview", "items"]}
 
-GROUNDING = ("You are a tutor restricted to the SOURCE TEXT provided. Use ONLY that text. If something is not covered, say so "
-             "plainly and set grounded=false. Do not invent facts, dates, names or examples that are not in the source.")
+GROUNDING = (
+    "You are a tutor for one module of a textbook. Follow every rule.\n"
+    "1. Use only the SOURCE TEXT. Do not add facts, dates, names or examples that are not in it.\n"
+    "2. When the source does not cover something, say so plainly instead of guessing.\n"
+    "3. Every source_reference is a short phrase copied from the SOURCE TEXT.\n"
+    "4. Write in plain, simple English for a first-time learner.\n"
+    "5. Output JSON only.\n"
+)
 
 
 def _module(student, module_id):
@@ -64,8 +70,11 @@ def teach(student, module_id, request=None):
     if cached:
         return cached.lesson, {"generator": "ai", "cached": True, "model": cached.model_name}
     result = gateway().generate(
-        purpose="teach", system_prompt=GROUNDING + " Produce a structured lesson a first-time learner can follow.",
-        user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{module.source_text[:14000]}\"\"\"",
+        purpose="teach",
+        system_prompt=GROUNDING + "TASK: Turn the source into a lesson with two to six learning_objectives, two to eight sections "
+                                  "(each with a heading, a clear explanation and a source_reference), the key_terms defined in the "
+                                  "source, and a short summary.",
+        user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{trim_source(module.source_text)}\"\"\"",
         schema=LESSON_SCHEMA, temperature=0.3)
     if result.ok:
         lesson = result.data
@@ -107,13 +116,16 @@ def ask(student, module_id, question, conversation_id=None, request=None):
         conv = Conversation.objects.create(student=student, module=module, title=question[:200])
 
     history = list(conv.messages.order_by("-created_at")[:8])[::-1]
-    history_text = "\n".join(f"{m.role.upper()}: {m.content}" for m in history) or "(none)"
+    history_text = "\n".join(f"{m.role.upper()}: {m.content[:600]}" for m in history) or "(none)"
     Message.objects.create(conversation=conv, role="user", content=question)
 
     started = time.monotonic()
     result = gateway().generate(
-        purpose="ask", system_prompt=GROUNDING + " Answer the student's question concisely. Quote or point to the relevant part of the source.",
-        user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{module.source_text[:14000]}\"\"\"\n\nRECENT CONVERSATION:\n{history_text}\n\nSTUDENT QUESTION:\n{question}",
+        purpose="ask",
+        system_prompt=GROUNDING + "TASK: Answer the STUDENT QUESTION in a few sentences. Set grounded=true only when the answer comes "
+                                  "from the source; if the source does not cover it, answer that it is not covered and set grounded=false. "
+                                  "Offer up to three short follow_up_suggestions the student could ask next about this source.",
+        user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{trim_source(module.source_text)}\"\"\"\n\nRECENT CONVERSATION:\n{history_text}\n\nSTUDENT QUESTION:\n{question}",
         schema=ANSWER_SCHEMA, temperature=0.2)
     latency = int((time.monotonic() - started) * 1000)
     conv.last_message_at = timezone.now()
@@ -144,8 +156,10 @@ def remediation(student, attempt_id, request=None):
         f"- Q: {r['question']}\n  Student answered: {r.get('selected_option') or r.get('student_answer', '')}\n  Correct: {r.get('correct_option') or r.get('expected_rubric', '')}\n  Source: {r.get('source_reference', '')}"
         for r in wrong)
     result = gateway().generate(
-        purpose="remediation", system_prompt=GROUNDING + " Explain each mistake and the correct idea using only the source.",
-        user_prompt=f"SOURCE TEXT:\n\"\"\"{source[:12000]}\"\"\"\n\nINCORRECT ANSWERS:\n{items_text}", schema=REMEDIATION_SCHEMA, temperature=0.2)
+        purpose="remediation",
+        system_prompt=GROUNDING + "TASK: For each INCORRECT ANSWER write one item: repeat the question, name the misconception the "
+                                  "student's answer shows, and explain the correct idea from the source. Start with a two-sentence overview.",
+        user_prompt=f"SOURCE TEXT:\n\"\"\"{trim_source(source)}\"\"\"\n\nINCORRECT ANSWERS:\n{items_text}", schema=REMEDIATION_SCHEMA, temperature=0.2)
     if result.ok:
         data = dict(result.data, generator="ai")
     else:

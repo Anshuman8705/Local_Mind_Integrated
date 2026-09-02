@@ -230,3 +230,49 @@ class AttemptTests(Base):
         listing = self.sc.get("/api/student/quizzes/").data[0]
         self.assertEqual(listing["best_percentage"], 100.0)
         self.assertEqual(listing["attempts_used"], 1)
+
+
+class GenerationRulesTests(TestCase):
+    def test_duplicate_option_texts_are_rejected(self):
+        from assessments.services.generation import normalize_questions
+        from core.exceptions import ValidationFailed
+        q = {"type": "mcq", "question": "Q?", "options": [{"key": k, "text": "same"} for k in "ABCD"], "correct_answer": "A"}
+        with self.assertRaises(ValidationFailed) as ctx:
+            normalize_questions([q])
+        self.assertIn("distinct", str(ctx.exception.details))
+
+    def test_fallback_is_deterministic_across_calls(self):
+        from assessments.services.generation import fallback_questions
+        text = "Processes are programs in execution. Threads share the address space of their process. Scheduling decides which runs next."
+        self.assertEqual(fallback_questions(text, "T", 2, 1), fallback_questions(text, "T", 2, 1))
+
+    @patch("assessments.services.generation.gateway")
+    def test_ai_questions_repeating_previous_quiz_are_dropped(self, gw):
+        from assessments.services.generation import generate_questions
+        mk = lambda text: {"question": text, "options": [{"key": k, "text": f"opt {k}"} for k in "ABCD"], "correct_answer": "B", "explanation": "e", "source_reference": "s"}
+        gw.return_value.generate.return_value = AIResult(ok=True, data={"mcq_questions": [mk("What is a process?"), mk("What is a thread?")]})
+        questions, generator, note = generate_questions("Processes are programs in execution.", "T", num_mcqs=2, previous_questions=["what is a process?"])
+        self.assertEqual(generator, "ai")
+        self.assertEqual([q["question"] for q in questions], ["What is a thread?"])
+        self.assertEqual(questions[0]["id"], "q1")
+        self.assertIn("repeated", note)
+
+    @patch("assessments.services.generation.gateway")
+    def test_ai_output_that_only_repeats_falls_back(self, gw):
+        from assessments.services.generation import generate_questions
+        mk = lambda text: {"question": text, "options": [{"key": k, "text": f"opt {k}"} for k in "ABCD"], "correct_answer": "B", "explanation": "e", "source_reference": "s"}
+        gw.return_value.generate.return_value = AIResult(ok=True, data={"mcq_questions": [mk("What is a process?")]})
+        _, generator, note = generate_questions("Processes are programs in execution. " * 3, "T", num_mcqs=1, previous_questions=["What is a process?"])
+        self.assertEqual(generator, "fallback")
+        self.assertIn("repeated", note)
+
+    @patch("assessments.services.evaluation.gateway")
+    def test_evaluator_marks_incorrect_when_model_lists_missing_points(self, gw):
+        from assessments.services.evaluation import evaluate_subjective
+        gw.return_value.generate.return_value = AIResult(ok=True, provider="ollama", model="qwen3:1.7b", data={
+            "is_correct": True, "score_awarded": 1, "feedback": "Nearly.", "missing_points": ["did not mention scheduling"]})
+        result, ok = evaluate_subjective("src", "Q", "rubric", "an answer")
+        self.assertTrue(ok)
+        self.assertFalse(result["is_correct"])
+        self.assertEqual(result["score_awarded"], 0.0)
+        self.assertEqual(result["evaluator"], "ollama:qwen3:1.7b")

@@ -284,6 +284,38 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/archive/").data["status"], "archived")
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/process/").status_code, 409)
 
+    def test_stuck_processing_is_reclaimable_after_stale_window(self, _):
+        from datetime import timedelta
+        from io import StringIO
+        from django.core.management import call_command
+        from django.utils import timezone
+        doc = Document.objects.get(pk=self.upload().data["id"])
+        Document.objects.filter(pk=doc.pk).update(status=DocumentStatus.PROCESSING, processing_started_at=timezone.now())
+        res = client_for(self.faculty).post(f"/api/faculty/documents/{doc.id}/process/")
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(res.data["error"]["code"], "ALREADY_PROCESSING")
+        Document.objects.filter(pk=doc.pk).update(processing_started_at=timezone.now() - timedelta(hours=2))
+        out = StringIO()
+        call_command("requeue_stuck_documents", "--dry-run", stdout=out)
+        self.assertIn(str(doc.id), out.getvalue())
+        res = client_for(self.faculty).post(f"/api/faculty/documents/{doc.id}/process/")
+        self.assertEqual(res.status_code, 200, res.content)
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, DocumentStatus.UNDER_REVIEW)
+
+    def test_requeue_command_reprocesses_stale_document(self, _):
+        from datetime import timedelta
+        from io import StringIO
+        from django.core.management import call_command
+        from django.utils import timezone
+        doc = Document.objects.get(pk=self.upload().data["id"])
+        Document.objects.filter(pk=doc.pk).update(status=DocumentStatus.PROCESSING, processing_started_at=timezone.now() - timedelta(hours=2))
+        out = StringIO()
+        call_command("requeue_stuck_documents", stdout=out)
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, DocumentStatus.UNDER_REVIEW)
+        self.assertIn("under_review", out.getvalue())
+
 
 @override_settings(MEDIA_ROOT=MEDIA)
 class StudentAccessTests(TestCase):

@@ -85,7 +85,9 @@ def ai_outline(document, headings):
     if not headings:
         return None
     heading_text = "\n".join(f'[{h["index"]}] level {h["level"]}: {h["title"]}' for h in headings[:600])
-    system = "You organise a textbook's headings into a course outline. You only reuse the heading indices you are given."
+    system = ("You organise a textbook's headings into a course outline of chapters that contain modules. "
+              "Every source_heading_index must be one of the bracketed numbers in the list; never invent an index and never "
+              "use the same index twice. Keep the document order. Output JSON only.")
     user = f"""File name: {document.original_name}
 
 Headings (index in brackets):

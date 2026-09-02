@@ -109,4 +109,5 @@ export const admin = {
   auditLogs: (q: Q = {}) => api<T.Paginated<T.AuditLog>>("/admin/audit-logs/", { query: q }),
   platform: () => api<any>("/admin/analytics/platform/"),
   platformSubjects: () => api<any>("/admin/analytics/platform/subjects/"),
+  aiStatus: (refresh = false) => api<T.AIStatus>("/admin/ai/status/", { query: { refresh: refresh ? 1 : undefined } }),
 };

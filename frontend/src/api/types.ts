@@ -94,3 +94,9 @@ export interface Conversation { id: string; module_id: string; title: string; la
 
 export interface AuditLog { id: string; actor_email: string; actor_role: string; action: string; target_type: string; target_id: string; target_label: string; summary: Record<string, unknown>; created_at: string }
 export interface ImportReport { total_rows: number; created: number; already_existing: number; invalid: number; errors: { row: number; email?: string; error: string }[] }
+
+export interface AIModelStatus { name: string; present: boolean }
+export interface AIStatus {
+  enabled: boolean; provider: string; reachable: boolean; ready: boolean;
+  tutor_model: AIModelStatus; outline_model: AIModelStatus; error: string;
+}

@@ -1,6 +1,7 @@
 """DocumentService: upload, processing claim, review edits, publication."""
 import logging
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
@@ -62,13 +63,24 @@ def upload_document(actor, subject, uploaded_file, title="", request=None):
 
 # ---------- processing ----------
 
+def _processing_is_stale(document):
+    """A document still 'processing' long after it started belongs to a worker
+    that was recycled mid-run; nothing will ever finish it, so it may be reclaimed."""
+    minutes = settings.LOCALMIND.get("PROCESSING_STALE_MINUTES", 30)
+    started = document.processing_started_at or document.updated_at
+    return started < timezone.now() - timedelta(minutes=minutes)
+
+
 def claim_for_processing(document):
-    """Atomically move to PROCESSING; returns False if someone else already did."""
+    """Atomically move to PROCESSING; returns False if someone else already did
+    and is still within the stale window."""
     with transaction.atomic():
         locked = Document.objects.select_for_update().get(pk=document.pk)
         if locked.status == DocumentStatus.PROCESSING:
-            return False
-        if locked.status not in REPROCESSABLE_STATUSES:
+            if not _processing_is_stale(locked):
+                return False
+            logger.warning("Reclaiming document %s: processing started at %s and never finished", locked.pk, locked.processing_started_at)
+        elif locked.status not in REPROCESSABLE_STATUSES:
             raise Conflict(f"A document in state '{locked.status}' cannot be processed.", code="INVALID_STATE")
         locked.status = DocumentStatus.PROCESSING
         locked.error_message = ""

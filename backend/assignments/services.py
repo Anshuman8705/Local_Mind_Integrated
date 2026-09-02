@@ -4,7 +4,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from academics.models import Subject, faculty_manages_subject
-from ai.gateway import gateway
+from ai.gateway import gateway, trim_source
 from audit import services as audit
 from core.exceptions import Conflict, Forbidden, NotFound, ValidationFailed
 from learning import services as learning
@@ -98,8 +98,14 @@ def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, 
     if not source.strip():
         raise ValidationFailed("Cannot generate an assignment without source text.", code="NO_SOURCE")
     max_score = fields.get("max_score") or 100
-    system = "You design a written assignment strictly grounded in the SOURCE TEXT. Rubric points must sum to the given total."
-    user = f"TOPIC: {name}\nTOTAL POINTS: {max_score}\nFOCUS: {focus or 'general understanding'}\n\nSOURCE TEXT:\n\"\"\"{source[:12000]}\"\"\""
+    system = (
+        "You design one written assignment from a textbook excerpt. Follow every rule.\n"
+        "1. Everything must be answerable from the SOURCE TEXT alone.\n"
+        "2. title is short. description is one paragraph for the student. instructions say exactly what to write and roughly how long.\n"
+        f"3. rubric has two to six criteria; the integer points must add up to exactly {max_score}.\n"
+        "4. Output JSON only."
+    )
+    user = f"TOPIC: {name}\nTOTAL POINTS: {max_score}\nFOCUS: {focus or 'general understanding'}\n\nSOURCE TEXT:\n\"\"\"{trim_source(source)}\"\"\""
     result = gateway().generate(purpose="assignment", system_prompt=system, user_prompt=user, schema=GEN_SCHEMA, temperature=0.5)
     generator, warning = "ai", ""
     if result.ok and sum(r["points"] for r in result.data["rubric"]) == max_score:

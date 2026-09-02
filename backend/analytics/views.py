@@ -1,6 +1,7 @@
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from ai import gateway as ai_gateway
 from core.permissions import IsAdmin, IsAdminOrFaculty, IsStudent
 
 from . import services as svc
@@ -108,3 +109,13 @@ class AdminSubjectsView(_Base):
 
     def get(self, request):
         return Response(svc.admin_subjects(self.window()))
+
+
+class AdminAIStatusView(APIView):
+    """Fresh (uncached) Ollama status for the admin dashboard."""
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        force = request.query_params.get("refresh") in ("1", "true")
+        status = ai_gateway.health(force=force)
+        return Response(status.as_dict())

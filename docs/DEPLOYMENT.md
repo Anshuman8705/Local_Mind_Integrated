@@ -4,7 +4,15 @@ This describes a single-server deployment, which is the intended shape: the API,
 
 ## Requirements
 
-Python 3.12 or newer, PostgreSQL 14 or newer (tested on 16), Ollama with the chosen models pulled, and a reverse proxy such as nginx or Caddy for TLS. The parser depends on `docling`, which pulls PyTorch; allow a few GB of disk for its models on first run. A machine with 16 GB of RAM handles a small department comfortably with a 4B tutor model; the outline model runs only during book processing and can be larger.
+Python 3.12 or newer, PostgreSQL 14 or newer (tested on 16), Ollama 0.9 or newer with `qwen3:1.7b` pulled, and a reverse proxy such as nginx or Caddy for TLS. The Ollama version matters: the gateway sends `think: false` so qwen3 skips its reasoning pass and answers structured requests directly, and older servers ignore that flag (the gateway strips any `<think>` block that leaks through, so nothing breaks, but every call gets slower). The parser depends on `docling`, which pulls PyTorch; allow a few GB of disk for its models on first run.
+
+Sizing for `qwen3:1.7b`: the weights are about 1.4 GB and the 16k context the gateway requests adds roughly 1 GB of KV cache, so 8 GB of RAM is enough for the model on CPU alongside the API and PostgreSQL. On a modern CPU a lesson or a ten-question quiz takes 20-60 seconds; a modest GPU (4 GB VRAM) brings that under ten. Ollama serves one request at a time per model by default; set `OLLAMA_NUM_PARALLEL=2` or more on hosts with spare memory if several students use the tutor at once, since queued requests still count against `OLLAMA_TIMEOUT_SECONDS`.
+
+## Two ways to run it
+
+`deploy/docker-compose.yml` brings up PostgreSQL, Ollama, the API, a maintenance loop and nginx on one host: copy `backend/.env.example` to `deploy/.env`, set `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `POSTGRES_PASSWORD` and `INITIAL_USER_PASSWORD`, optionally `BOOTSTRAP_ADMIN_EMAIL`, then `cd deploy && docker compose up -d --build`. The API container migrates, collects static files, waits for Ollama and pulls `qwen3:1.7b` before gunicorn starts, so first boot takes a few minutes. Uncomment the GPU block on the `ollama` service if the host has an NVIDIA card. Put TLS in front of the `web` service (or swap nginx for Caddy) before exposing it beyond the campus network.
+
+The rest of this document is the bare-metal path using the unit files in `deploy/`; the two are equivalent and share the same environment variables.
 
 ## Installation
 
@@ -33,7 +41,16 @@ python manage.py collectstatic --noinput     # only for the Django admin site an
 python manage.py bootstrap_admin --email admin@example.edu
 ```
 
-The bootstrap admin receives the configured initial password and must change it at first login. Pull the models: `ollama pull qwen3:4b` (and whatever `OLLAMA_OUTLINE_MODEL` names).
+The bootstrap admin receives the configured initial password and must change it at first login.
+
+Then prepare the model host and prove it works end to end:
+
+```bash
+ollama pull qwen3:1.7b                      # and OLLAMA_OUTLINE_MODEL if it differs
+python manage.py check_ai --smoke           # reachability, model presence, one real structured generation
+```
+
+For a release rehearsal run `python scripts/system_test.py https://<host>` against the staged server with the real model; it creates its own `SYS-` prefixed subject and users and exercises every workflow. `check_ai` exits non-zero when Ollama is unreachable, a configured model is missing or the smoke generation fails, so it belongs in the deploy script (or as a systemd `ExecStartPre=`) rather than in a runbook. `check_ai --pull` pulls whatever is missing first; it blocks for several minutes on first use and must never be wired into a request path.
 
 ## Running
 
@@ -56,13 +73,15 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-With more than one worker, two things follow. First, a document being processed is locked by a database row lock, so two workers will not process the same book. Second, background threads live inside the worker process; if gunicorn recycles a worker mid-processing the document is left in `processing`. Faculty can simply call `process/` again, which re-claims it. For heavier use, replace the thread with a task queue (`documents.services.documents.run_processing(document_id)` is the unit of work).
+With more than one worker, two things follow. First, a document being processed is locked by a database row lock, so two workers will not process the same book. Second, background threads live inside the worker process; if gunicorn recycles a worker mid-processing the document is left in `processing`. After `PROCESSING_STALE_MINUTES` (default 30) that document is considered abandoned: faculty can call `process/` again and it is re-claimed, and `python manage.py requeue_stuck_documents` re-runs every such document. Install `deploy/localmind-maintenance.service` and `.timer` (or rely on the `maintenance` container in compose) so this happens every 15 minutes without anyone noticing; the same job runs `flushexpiredtokens` to keep the JWT blacklist table small. For heavier use, replace the thread with a task queue (`documents.services.documents.run_processing(document_id)` is the unit of work).
 
 Reverse proxy: forward `/api/` to gunicorn with `X-Forwarded-Proto` set, cap request bodies at `MAX_UPLOAD_MB`, and serve `/static/` from `STATIC_ROOT` if you use the admin site or Swagger UI. `/media/` need not be exposed at all; nothing in the client flow fetches raw files.
 
 ## Health and monitoring
 
-`GET /api/health/` returns `{"status": "ok", "service": "LocalMind", "database": "ok"}` after a real database round trip and is safe to poll. Application logs go to stdout in the format `time level logger: message`; `django.request` warnings cover 4xx, errors cover 5xx, and `localmind.api` logs every unexpected exception with the view name. Watch for `AI_UNAVAILABLE` rates and `error_code: timeout` in gateway logs as the signal that the model host is overloaded.
+`GET /api/health/` returns `{"status": "ok", "service": "LocalMind", "database": "ok", "ai": {...}}` after a real database round trip and is safe to poll; the `ai` block (`enabled`, `reachable`, `ready`, `tutor_model`, `outline_model`, `error`) comes from a probe of Ollama's `/api/tags` cached for `AI_HEALTH_CACHE_SECONDS`. `status` stays `ok` while Ollama is down because reading, quizzes and grading keep working through their fallbacks; alert on `ai.ready == false` instead. Administrators see the same probe as a banner at the top of their dashboard (`GET /api/admin/ai/status/?refresh=1` forces a fresh check).
+
+Gateway log lines have the shape `AI <purpose> ok model=qwen3:1.7b attempt=1 latency_ms=...` on success and `AI <purpose> attempt 1/2 rejected: invalid_schema (...)` when a retry fires. A steady stream of `attempt 2/2` lines means the model is struggling with a particular prompt size; `latency_ms` climbing toward `OLLAMA_TIMEOUT_SECONDS` means the host is saturated. Application logs go to stdout in the format `time level logger: message`; `django.request` warnings cover 4xx, errors cover 5xx, and `localmind.api` logs every unexpected exception with the view name. Watch for `AI_UNAVAILABLE` rates and `error_code: timeout` in gateway logs as the signal that the model host is overloaded.
 
 ## Backups
 

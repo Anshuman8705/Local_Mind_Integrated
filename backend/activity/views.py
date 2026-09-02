@@ -1,6 +1,8 @@
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.exceptions import ValidationFailed
+
 from core.permissions import IsStudent
 from learning import services as learning
 
@@ -23,5 +25,14 @@ class ModuleTimeView(APIView):
 
     def post(self, request, module_id):
         module = learning.resolve_accessible_module(request.user, module_id)
-        total = svc.record_learning_time(request.user, module, request.data.get("seconds", 0))
+        raw = request.data.get("seconds", 0)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            raise ValidationFailed(details={"seconds": "Must be a non-negative whole number of seconds."})
+        try:
+            seconds = int(float(raw))
+        except (TypeError, ValueError):
+            raise ValidationFailed(details={"seconds": "Must be a non-negative whole number of seconds."})
+        if seconds < 0:
+            raise ValidationFailed(details={"seconds": "Must be a non-negative whole number of seconds."})
+        total = svc.record_learning_time(request.user, module, seconds)
         return Response({"module_id": str(module.id), "learning_seconds": total})
