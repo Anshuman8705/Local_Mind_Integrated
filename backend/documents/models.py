@@ -1,0 +1,88 @@
+from pathlib import Path
+
+from django.conf import settings
+from django.db import models
+
+from accounts.models import Role
+from academics.models import AssignmentStatus, EnrollmentStatus
+from core.models import TimeStampedUUIDModel
+
+
+def document_upload_path(instance, filename):
+    # The stored name never comes from the client; only the validated suffix does.
+    suffix = Path(filename).suffix.lower()
+    return f"documents/{instance.id}/original{suffix}"
+
+
+class DocumentStatus(models.TextChoices):
+    UPLOADED = "uploaded", "Uploaded"
+    PROCESSING = "processing", "Processing"
+    UNDER_REVIEW = "under_review", "Under review"
+    READY = "ready", "Ready to publish"
+    PUBLISHED = "published", "Published"
+    UNPUBLISHED = "unpublished", "Unpublished"
+    ARCHIVED = "archived", "Archived"
+    ERROR = "error", "Error"
+
+
+EDITABLE_STATUSES = {DocumentStatus.UNDER_REVIEW, DocumentStatus.READY, DocumentStatus.UNPUBLISHED, DocumentStatus.PUBLISHED}
+REPROCESSABLE_STATUSES = {DocumentStatus.UPLOADED, DocumentStatus.ERROR, DocumentStatus.UNDER_REVIEW, DocumentStatus.READY, DocumentStatus.UNPUBLISHED}
+
+
+class DocumentQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        if user.role == Role.ADMIN:
+            return self
+        if user.role == Role.FACULTY:
+            return self.filter(subject__faculty_links__faculty=user,
+                               subject__faculty_links__status=AssignmentStatus.ACTIVE).distinct()
+        if user.role == Role.STUDENT:
+            return self.filter(status=DocumentStatus.PUBLISHED, subject__status="active",
+                               subject__enrollments__student=user,
+                               subject__enrollments__status=EnrollmentStatus.ACTIVE).distinct()
+        return self.none()
+
+
+class Document(TimeStampedUUIDModel):
+    """A book or course document owned by a subject."""
+
+    subject = models.ForeignKey("academics.Subject", on_delete=models.PROTECT, related_name="documents")
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="uploaded_documents")
+    title = models.CharField(max_length=300, blank=True)
+    original_name = models.CharField(max_length=300)
+    file = models.FileField(upload_to=document_upload_path)
+    file_type = models.CharField(max_length=10)
+    file_size = models.PositiveBigIntegerField(default=0)
+    status = models.CharField(max_length=30, choices=DocumentStatus.choices, default=DocumentStatus.UPLOADED, db_index=True)
+
+    processed_markdown_path = models.CharField(max_length=500, blank=True)
+    extracted_headings = models.JSONField(default=list, blank=True)
+    outline_source = models.CharField(max_length=30, blank=True)  # ai | source_hierarchy | edited
+    parse_mode = models.CharField(max_length=30, blank=True)
+    error_message = models.TextField(blank=True)
+
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    published_at = models.DateTimeField(null=True, blank=True)
+    unpublished_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    content_version = models.PositiveIntegerField(default=1)
+    last_edited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    last_edited_at = models.DateTimeField(null=True, blank=True)
+
+    objects = DocumentQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["subject", "status"])]
+
+    def __str__(self):
+        return self.title or self.original_name
+
+    @property
+    def is_published(self):
+        return self.status == DocumentStatus.PUBLISHED

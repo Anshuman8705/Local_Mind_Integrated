@@ -1,0 +1,144 @@
+from django.test import TestCase
+
+from audit.models import AuditLog
+from core.testing import assign, client_for, enroll, make_admin, make_faculty, make_student, make_subject
+
+from .models import Enrollment, FacultySubject, Subject
+
+
+class SubjectTests(TestCase):
+    def setUp(self):
+        self.admin = make_admin()
+        self.client = client_for(self.admin)
+
+    def test_create_subject_uppercases_code_and_rejects_duplicates(self):
+        res = self.client.post("/api/admin/subjects/", {"name": "DBMS", "code": "cs201", "description": "d"}, format="json")
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["code"], "CS201")
+        dup = self.client.post("/api/admin/subjects/", {"name": "Other", "code": "CS201"}, format="json")
+        self.assertEqual(dup.status_code, 409)
+
+    def test_status_transitions(self):
+        subject = make_subject()
+        url = f"/api/admin/subjects/{subject.id}/status/"
+        self.assertEqual(self.client.post(url, {"status": "discontinued"}, format="json").data["status"], "discontinued")
+        self.assertEqual(self.client.post(url, {"status": "active"}, format="json").data["status"], "active")
+        self.assertEqual(self.client.post(url, {"status": "archived"}, format="json").data["status"], "archived")
+        self.assertEqual(self.client.post(url, {"status": "active"}, format="json").status_code, 409)
+
+    def test_assign_and_unassign_faculty(self):
+        subject = make_subject()
+        faculty = make_faculty()
+        res = self.client.post(f"/api/admin/subjects/{subject.id}/faculty/", {"faculty_ids": [str(faculty.id)]}, format="json")
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(FacultySubject.objects.filter(faculty=faculty, subject=subject, status="active").exists())
+        res = self.client.delete(f"/api/admin/subjects/{subject.id}/faculty/{faculty.id}/")
+        self.assertEqual(res.status_code, 200)
+        link = FacultySubject.objects.get(faculty=faculty, subject=subject)
+        self.assertEqual(link.status, "discontinued")
+        self.assertIsNotNone(link.discontinued_at)
+        # Reassignment reuses the row
+        self.client.post(f"/api/admin/faculty/{faculty.id}/subjects/", {"subject_ids": [str(subject.id)]}, format="json")
+        self.assertEqual(FacultySubject.objects.filter(faculty=faculty, subject=subject).count(), 1)
+        self.assertEqual(FacultySubject.objects.get(faculty=faculty, subject=subject).status, "active")
+
+    def test_cannot_assign_student_as_faculty(self):
+        subject = make_subject()
+        student = make_student()
+        res = self.client.post(f"/api/admin/subjects/{subject.id}/faculty/", {"faculty_ids": [str(student.id)]}, format="json")
+        self.assertEqual(res.status_code, 404)
+
+    def test_subject_detail_statistics(self):
+        subject = make_subject()
+        faculty = make_faculty()
+        assign(faculty, subject)
+        enroll(make_student(), subject)
+        res = self.client.get(f"/api/admin/subjects/{subject.id}/")
+        self.assertEqual(res.data["statistics"]["active_students"], 1)
+        self.assertEqual(res.data["statistics"]["active_faculty"], 1)
+
+
+class EnrollmentTests(TestCase):
+    def setUp(self):
+        self.admin = make_admin()
+        self.faculty = make_faculty()
+        self.other_faculty = make_faculty()
+        self.subject = make_subject(code="OS")
+        self.other_subject = make_subject(code="DB")
+        assign(self.faculty, self.subject)
+        assign(self.other_faculty, self.other_subject)
+        self.student = make_student()
+
+    def test_faculty_enrolls_student_in_own_subject(self):
+        res = client_for(self.faculty).post(f"/api/faculty/subjects/{self.subject.id}/students/", {"student_ids": [str(self.student.id)]}, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(res.data["results"][0]["status"], "enrolled")
+        self.assertTrue(Enrollment.objects.filter(student=self.student, subject=self.subject, status="active").exists())
+        self.assertTrue(AuditLog.objects.filter(action="student.enrolled").exists())
+
+    def test_faculty_cannot_enroll_into_unassigned_subject(self):
+        res = client_for(self.faculty).post(f"/api/faculty/subjects/{self.other_subject.id}/students/", {"student_ids": [str(self.student.id)]}, format="json")
+        self.assertEqual(res.status_code, 404)  # not visible, so indistinguishable from missing
+
+    def test_faculty_cannot_list_students_of_other_faculty_subject(self):
+        self.assertEqual(client_for(self.faculty).get(f"/api/faculty/subjects/{self.other_subject.id}/students/").status_code, 404)
+
+    def test_student_cannot_enroll_self(self):
+        res = client_for(self.student).post(f"/api/faculty/subjects/{self.subject.id}/students/", {"student_ids": [str(self.student.id)]}, format="json")
+        self.assertEqual(res.status_code, 403)
+
+    def test_discontinue_enrollment_keeps_account_and_other_subjects(self):
+        enroll(self.student, self.subject)
+        enroll(self.student, self.other_subject)
+        res = client_for(self.faculty).post(f"/api/faculty/subjects/{self.subject.id}/students/{self.student.id}/discontinue/", {}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["status"], "discontinued")
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.status, "active")
+        self.assertEqual(Enrollment.objects.get(student=self.student, subject=self.other_subject).status, "active")
+        # Row is preserved, not deleted
+        self.assertEqual(Enrollment.objects.filter(student=self.student, subject=self.subject).count(), 1)
+
+    def test_re_enrollment_reuses_row(self):
+        enroll(self.student, self.subject)
+        client_for(self.faculty).post(f"/api/faculty/subjects/{self.subject.id}/students/{self.student.id}/discontinue/", {}, format="json")
+        res = client_for(self.faculty).post(f"/api/faculty/subjects/{self.subject.id}/students/", {"student_ids": [str(self.student.id)]}, format="json")
+        self.assertEqual(res.data["results"][0]["status"], "re_enrolled")
+        self.assertEqual(Enrollment.objects.filter(student=self.student, subject=self.subject).count(), 1)
+
+    def test_admin_can_enroll_anywhere(self):
+        res = client_for(self.admin).post(f"/api/admin/subjects/{self.other_subject.id}/students/", {"student_ids": [str(self.student.id)]}, format="json")
+        self.assertEqual(res.status_code, 201)
+
+    def test_student_sees_only_active_enrollments_in_active_subjects(self):
+        enroll(self.student, self.subject)
+        e2 = enroll(self.student, self.other_subject)
+        e2.status = "discontinued"
+        e2.save()
+        res = client_for(self.student).get("/api/student/subjects/")
+        self.assertEqual([s["code"] for s in res.data], ["OS"])
+
+    def test_faculty_subject_list_scoped(self):
+        res = client_for(self.faculty).get("/api/faculty/subjects/")
+        self.assertEqual([s["code"] for s in res.data], ["OS"])
+
+    def test_scoped_queryset_helpers(self):
+        self.assertEqual(list(Subject.objects.visible_to(self.faculty)), [self.subject])
+        enroll(self.student, self.other_subject)
+        self.assertEqual(list(Subject.objects.visible_to(self.student)), [self.other_subject])
+        self.assertEqual(Subject.objects.visible_to(self.admin).count(), 2)
+
+
+class PortalSeparationTests(TestCase):
+    def test_prefix_binds_role(self):
+        from core.testing import assign, client_for, enroll, make_admin, make_faculty, make_student, make_subject
+        admin, faculty, student, subject = make_admin(), make_faculty(), make_student(), make_subject(code="PS")
+        assign(faculty, subject); enroll(student, subject)
+        fc, ac, sc = client_for(faculty), client_for(admin), client_for(student)
+        self.assertEqual(fc.get("/api/faculty/documents/").status_code, 200)
+        self.assertEqual(fc.get("/api/admin/documents/").status_code, 403)
+        self.assertEqual(ac.get("/api/admin/documents/").status_code, 200)
+        self.assertEqual(ac.get("/api/faculty/documents/").status_code, 200)
+        self.assertEqual(ac.get("/api/student/subjects/").status_code, 403)
+        self.assertEqual(sc.get("/api/student/subjects/").status_code, 200)
+        self.assertEqual(sc.get("/api/faculty/subjects/").status_code, 403)
