@@ -2,11 +2,15 @@
 
 Callers describe *what* they want (system prompt, user prompt, JSON schema,
 which model class) and get back an AIResult. They never see HTTP, provider
-payloads, or raw strings. Swapping Ollama for another provider means adding a
-class here that implements AIProvider.
+payloads, or raw strings. Two providers implement AIProvider: the embedded
+llama.cpp provider in llamacpp.py (AI_PROVIDER=llamacpp, the offline default,
+one shared GGUF instance per process) and OllamaProvider below
+(AI_PROVIDER=ollama). The configured provider is never swapped for another at
+run time: if the embedded model cannot load, the result is `unavailable` and
+the callers use their deterministic fallbacks.
 
-The production model is qwen3:1.7b served by Ollama. Two things about a model
-that small shape this module:
+The production model is qwen3 1.7B. Two things about a model that small shape
+this module:
 
 * It must be given an explicit context window (``num_ctx``). Ollama's default
   is 4096 tokens, which silently truncates the 12-14k character source
@@ -33,7 +37,7 @@ logger = logging.getLogger("localmind.ai")
 
 # Error codes, in the order a caller is likely to meet them:
 #   disabled       AI_ENABLED is false (or the test runner is active)
-#   unavailable    Ollama unreachable, model not pulled, or HTTP >= 400
+#   unavailable    provider not usable: embedded model missing/failed to load, Ollama unreachable, model not pulled, HTTP >= 400
 #   timeout        the request exceeded TIMEOUT_SECONDS
 #   empty          the model returned no content
 #   truncated      the model hit NUM_PREDICT before closing the JSON
@@ -111,6 +115,7 @@ class AIHealth:
     outline_model: str = ""
     error: str = ""
     checked_at: float = 0.0
+    details: dict = field(default_factory=dict)  # provider-specific (runtime, model file) for the health screen
 
     def model_present(self, name: str) -> bool:
         """Ollama lists 'qwen3:1.7b'; a bare 'qwen3' request matches 'qwen3:latest'."""
@@ -132,6 +137,8 @@ class AIHealth:
             "tutor_model": {"name": self.tutor_model, "present": self.model_present(self.tutor_model)},
             "outline_model": {"name": self.outline_model, "present": self.model_present(self.outline_model)},
             "error": self.error,
+            "runtime": "llama.cpp" if self.provider == "llamacpp" else ("Ollama" if self.provider == "ollama" else self.provider),
+            "details": self.details,
         }
 
 
@@ -266,10 +273,15 @@ def get_provider() -> AIProvider:
     cfg = settings.AI
     if not cfg["ENABLED"]:
         return DisabledProvider()
-    key = f'{cfg["PROVIDER"]}:{cfg["OLLAMA_BASE_URL"]}'
+    key = f'{cfg["PROVIDER"]}:{cfg["OLLAMA_BASE_URL"]}:{cfg.get("MODEL_PATH", "")}'
     if key not in _provider_cache:
         if cfg["PROVIDER"] == "ollama":
             _provider_cache[key] = OllamaProvider(cfg["OLLAMA_BASE_URL"])
+        elif cfg["PROVIDER"] == "llamacpp":
+            # Embedded, in-process model: no Ollama, no daemon, fully offline.
+            from .llamacpp import LlamaCppProvider
+
+            _provider_cache[key] = LlamaCppProvider()
         else:
             raise RuntimeError(f"Unknown AI provider {cfg['PROVIDER']}")
     return _provider_cache[key]
@@ -379,7 +391,8 @@ _health_cache: AIHealth | None = None
 
 
 def health(force: bool = False, timeout: int = 3) -> AIHealth:
-    """Reachability of Ollama and presence of the configured models.
+    """Readiness of the configured provider: library plus validated model file
+    for llamacpp, /api/tags for Ollama. Never loads the embedded model.
 
     Cached for HEALTH_CACHE_SECONDS so /api/health/ polling never turns into a
     load on the model host. Never raises.
@@ -398,9 +411,12 @@ def health(force: bool = False, timeout: int = 3) -> AIHealth:
         _health_cache = AIHealth(
             enabled=bool(cfg["ENABLED"]), provider=cfg["PROVIDER"], base_url=cfg["OLLAMA_BASE_URL"],
             reachable=reachable, models=models, tutor_model=cfg["TUTOR_MODEL"], outline_model=cfg["OUTLINE_MODEL"],
-            error=error, checked_at=time.monotonic())
+            error=error, checked_at=time.monotonic(),
+            details=provider.describe() if hasattr(provider, "describe") else {})
         if cfg["ENABLED"] and not _health_cache.ready:
-            logger.warning("AI not ready: reachable=%s models=%s error=%s", reachable, models, error)
+            logger.warning("AI not ready (%s): reachable=%s models=%s error=%s", cfg["PROVIDER"], reachable, models, error)
+        elif cfg["ENABLED"] and force and hasattr(provider, "status_line"):
+            logger.info(provider.status_line())
         return _health_cache
 
 

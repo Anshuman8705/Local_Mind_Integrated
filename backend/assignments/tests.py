@@ -79,6 +79,14 @@ class AssignmentTests(TestCase):
         self.module.save()
         self.assertEqual(self.sc.get("/api/student/assignments/").data, [])
 
+    def test_publishing_an_assignment_opens_its_locked_module(self):
+        self.module.availability = "locked"
+        self.module.save()
+        a = self.create()
+        self.module.refresh_from_db()
+        self.assertEqual(self.module.availability, "open")
+        self.assertEqual([x["id"] for x in self.sc.get("/api/student/assignments/").data], [str(a.id)])
+
     def test_score_bounds(self):
         a = self.create()
         sub = self.sc.post(f"/api/student/assignments/{a.id}/submissions/", {"content": "x"}, format="json").data

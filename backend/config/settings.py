@@ -49,6 +49,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files without nginx so the standalone/offline
+    # launcher is a single process.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -83,6 +86,34 @@ DATABASES = {
     )
 }
 
+if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
+    # The standalone launcher serves eight waitress threads plus a background
+    # document-processing thread from one SQLite file. Three things keep that
+    # from surfacing as "database is locked":
+    #   * WAL journal: readers never block the writer and vice versa.
+    #   * busy timeout (``timeout``): a second writer waits up to this long for
+    #     the lock instead of failing immediately.
+    #   * IMMEDIATE transactions: every ``transaction.atomic()`` takes the write
+    #     lock at BEGIN. With the default DEFERRED mode a transaction that reads
+    #     first and writes later must upgrade its lock mid-flight, and SQLite
+    #     refuses that upgrade instantly (busy timeout is not consulted) when
+    #     another writer got there first. That refusal is the error the admin
+    #     screen was showing.
+    # Services keep model calls and document parsing outside atomic blocks so
+    # the write lock is only ever held for milliseconds.
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"].update({
+        "timeout": env_int("SQLITE_BUSY_TIMEOUT_SECONDS", 30),
+        "transaction_mode": "IMMEDIATE",
+        "init_command": (
+            "PRAGMA journal_mode=WAL;"
+            "PRAGMA synchronous=NORMAL;"
+            "PRAGMA temp_store=MEMORY;"
+            "PRAGMA cache_size=-32000;"
+            "PRAGMA journal_size_limit=67108864;"
+        ),
+    })
+
 AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -103,6 +134,15 @@ MEDIA_URL = env_str("MEDIA_URL", "/media/")
 MEDIA_ROOT = Path(env_str("MEDIA_ROOT", str(BASE_DIR / "media"))).resolve()
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Built Expo web client (``npm run export:web`` -> frontend/dist). When the
+# folder exists Django serves it at "/", so one process on one port is the
+# whole application: API, media, model and UI. Set WEB_DIST to relocate it or
+# SERVE_WEB=false to leave the UI to nginx.
+WEB_DIST = Path(env_str("WEB_DIST", str(BASE_DIR.parent / "frontend" / "dist"))).resolve()
+SERVE_WEB = env_bool("SERVE_WEB", True) and (WEB_DIST / "index.html").exists()
+# Serve /media/ from Django too when there is no reverse proxy in front.
+SERVE_MEDIA = env_bool("SERVE_MEDIA", SERVE_WEB)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -188,7 +228,29 @@ LOCALMIND = {
 
 AI = {
     "ENABLED": env_bool("AI_ENABLED", True) and not TESTING,
-    "PROVIDER": env_str("AI_PROVIDER", "ollama"),
+    # "llamacpp" runs the model inside this process from a bundled GGUF file
+    # (no Ollama, works offline). "ollama" talks to a local Ollama daemon.
+    "PROVIDER": env_str("AI_PROVIDER", "llamacpp"),
+    # Embedded provider: the GGUF lives at AI_MODEL_PATH, or under
+    # backend/models/<AI_MODEL_FILE>. `python manage.py fetch_model` downloads
+    # it once; after that nothing needs the internet.
+    "MODEL_PATH": env_str("AI_MODEL_PATH", ""),
+    "MODEL_FILE": env_str("AI_MODEL_FILE", "Qwen3-1.7B-Q4_K_M.gguf"),
+    "MODEL_REPO": env_str("AI_MODEL_REPO", "unsloth/Qwen3-1.7B-GGUF"),
+    # Docling layout models for offline PDF parsing (fetch_model --docling).
+    "DOCLING_ARTIFACTS": env_str("DOCLING_ARTIFACTS", ""),
+    # 0 = all cores but one; set explicitly on shared hosts.
+    "THREADS": env_int("AI_THREADS", 0),
+    # Layers to offload to a GPU when llama-cpp-python was built with CUDA/Metal.
+    "GPU_LAYERS": env_int("AI_GPU_LAYERS", 0),
+    # Embedded provider prompt batch size. llama-cpp-python keeps a float32
+    # logits buffer of n_batch x vocabulary (152k for qwen3), so 512 costs
+    # ~300 MB and 256 ~150 MB; the smaller value was the difference between
+    # loading and failing next to the document parser on an 8 GB laptop.
+    "BATCH": env_int("AI_BATCH", 256),
+    # After a transient load failure (out of memory while the document parser
+    # held its models) the embedded provider retries the load after this long.
+    "LOAD_RETRY_SECONDS": env_int("AI_LOAD_RETRY_SECONDS", 60),
     "OLLAMA_BASE_URL": env_str("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
     # qwen3:1.7b is the production default for every AI feature. The tutor
     # model handles lessons, questions, evaluation and remediation; the
@@ -212,7 +274,7 @@ AI = {
     # Character budget for source text embedded in prompts. Roughly 3.5
     # chars per token for English prose, so 14000 chars is ~4000 tokens.
     "MAX_SOURCE_CHARS": env_int("AI_MAX_SOURCE_CHARS", 14000),
-    # Seconds to cache the Ollama reachability probe used by /api/health/.
+    # Seconds to cache the provider readiness probe used by /api/health/.
     "HEALTH_CACHE_SECONDS": env_int("AI_HEALTH_CACHE_SECONDS", 30),
 }
 

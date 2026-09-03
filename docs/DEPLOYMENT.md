@@ -1,16 +1,24 @@
 # LocalMind Deployment
 
-This describes a single-server deployment, which is the intended shape: the API, PostgreSQL and Ollama on one Linux machine, with a reverse proxy in front. Nothing prevents splitting them across hosts later; the only coupling is the `DATABASE_URL` and `OLLAMA_BASE_URL` variables.
+## Current deployment: local and offline, no cloud
+
+The current deployment is a self-contained web application on one machine: Django, a local database (SQLite by default, PostgreSQL optionally), local file storage under `MEDIA_ROOT`, the AI model running inside the backend process through llama.cpp from a GGUF file in `backend/models/`, Docling's layout models stored locally, and the built web client served by Django itself. Nothing in it calls out to the internet during normal operation, and nothing has to be installed on the host beyond Python. For that mode use `run_localmind.py` (or `start.bat` / `start.sh`) and see `docs/OFFLINE.md`; the rest of this document is the heavier single-server path with PostgreSQL and a reverse proxy, which is optional.
+
+AWS is not part of the current deployment. It is a possible future target, and the code is arranged so that it can be introduced without a rewrite: the database is behind `DATABASE_URL` (RDS is a connection string), files go through Django's storage API (S3 is a storage backend), the AI provider is behind `ai.gateway` (a cloud model is one more provider class), background work is the `process/` endpoints plus the maintenance commands (a queue worker calls the same services), and every deployment knob is an environment variable. The frontend only ever talks to the Django API and carries no provider- or cloud-specific logic.
+
+## Single-server deployment with PostgreSQL and a reverse proxy
+
+This describes a single-server deployment: the API, PostgreSQL and the embedded AI model on one Linux machine, with a reverse proxy in front. Ollama remains supported as an alternative provider (`AI_PROVIDER=ollama`), in which case the coupling is the `OLLAMA_BASE_URL` variable; nothing else changes.
 
 ## Requirements
 
-Python 3.12 or newer, PostgreSQL 14 or newer (tested on 16), Ollama 0.9 or newer with `qwen3:1.7b` pulled, and a reverse proxy such as nginx or Caddy for TLS. The Ollama version matters: the gateway sends `think: false` so qwen3 skips its reasoning pass and answers structured requests directly, and older servers ignore that flag (the gateway strips any `<think>` block that leaks through, so nothing breaks, but every call gets slower). The parser depends on `docling`, which pulls PyTorch; allow a few GB of disk for its models on first run.
+Python 3.11 or 3.12, PostgreSQL 14 or newer (tested on 16), the GGUF model in `backend/models/` (`python manage.py fetch_model --docling`, once, with internet), and a reverse proxy such as nginx or Caddy for TLS. If you choose Ollama instead of the embedded model, you need Ollama 0.9 or newer with `qwen3:1.7b` pulled; the version matters: the gateway sends `think: false` so qwen3 skips its reasoning pass and answers structured requests directly, and older servers ignore that flag (the gateway strips any `<think>` block that leaks through, so nothing breaks, but every call gets slower). The parser depends on `docling`, which pulls PyTorch; allow a few GB of disk for its models on first run.
 
 Sizing for `qwen3:1.7b`: the weights are about 1.4 GB and the 16k context the gateway requests adds roughly 1 GB of KV cache, so 8 GB of RAM is enough for the model on CPU alongside the API and PostgreSQL. On a modern CPU a lesson or a ten-question quiz takes 20-60 seconds; a modest GPU (4 GB VRAM) brings that under ten. Ollama serves one request at a time per model by default; set `OLLAMA_NUM_PARALLEL=2` or more on hosts with spare memory if several students use the tutor at once, since queued requests still count against `OLLAMA_TIMEOUT_SECONDS`.
 
 ## Two ways to run it
 
-`deploy/docker-compose.yml` brings up PostgreSQL, Ollama, the API, a maintenance loop and nginx on one host: copy `backend/.env.example` to `deploy/.env`, set `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `POSTGRES_PASSWORD` and `INITIAL_USER_PASSWORD`, optionally `BOOTSTRAP_ADMIN_EMAIL`, then `cd deploy && docker compose up -d --build`. The API container migrates, collects static files, waits for Ollama and pulls `qwen3:1.7b` before gunicorn starts, so first boot takes a few minutes. Uncomment the GPU block on the `ollama` service if the host has an NVIDIA card. Put TLS in front of the `web` service (or swap nginx for Caddy) before exposing it beyond the campus network.
+`deploy/docker-compose.yml` brings up PostgreSQL, the API (with the embedded model mounted from `backend/models/` and the web build from `frontend/dist/`), a maintenance loop and nginx on one host; the Ollama service is behind the `ollama` compose profile and only starts with `--profile ollama` when `AI_PROVIDER=ollama`: copy `backend/.env.example` to `deploy/.env`, set `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `POSTGRES_PASSWORD` and `INITIAL_USER_PASSWORD`, optionally `BOOTSTRAP_ADMIN_EMAIL`, then `cd deploy && docker compose up -d --build`. The API container migrates, collects static files and verifies (and pre-loads) the model before gunicorn starts. Uncomment the GPU block on the `ollama` service if the host has an NVIDIA card. Put TLS in front of the `web` service (or swap nginx for Caddy) before exposing it beyond the campus network.
 
 The rest of this document is the bare-metal path using the unit files in `deploy/`; the two are equivalent and share the same environment variables.
 
@@ -50,7 +58,7 @@ ollama pull qwen3:1.7b                      # and OLLAMA_OUTLINE_MODEL if it dif
 python manage.py check_ai --smoke           # reachability, model presence, one real structured generation
 ```
 
-For a release rehearsal run `python scripts/system_test.py https://<host>` against the staged server with the real model; it creates its own `SYS-` prefixed subject and users and exercises every workflow. `check_ai` exits non-zero when Ollama is unreachable, a configured model is missing or the smoke generation fails, so it belongs in the deploy script (or as a systemd `ExecStartPre=`) rather than in a runbook. `check_ai --pull` pulls whatever is missing first; it blocks for several minutes on first use and must never be wired into a request path.
+For a release rehearsal run `python scripts/system_test.py https://<host>` against the staged server with the real model; it creates its own `SYS-` prefixed subject and users and exercises every workflow. `check_ai` exits non-zero when the configured provider is not ready (embedded GGUF missing or failing to load, or Ollama unreachable with a model missing) or the smoke generation fails, so it belongs in the deploy script (or as a systemd `ExecStartPre=`) rather than in a runbook. `check_ai --pull` pulls whatever is missing first; it blocks for several minutes on first use and must never be wired into a request path.
 
 ## Running
 

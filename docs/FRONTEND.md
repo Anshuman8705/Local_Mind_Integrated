@@ -46,3 +46,20 @@ The client is an Expo app (`frontend/`). This page lists every screen and the en
 | Subjects | `(admin)/subjects`, `(admin)/subject/[id]` | `GET/POST /admin/subjects/`, `GET .../{id}/`, `POST .../status/`, `POST/DELETE .../faculty/`, `GET/POST .../students/`, `POST .../discontinue/`, `GET /admin/students/search/`, `GET /admin/faculty/` |
 | People | `(admin)/users`, `(admin)/user/new`, `(admin)/user/[id]`, `(admin)/user/import` | `GET/POST /admin/{faculty,students}/`, `GET/PATCH .../{id}/`, `POST .../{discontinue,reactivate,reset-password}/`, `POST .../import/`, `GET /faculty/analytics/students/{id}/` |
 | Audit log | `(admin)/audit` | `GET /admin/audit-logs/?action=&actor_email=&page=` |
+
+## List freshness and post-create navigation
+
+`useAsync` (src/hooks/useAsync.ts) reloads its query every time the screen
+regains focus, not only on mount. Tab screens stay mounted while the user is
+on a detail or create route, so previously a newly added faculty member or
+student, or a subject's assigned-faculty list, only appeared after a manual
+page refresh. Pull-to-refresh and the explicit `reload` remain.
+
+Admin "Add" returns to People with the tab (students/faculty) preselected and
+a success notice naming the account. "Import Excel" does the same when every
+row imported cleanly; when some rows failed it stays on the report so the
+admin can see which rows to fix, with a "Back to People" button.
+
+When the web build is served by the backend (see docs/OFFLINE.md) the client
+calls the API on the same origin; `EXPO_PUBLIC_API_URL` is only needed for
+the Expo dev server and native builds.

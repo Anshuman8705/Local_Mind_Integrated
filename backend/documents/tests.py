@@ -341,8 +341,23 @@ class StudentAccessTests(TestCase):
         self.assertEqual(sc.get(f"/api/student/documents/{self.doc.id}/").status_code, 404)
         self.assertEqual(sc.get(f"/api/student/modules/{self.module.id}/").status_code, 404)
 
+    def test_publish_opens_every_module_with_source(self):
+        self.fc.post(f"/api/faculty/documents/{self.doc.id}/publish/")
+        self.assertFalse(Module.objects.filter(chapter__document=self.doc, availability="locked").exists())
+        self.assertTrue(AuditLog.objects.filter(action="module.opened_on_publish", target_id=str(self.doc.id)).exists())
+        sc = client_for(self.student)
+        listing = sc.get(f"/api/student/documents/{self.doc.id}/").data
+        self.assertEqual(listing["chapters"][0]["modules"][0]["availability"], "open")
+        # Locks applied afterwards survive an unpublish/re-publish cycle.
+        self.fc.post(f"/api/faculty/modules/{self.module.id}/availability/", {"availability": "locked"}, format="json")
+        self.fc.post(f"/api/faculty/documents/{self.doc.id}/unpublish/")
+        self.fc.post(f"/api/faculty/documents/{self.doc.id}/publish/")
+        self.module.refresh_from_db()
+        self.assertEqual(self.module.availability, "locked")
+
     def test_locked_module_returns_module_locked(self):
         self.fc.post(f"/api/faculty/documents/{self.doc.id}/publish/")
+        self.fc.post(f"/api/faculty/modules/{self.module.id}/availability/", {"availability": "locked"}, format="json")
         sc = client_for(self.student)
         listing = sc.get(f"/api/student/documents/{self.doc.id}/").data
         self.assertEqual(listing["chapters"][0]["modules"][0]["availability"], "locked")
@@ -353,6 +368,7 @@ class StudentAccessTests(TestCase):
 
     def test_open_module_readable_and_marks_in_progress(self):
         self.fc.post(f"/api/faculty/documents/{self.doc.id}/publish/")
+        self.fc.post(f"/api/faculty/modules/{self.module.id}/availability/", {"availability": "locked"}, format="json")
         opened = self.fc.post(f"/api/faculty/modules/{self.module.id}/availability/", {"availability": "open"}, format="json")
         self.assertEqual(opened.data["availability"], "open")
         sc = client_for(self.student)
@@ -363,7 +379,7 @@ class StudentAccessTests(TestCase):
         doc_view = sc.get(f"/api/student/documents/{self.doc.id}/").data
         self.assertEqual(doc_view["chapters"][0]["status"], "in_progress")
         subj_docs = sc.get(f"/api/student/subjects/{self.subject.id}/documents/").data
-        self.assertEqual(subj_docs[0]["open_module_count"], 1)
+        self.assertEqual(subj_docs[0]["open_module_count"], subj_docs[0]["module_count"])
 
     def test_chapter_level_open_and_lock(self):
         self.fc.post(f"/api/faculty/documents/{self.doc.id}/publish/")
@@ -389,3 +405,240 @@ class StudentAccessTests(TestCase):
         self.fc.post(f"/api/faculty/modules/{self.module.id}/availability/", {"availability": "open"}, format="json")
         self.fc.post(f"/api/faculty/subjects/{self.subject.id}/students/{self.student.id}/discontinue/")
         self.assertEqual(client_for(self.student).get(f"/api/student/modules/{self.module.id}/").status_code, 404)
+
+
+class PdfParsingTests(TestCase):
+    """The PDF path: text-layer probe, OCR fallback, heading inference, page
+    groups, and a controlled error when nothing is extractable. Docling is
+    mocked; pypdfium2 reads real PDFs."""
+
+    def _pdf(self, pages):
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        buf = BytesIO()
+        c = canvas.Canvas(buf, pagesize=letter)
+        for lines in pages:
+            y = 740
+            for line in lines:
+                c.drawString(72, y, line)
+                y -= 16
+            c.showPage()
+        c.save()
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        tmp.write(buf.getvalue())
+        tmp.close()
+        self.addCleanup(lambda: __import__("os").unlink(tmp.name))
+        from pathlib import Path
+
+        return Path(tmp.name)
+
+    def test_text_layer_probe_reads_real_pdf_with_page_breaks(self):
+        from .services.parser import PAGE_BREAK_MARKER, _pdf_text_layer
+
+        pdf = self._pdf([["Machine learning is the study of algorithms."] * 6, ["Second page content here."] * 6])
+        markdown, chars = _pdf_text_layer(pdf)
+        self.assertGreater(chars, 200)
+        self.assertIn("Machine learning", markdown)
+        self.assertEqual(markdown.count(PAGE_BREAK_MARKER), 1)
+
+    def test_scanned_pdf_uses_full_page_ocr_and_ocr_text_reaches_sections(self):
+        from .services import parser
+
+        pdf = self._pdf([[]])  # image-only stand-in: no text layer at all
+        calls = []
+
+        def fake_convert(source, use_ocr, full_page_ocr=False):
+            calls.append((use_ocr, full_page_ocr))
+            body = "word " * 80
+            return f"Introduction To Learning\n\n{body}\n\n<!-- page break -->\n\nModels And Training\n\n{body}"
+
+        with patch.object(parser, "_convert_pdf", side_effect=fake_convert):
+            markdown, mode = parser._parse_pdf(pdf, "scan.pdf")
+        self.assertEqual(calls, [(True, True)], "no text layer: exactly one Docling pass, with full-page OCR")
+        self.assertEqual(mode, "ocr_fallback+inferred")
+        sections = parser.extract_sections_from_markdown(markdown)
+        self.assertEqual([s["title"] for s in sections], ["Introduction To Learning", "Models And Training"])
+        self.assertTrue(all(len(s["source_text"]) > 200 for s in sections))
+
+    def test_text_pdf_runs_one_no_ocr_pass_and_keeps_docling_headings(self):
+        from .services import parser
+
+        pdf = self._pdf([["Selectable text about machine learning, repeated for size."] * 8])
+        calls = []
+
+        def fake_convert(source, use_ocr, full_page_ocr=False):
+            calls.append((use_ocr, full_page_ocr))
+            return "## Chapter One\n\n" + "text " * 100 + "\n\n## Chapter Two\n\n" + "more " * 100
+
+        with patch.object(parser, "_convert_pdf", side_effect=fake_convert):
+            markdown, mode = parser._parse_pdf(pdf, "book.pdf")
+        self.assertEqual(calls, [(False, False)])
+        self.assertEqual(mode, "fast_no_ocr")
+        self.assertEqual(len(parser.extract_sections_from_markdown(markdown)), 2)
+
+    def test_docling_dropping_text_falls_back_to_text_layer(self):
+        from .services import parser
+
+        pdf = self._pdf([["Selectable text about machine learning, repeated for size."] * 8])
+        with patch.object(parser, "_convert_pdf", return_value="<!-- image -->\n\n<!-- image -->"):
+            markdown, mode = parser._parse_pdf(pdf, "odd.pdf")
+        self.assertEqual(mode, "text_layer")
+        self.assertIn("machine learning", markdown)
+
+    def test_no_text_anywhere_raises_controlled_error(self):
+        from .services import parser
+
+        pdf = self._pdf([[]])
+        with patch.object(parser, "_convert_pdf", return_value="<!-- image -->\n\n<!-- page break -->\n\n<!-- image -->"):
+            with self.assertRaises(parser.NoExtractableContent) as ctx:
+                parser._parse_pdf(pdf, "blank.pdf")
+        self.assertIn("OCR", str(ctx.exception))
+
+    def test_headingless_pdf_text_becomes_page_group_sections(self):
+        from .services.parser import PAGE_BREAK_MARKER, extract_sections_from_markdown
+
+        page = ("lorem ipsum " * 60).strip()  # ~700 chars, no heading-like lines
+        markdown = f"\n\n{PAGE_BREAK_MARKER}\n\n".join([page] * 20)
+        sections = extract_sections_from_markdown(markdown)
+        self.assertGreater(len(sections), 1)
+        self.assertEqual(sections[0]["index"], 0)
+        self.assertEqual(sections[0]["start_page"], 1)
+        self.assertTrue(sections[0]["title"].startswith("Pages "))
+        self.assertEqual(sections[-1]["end_page"], 20)
+        # Deterministic: re-parsing the same markdown gives identical indices/titles.
+        self.assertEqual([s["title"] for s in extract_sections_from_markdown(markdown)], [s["title"] for s in sections])
+
+    def test_headingless_docx_markdown_keeps_single_section(self):
+        from .services.parser import extract_sections_from_markdown
+
+        sections = extract_sections_from_markdown("Just a paragraph.\n\nAnother paragraph without headings.")
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0]["title"], "Document Content")
+
+    def test_infer_headings_handles_numbered_keyword_and_caps(self):
+        from .services.parser import infer_pdf_headings
+
+        body = "sentence " * 30
+        text = "\n\n".join([
+            "Chapter 1 Introduction", body,
+            "1.1 What is learning", body,
+            "1.2 Kinds of learning", body,
+            "SUPERVISED LEARNING", body,
+            "Chapter 2 Regression", body,
+        ])
+        out, count = infer_pdf_headings(text)
+        self.assertEqual(count, 5)
+        self.assertIn("# Chapter 1 Introduction", out)
+        self.assertIn("## 1.1 What is learning", out)
+        self.assertIn("## SUPERVISED LEARNING", out)
+        self.assertIn("# Chapter 2 Regression", out)
+
+    def test_infer_headings_leaves_list_like_text_alone(self):
+        from .services.parser import infer_pdf_headings
+
+        text = "\n".join(f"Item Number {i}" for i in range(40))
+        out, count = infer_pdf_headings(text)
+        self.assertEqual(count, 0)
+        self.assertEqual(out, text)
+
+    def test_processing_releases_parser_models_before_outline(self):
+        from .services import documents as doc_service
+
+        faculty = make_faculty()
+        subject = make_subject()
+        assign(faculty, subject)
+        document = Document.objects.create(subject=subject, uploaded_by=faculty, original_name="x.pdf", title="x", file_type="pdf", file_size=1)
+        order = []
+
+        def fake_parse(_document):
+            order.append("parse")
+            return {"markdown": "# A\ntext", "markdown_path": "", "headings": [{"index": 0, "level": 1, "title": "A", "start_page": None, "end_page": None}],
+                    "sections": [{"index": 0, "level": 1, "title": "A", "source_text": "text", "start_page": None, "end_page": None}], "parse_mode": "fast_no_ocr"}
+
+        def fake_release():
+            order.append("release")
+
+        def fake_outline(_document, sections, headings):
+            order.append("outline")
+            return {"document_title": "x", "chapters": [{"title": "A", "source_heading_index": 0, "modules": []}]}, "source_hierarchy"
+
+        with patch.object(doc_service, "parse_document", side_effect=fake_parse), \
+                patch.object(doc_service, "release_document_models", side_effect=fake_release), \
+                patch.object(doc_service.outline_service, "build_proposed_outline", side_effect=fake_outline):
+            doc_service.run_processing(document.id)
+        self.assertEqual(order, ["parse", "release", "outline"])
+        document.refresh_from_db()
+        self.assertEqual(document.status, DocumentStatus.UNDER_REVIEW)
+
+    def test_no_extractable_content_is_a_clear_document_error(self):
+        from .services import documents as doc_service
+        from .services.parser import NoExtractableContent
+
+        faculty = make_faculty()
+        subject = make_subject()
+        assign(faculty, subject)
+        document = Document.objects.create(subject=subject, uploaded_by=faculty, original_name="blank.pdf", title="b", file_type="pdf", file_size=1)
+        with patch.object(doc_service, "parse_document", side_effect=NoExtractableContent("No readable text could be extracted, even after OCR.")), \
+                patch.object(doc_service, "release_document_models"):
+            doc_service.run_processing(document.id)
+        document.refresh_from_db()
+        self.assertEqual(document.status, DocumentStatus.ERROR)
+        self.assertIn("even after OCR", document.error_message)
+        self.assertTrue(AuditLog.objects.filter(action="document.processing_failed").exists())
+
+    def test_docling_converter_is_cached_per_configuration_and_released(self):
+        import sys
+        import types
+
+        from .services import parser
+
+        built = []
+
+        class OcrOptions:
+            mode = "regions"
+
+        class PdfPipelineOptions:
+            def __init__(self, **kw):
+                self.do_ocr = False
+                self.do_table_structure = True
+                self.ocr_options = OcrOptions()
+                self.artifacts_path = kw.get("artifacts_path")
+
+        class OcrMode:
+            FULL_PAGE = "full_page"
+
+        class DocumentConverter:
+            def __init__(self, format_options=None):
+                built.append(format_options)
+
+        class PdfFormatOption:
+            def __init__(self, pipeline_options=None):
+                self.pipeline_options = pipeline_options
+
+        class InputFormat:
+            PDF = "pdf"
+
+        pkg = types.ModuleType("docling"); dm = types.ModuleType("docling.datamodel")
+        base = types.ModuleType("docling.datamodel.base_models"); base.InputFormat = InputFormat
+        opts = types.ModuleType("docling.datamodel.pipeline_options"); opts.PdfPipelineOptions = PdfPipelineOptions; opts.OcrMode = OcrMode
+        conv = types.ModuleType("docling.document_converter"); conv.DocumentConverter = DocumentConverter; conv.PdfFormatOption = PdfFormatOption
+        fake = {"docling": pkg, "docling.datamodel": dm, "docling.datamodel.base_models": base,
+                "docling.datamodel.pipeline_options": opts, "docling.document_converter": conv}
+        parser.release_document_models()
+        with patch.dict(sys.modules, fake):
+            a = parser._get_converter(use_ocr=False)
+            b = parser._get_converter(use_ocr=False)
+            c = parser._get_converter(use_ocr=True, full_page_ocr=True)
+            self.assertIs(a, b)
+            self.assertIsNot(a, c)
+            self.assertEqual(len(built), 2)
+            ocr_opts = built[1][InputFormat.PDF].pipeline_options
+            self.assertTrue(ocr_opts.do_ocr)
+            self.assertFalse(ocr_opts.do_table_structure)
+            self.assertEqual(ocr_opts.ocr_options.mode, "full_page")
+            parser.release_document_models()
+            d = parser._get_converter(use_ocr=False)
+            self.assertIsNot(a, d)
+            self.assertEqual(len(built), 3)
+        parser.release_document_models()

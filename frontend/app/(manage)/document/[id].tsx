@@ -1,10 +1,10 @@
 import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Outline, OutlineChapter, OutlineModule } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmAsync } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,6 +28,7 @@ export default function DocumentScreen() {
           {d.status === "processing" ? <Notice message="Parsing the book and drafting an outline. This page refreshes automatically." /> : null}
           {d.status === "error" ? <Notice tone="warning" message={`Processing failed: ${d.error_message || "unknown error"}. You can retry.`} /> : null}
           {d.missing_source_modules ? <Notice tone="warning" message={`${d.missing_source_modules} module(s) have no source text. Point them at a heading or paste text before publishing.`} /> : null}
+          {(d.status === "ready" || d.status === "under_review" || d.status === "unpublished") ? <Notice message="Publishing makes the book visible to enrolled students and opens every module that has source text. You can lock individual modules or chapters afterwards to pace the course." /> : null}
           <ErrorBanner message={act.error} />
           <Row>
             {(d.status === "uploaded" || d.status === "error") ? <Button title="Process" small onPress={() => act.run("process")} busy={act.busy} /> : null}
@@ -44,7 +45,7 @@ export default function DocumentScreen() {
 }
 
 function confirm(msg: string) {
-  return new Promise<boolean>((r) => Alert.alert("Confirm", msg, [{ text: "Cancel", style: "cancel", onPress: () => r(false) }, { text: "Yes", onPress: () => r(true) }]));
+  return confirmAsync("Confirm", msg);
 }
 
 function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; locked: boolean; onSaved: () => void }) {

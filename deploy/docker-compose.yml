@@ -17,8 +17,11 @@ services:
       timeout: 5s
       retries: 10
 
+  # Only needed when AI_PROVIDER=ollama. The default (llamacpp) runs the model
+  # inside the api container from backend/models/*.gguf, fully offline.
   ollama:
     image: ollama/ollama:latest
+    profiles: ["ollama"]
     restart: unless-stopped
     environment:
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
@@ -37,15 +40,18 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://localmind:${POSTGRES_PASSWORD}@db:5432/localmind
+      AI_PROVIDER: ${AI_PROVIDER:-llamacpp}
       OLLAMA_BASE_URL: http://ollama:11434
       MEDIA_ROOT: /app/media
+      WEB_DIST: /app/web
       DJANGO_DEBUG: "false"
     volumes:
       - media:/app/media
       - static:/app/staticfiles
+      - ../backend/models:/app/models:ro
+      - ../frontend/dist:/app/web:ro
     depends_on:
       db: { condition: service_healthy }
-      ollama: { condition: service_started }
 
   # Periodic maintenance: requeue documents abandoned by a recycled worker and
   # flush expired JWT blacklist rows. Runs every 15 minutes.

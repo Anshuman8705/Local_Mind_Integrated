@@ -112,10 +112,15 @@ class AdminSubjectsView(_Base):
 
 
 class AdminAIStatusView(APIView):
-    """Fresh (uncached) Ollama status for the admin dashboard."""
+    """Fresh (uncached) AI status for the admin dashboard, plus the
+    component-level offline-readiness report under ``system``."""
     permission_classes = [IsAdmin]
 
     def get(self, request):
+        from core.system_health import system_status
+
         force = request.query_params.get("refresh") in ("1", "true")
         status = ai_gateway.health(force=force)
-        return Response(status.as_dict())
+        payload = status.as_dict()
+        payload["system"] = system_status()
+        return Response(payload)

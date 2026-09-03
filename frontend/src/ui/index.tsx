@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, RefreshControl, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, useWindowDimensions } from "react-native";
 import { Gradient } from "./Gradient";
 import { bp, colors, font, gradients, radius, radiusSm, space, statusColor } from "./theme";
 
@@ -21,18 +21,46 @@ type IconName = keyof typeof Ionicons.glyphMap;
 export function Screen({ children, scroll = true, refreshing, onRefresh, padded = true, wide }: { children: React.ReactNode; scroll?: boolean; refreshing?: boolean; onRefresh?: () => void; padded?: boolean; wide?: boolean }) {
   const { width } = useWindowDimensions();
   const gutter = width >= bp.desktop ? 34 : width >= bp.tablet ? 24 : 18;
+  // Browsers have no pull-to-refresh, so a screen that offers onRefresh gets a
+  // small refresh control of its own on web; native keeps the pull gesture.
+  const webRefresh = Platform.OS === "web" && onRefresh ? (
+    <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: -space.sm }}>
+      <Button title="Refresh" icon="refresh-outline" variant="ghost" small onPress={onRefresh} busy={!!refreshing} />
+    </View>
+  ) : null;
   const inner = (
-    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.xl, gap: space.md }, { maxWidth: wide ? 1400 : 1100, width: "100%", alignSelf: "center" }]}>
+    // When the screen does not scroll (chat layouts) the inner box must take
+    // the full height and be allowed to shrink, otherwise a child ScrollView
+    // grows with its content on web and pushes the input bar off screen.
+    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.xl, gap: space.md }, { maxWidth: wide ? 1400 : 1100, width: "100%", alignSelf: "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
+      {webRefresh}
       {children}
     </View>
   );
-  if (!scroll) return <View style={{ flex: 1, backgroundColor: colors.bg }}>{inner}</View>;
+  if (!scroll) return <View style={{ flex: 1, minHeight: 0, backgroundColor: colors.bg }}>{inner}</View>;
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={Platform.OS === "web"}
       refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} /> : undefined}>
       {inner}
     </ScrollView>
   );
+}
+
+/**
+ * Yes/no confirmation that works everywhere. React Native Web implements
+ * Alert.alert as a no-op, so a promise built on its button callbacks never
+ * resolves in the browser and the calling button spins forever. On web this
+ * uses window.confirm; on native it uses the platform alert.
+ */
+export function confirmAsync(title: string, message: string, okLabel = "Yes", cancelLabel = "Cancel"): Promise<boolean> {
+  if (Platform.OS === "web") {
+    const w = globalThis as unknown as { confirm?: (m: string) => boolean };
+    return Promise.resolve(typeof w.confirm === "function" ? w.confirm(`${title}\n\n${message}`) : true);
+  }
+  return new Promise<boolean>((resolve) => Alert.alert(title, message, [
+    { text: cancelLabel, style: "cancel", onPress: () => resolve(false) },
+    { text: okLabel, onPress: () => resolve(true) },
+  ], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
 export function Card({ children, style, onPress, accent }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; onPress?: () => void; accent?: string }) {

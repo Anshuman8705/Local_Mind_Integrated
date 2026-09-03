@@ -6,3 +6,8 @@ db.sqlite3
 media/
 staticfiles/
 node_modules/
+backend/models/
+wheelhouse/
+dist/
+frontend/dist/
+frontend/.expo/

@@ -18,7 +18,8 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///<backend>/db.sqlite3` | Any `dj-database-url` string. Production: `postgres://user:password@host:5432/localmind`. Connections are kept open for 60 seconds. |
+| `DATABASE_URL` | `sqlite:///<backend>/db.sqlite3` | Any `dj-database-url` string. Production: `postgres://user:password@host:5432/localmind`. Connections are kept open for 600 seconds. |
+| `SQLITE_BUSY_TIMEOUT_SECONDS` | `30` | SQLite only. How long a writer waits for the database lock before failing. The SQLite database runs in WAL mode with `IMMEDIATE` transactions, so `db.sqlite3-wal` and `db.sqlite3-shm` appear next to the database file while the server runs; back up all three together, or stop the server first. |
 
 ## Media and uploads
 
@@ -52,17 +53,27 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 | Variable | Default | Notes |
 |---|---|---|
 | `AI_ENABLED` | `true` | Master switch. When false every AI-dependent feature uses its fallback (source-hierarchy outlines, placeholder quizzes that cannot be published, deterministic lessons) and free-form questions return `AI_UNAVAILABLE`. Always forced false under the test runner. |
-| `AI_PROVIDER` | `ollama` | Only `ollama` is implemented; the gateway is the place to add another. |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | |
+| `AI_PROVIDER` | `llamacpp` | `llamacpp` runs the model inside the backend from a local GGUF file (default; fully offline, nothing to install). `ollama` talks to a local Ollama daemon. The gateway is the place to add a cloud provider later. |
+| `AI_MODEL_PATH` | *(empty)* | llamacpp: absolute path to the `.gguf`. When empty the file is `backend/models/<AI_MODEL_FILE>`. |
+| `AI_MODEL_FILE` | `Qwen3-1.7B-Q4_K_M.gguf` | llamacpp: file name under `backend/models/`; validated (size, GGUF header) before loading. |
+| `AI_MODEL_REPO` | `unsloth/Qwen3-1.7B-GGUF` | Hugging Face repo `manage.py fetch_model` downloads from, once, at packaging time. Never used at runtime. |
+| `AI_THREADS` | `0` | llamacpp: inference threads; 0 = all cores but one. |
+| `AI_GPU_LAYERS` | `0` | llamacpp: layers offloaded to a GPU when the wheel was built with CUDA/Metal. |
+| `AI_BATCH` | `256` | llamacpp: prompt batch size. llama.cpp keeps a float32 logits buffer of this many rows by the 152k vocabulary (~150 MB at 256, ~300 MB at 512); raise only on machines with RAM to spare. |
+| `AI_LOAD_RETRY_SECONDS` | `60` | llamacpp: after a transient load failure (out of memory while a document was being parsed) the model load is retried after this many seconds. |
+| `DOCLING_ARTIFACTS` | `backend/models/docling` | Local Docling layout models (`fetch_model --docling`). When present the parser never downloads. |
+| `SERVE_WEB` / `WEB_DIST` | `true` / `frontend/dist` | Serve the built web client from Django when the build exists (standalone mode). |
+| `SERVE_MEDIA` | same as `SERVE_WEB` | Serve `/media/` from Django when there is no reverse proxy. |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama provider only. |
 | `OLLAMA_TUTOR_MODEL` | `qwen3:1.7b` | Used for lessons, free-form questions, quiz and assignment generation, subjective evaluation and remediation. Must match an `ollama list` entry exactly. |
 | `OLLAMA_OUTLINE_MODEL` | `qwen3:1.7b` | Used only while a book is processed to group headings into chapters and modules. A larger model (`qwen3:4b`) improves structure quality at the cost of processing time; the default keeps a single model resident. |
-| `OLLAMA_TIMEOUT_SECONDS` | `120` | Per-call timeout; a timeout is reported as `error_code: timeout` and triggers the fallback. Keep this below the gunicorn worker timeout. |
-| `OLLAMA_NUM_CTX` | `16384` | Context window requested per call. Ollama's own default is 4096 tokens, which silently truncates the 14k-character source prompts this app sends. qwen3:1.7b supports 32k; do not go below 8192. |
-| `OLLAMA_NUM_PREDICT` | `4096` | Cap on generated tokens so a runaway completion cannot hold a worker until the timeout. A 10-question quiz or a full lesson fits well inside it. |
+| `OLLAMA_TIMEOUT_SECONDS` | `120` | Both providers (name kept for compatibility). Per-call timeout; for llamacpp it bounds the wait for a busy model, since a running generation cannot be interrupted; a timeout is reported as `error_code: timeout` and triggers the fallback. Keep this below the gunicorn worker timeout. |
+| `OLLAMA_NUM_CTX` | `16384` | Both providers. Context window per call. Ollama's own default is 4096 tokens, which silently truncates the 14k-character source prompts this app sends. qwen3:1.7b supports 32k; do not go below 8192. |
+| `OLLAMA_NUM_PREDICT` | `4096` | Both providers. Cap on generated tokens so a runaway completion cannot hold a worker until the timeout. A 10-question quiz or a full lesson fits well inside it. |
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a call, so the next student does not pay the load time. |
-| `OLLAMA_MAX_RETRIES` | `1` | Retries when the model returns empty, truncated, malformed or off-schema JSON. The retry runs at temperature 0 with the rejection reason in the prompt. Timeouts and connection errors are never retried. `0` disables. |
+| `OLLAMA_MAX_RETRIES` | `1` | Both providers. Retries when the model returns empty, truncated, malformed or off-schema JSON. The retry runs at temperature 0 with the rejection reason in the prompt. Timeouts and connection errors are never retried. `0` disables. |
 | `AI_MAX_SOURCE_CHARS` | `14000` | Character budget for source text embedded in a prompt, cut on a paragraph boundary. Roughly 4000 tokens; raise only together with `OLLAMA_NUM_CTX`. |
-| `AI_HEALTH_CACHE_SECONDS` | `30` | How long `/api/health/` and the admin dashboard reuse the last Ollama reachability probe. |
+| `AI_HEALTH_CACHE_SECONDS` | `30` | How long `/api/health/` and the admin dashboard reuse the last AI readiness probe. |
 
 ## Production security (applied only when DJANGO_DEBUG is false)
 

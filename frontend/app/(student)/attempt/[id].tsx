@@ -18,7 +18,7 @@ export default function AttemptScreen() {
       {a ? (
         <>
           <H1>{a.assessment_title ?? "Quiz result"}</H1>
-          {a.status === "pending_evaluation" ? <Notice tone="warning" message="Your written answers are awaiting evaluation. Multiple-choice questions are already scored; pull to refresh later." /> : null}
+          {a.status === "pending_evaluation" ? <Notice tone="warning" message="Your written answers are awaiting evaluation. Multiple-choice questions are already scored; refresh later to see the rest." /> : null}
           <Row>
             <Stat label="score" value={a.score != null ? `${a.score}/${a.total_questions}` : "—"} />
             <Stat label="percentage" value={pct(a.percentage)} />

@@ -89,22 +89,24 @@ def create_manual(actor, *, module_id=None, chapter_id=None, title=None, questio
     return assessment
 
 
-@transaction.atomic
 def generate(actor, *, module_id=None, chapter_id=None, num_mcqs=6, num_subjective=0, title=None, pass_percentage=None, request=None, **options):
+    """The question-generation model call runs outside any transaction so the
+    SQLite write lock is not held for the length of the call."""
     subject, chapter, module, source_text, default_title, kind = _target(actor, module_id, chapter_id)
     _require_manage(actor, subject)
     if num_mcqs + num_subjective <= 0 or num_mcqs > 30 or num_subjective > 10:
         raise ValidationFailed("Ask for 1-30 MCQs and 0-10 subjective questions.", code="INVALID_COUNTS")
     previous = [q["question"] for a in Assessment.objects.filter(module=module, chapter=chapter).order_by("-created_at")[:5] for q in a.questions]
     questions, generator, error = generate_questions(source_text, default_title, num_mcqs, num_subjective, previous)
-    assessment = Assessment.objects.create(
-        subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],
-        questions=questions, generator=generator, created_by=actor,
-        pass_percentage=pass_percentage or settings.LOCALMIND["DEFAULT_PASS_PERCENTAGE"],
-        content_version_at_creation=chapter.document.content_version,
-        **{k: v for k, v in options.items() if k in ("instructions", "max_attempts", "time_limit_minutes", "available_from", "due_at")},
-    )
-    audit.record(actor, "quiz.generated", assessment, {"generator": generator, "ai_error": error[:200], "questions": len(questions)}, request)
+    with transaction.atomic():
+        assessment = Assessment.objects.create(
+            subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],
+            questions=questions, generator=generator, created_by=actor,
+            pass_percentage=pass_percentage or settings.LOCALMIND["DEFAULT_PASS_PERCENTAGE"],
+            content_version_at_creation=chapter.document.content_version,
+            **{k: v for k, v in options.items() if k in ("instructions", "max_attempts", "time_limit_minutes", "available_from", "due_at")},
+        )
+        audit.record(actor, "quiz.generated", assessment, {"generator": generator, "ai_error": error[:200], "questions": len(questions)}, request)
     return assessment, error
 
 
@@ -157,6 +159,7 @@ def set_status(actor, assessment, status, request=None):
         if assessment.generator == Generator.FALLBACK and any("Placeholder distractor" in o["text"] for q in assessment.questions if q["type"] == "mcq" for o in q["options"]):
             raise Conflict("Fallback-generated questions contain placeholders; edit them before publishing.", code="PLACEHOLDER_QUESTIONS")
         assessment.status, assessment.published_at = status, timezone.now()
+        learning.open_target_modules(actor, assessment, "quiz.published", request)
     elif status == AssessmentStatus.CLOSED:
         if assessment.status != AssessmentStatus.PUBLISHED:
             raise Conflict("Only published quizzes can be closed.", code="INVALID_STATE")
@@ -259,37 +262,50 @@ def _finalize(attempt, score, results, pending, actor=None):
     return attempt
 
 
-@transaction.atomic
 def submit_attempt(student, attempt_id, submitted_answers, request=None):
-    try:
-        attempt = AssessmentAttempt.objects.select_for_update(of=("self",)).select_related("assessment__module", "assessment__chapter").get(pk=attempt_id, student=student)
-    except (AssessmentAttempt.DoesNotExist, ValueError):
-        raise NotFound("Attempt not found.")
-    if attempt.status != AttemptStatus.IN_PROGRESS:
-        raise Conflict("This attempt has already been submitted.", code="ALREADY_SUBMITTED")
+    """Two short transactions with the grading step between them.
+
+    The first records the answers and moves the attempt to SUBMITTED, which
+    is what makes a duplicate submit fail with ALREADY_SUBMITTED. Grading may
+    call the model once per subjective question, so it runs with no
+    transaction open; the second transaction stores the result. If grading
+    raises, the attempt stays SUBMITTED with its answers intact and can be
+    re-evaluated by faculty.
+    """
     if not isinstance(submitted_answers, dict):
         raise ValidationFailed(details={"submitted_answers": "Must be an object keyed by question id."})
-    now = timezone.now()
-    elapsed = int((now - attempt.started_at).total_seconds())
-    cap = settings.LOCALMIND["MAX_QUIZ_DURATION_HOURS"] * 3600
-    attempt.submitted_at = now
-    attempt.time_taken_seconds = max(0, min(elapsed, cap))
-    attempt.submitted_answers = {str(k): (str(v) if v is not None else "") for k, v in submitted_answers.items()}
-    limit = attempt.assessment.time_limit_minutes
-    if limit and elapsed > limit * 60 + 60:
-        attempt.evaluation_notes = {"late_by_seconds": elapsed - limit * 60}
+    with transaction.atomic():
+        try:
+            attempt = AssessmentAttempt.objects.select_for_update(of=("self",)).select_related("assessment__module", "assessment__chapter").get(pk=attempt_id, student=student)
+        except (AssessmentAttempt.DoesNotExist, ValueError):
+            raise NotFound("Attempt not found.")
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            raise Conflict("This attempt has already been submitted.", code="ALREADY_SUBMITTED")
+        now = timezone.now()
+        elapsed = int((now - attempt.started_at).total_seconds())
+        cap = settings.LOCALMIND["MAX_QUIZ_DURATION_HOURS"] * 3600
+        attempt.submitted_at = now
+        attempt.time_taken_seconds = max(0, min(elapsed, cap))
+        attempt.submitted_answers = {str(k): (str(v) if v is not None else "") for k, v in submitted_answers.items()}
+        limit = attempt.assessment.time_limit_minutes
+        if limit and elapsed > limit * 60 + 60:
+            attempt.evaluation_notes = {"late_by_seconds": elapsed - limit * 60}
+        attempt.status = AttemptStatus.SUBMITTED
+        attempt.save()
     score, results, pending = _grade(attempt.assessment, attempt.submitted_answers)
-    attempt = _finalize(attempt, score, results, pending)
-    from activity.services import record_event
-    record_event(student, "quiz", attempt.time_taken_seconds, subject=attempt.assessment.subject, module=attempt.assessment.module, reference_id=attempt.id)
-    audit.record(student, "quiz.attempt_submitted", attempt, {"percentage": attempt.percentage, "status": attempt.status,
-                                                               "time_taken_seconds": attempt.time_taken_seconds}, request)
+    with transaction.atomic():
+        attempt = _finalize(attempt, score, results, pending)
+        from activity.services import record_event
+        record_event(student, "quiz", attempt.time_taken_seconds, subject=attempt.assessment.subject, module=attempt.assessment.module, reference_id=attempt.id)
+        audit.record(student, "quiz.attempt_submitted", attempt, {"percentage": attempt.percentage, "status": attempt.status,
+                                                                   "time_taken_seconds": attempt.time_taken_seconds}, request)
     return attempt
 
 
-@transaction.atomic
 def re_evaluate(actor, attempt, overrides=None, request=None):
-    """Faculty: re-run pending subjective items, or override scores per question."""
+    """Faculty: re-run pending subjective items, or override scores per question.
+
+    Model calls happen before the transaction opens (see submit_attempt)."""
     _require_manage(actor, attempt.assessment.subject)
     if attempt.status == AttemptStatus.IN_PROGRESS:
         raise Conflict("The attempt has not been submitted.", code="NOT_SUBMITTED")
@@ -312,6 +328,7 @@ def re_evaluate(actor, attempt, overrides=None, request=None):
             else:
                 pending = True
         score += row.get("score_awarded") or 0.0
-    attempt = _finalize(attempt, score, attempt.detailed_results, pending, actor=actor)
-    audit.record(actor, "quiz.attempt_reevaluated", attempt, {"overrides": list(overrides.keys()), "status": attempt.status}, request)
+    with transaction.atomic():
+        attempt = _finalize(attempt, score, attempt.detailed_results, pending, actor=actor)
+        audit.record(actor, "quiz.attempt_reevaluated", attempt, {"overrides": list(overrides.keys()), "status": attempt.status}, request)
     return attempt

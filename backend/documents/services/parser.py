@@ -1,7 +1,9 @@
+import gc
 import html
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
@@ -14,6 +16,15 @@ os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
 
 logger = logging.getLogger(__name__)
 
+
+class NoExtractableContent(ValueError):
+    """Raised when a document yields no usable text after every extraction
+    strategy (text layer, Docling layout parsing, OCR). Carries a message the
+    faculty screen can show as-is."""
+
+    code = "NO_EXTRACTABLE_CONTENT"
+
+
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 INLINE_HEADING_RE = re.compile(
     r"^(?P<prefix>.+?\S)\s+(?P<marks>#{1,6})\s+(?P<title>[^#\s].{1,240})$"
@@ -21,6 +32,10 @@ INLINE_HEADING_RE = re.compile(
 PAGE_BREAK_MARKER = "<!-- page break -->"
 IMAGE_MARKER_RE = re.compile(r"<!--\s*image\s*-->", re.IGNORECASE)
 MIN_MEANINGFUL_TEXT_CHARS = 200
+# A PDF with fewer heading-like lines than this gets heading inference; a
+# section built from page groups aims at roughly this many characters.
+MIN_STRUCTURED_HEADINGS = 2
+PAGE_GROUP_TARGET_CHARS = 6000
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{W_NS}}}"
@@ -76,8 +91,15 @@ def _split_inline_markdown_headings(markdown: str) -> str:
         title = match.group("title").strip()
 
         # Require a meaningful prefix and title. This avoids splitting tiny
-        # fragments that merely mention '#' characters.
+        # fragments that merely mention '#' characters. The prefix must also
+        # end like a sentence and the title must start like one: a Python
+        # comment ("total = x + y  # add them") or a prose "item # 3" must not
+        # be turned into a heading, or a code listing in a textbook would be
+        # shredded into dozens of bogus sections.
         if len(prefix) < 3 or len(title) < 2:
+            normalized_lines.append(raw_line)
+            continue
+        if prefix[-1] not in ".!?:;\"')" or not (title[0].isupper() or title[0].isdigit()):
             normalized_lines.append(raw_line)
             continue
 
@@ -150,13 +172,24 @@ def extract_sections_from_markdown(markdown: str):
         content_lines = lines[heading["line_number"] + 1 : boundary_line]
         source_text = _clean_source_text("\n".join(content_lines))
 
+        # Text that belongs to this heading alone, before its first
+        # sub-heading. A chapter's introduction lives here; the outline uses
+        # it so that text is not lost when the chapter is split into modules.
+        own_boundary = boundary_line
+        for candidate in heading_rows[position + 1 :]:
+            if candidate["line_number"] >= boundary_line:
+                break
+            own_boundary = candidate["line_number"]
+            break
+        own_text = _clean_source_text("\n".join(lines[heading["line_number"] + 1 : own_boundary]))
+
         end_page = heading["start_page"]
         if has_page_markers:
-            for page in reversed(
-                line_pages[heading["line_number"] + 1 : boundary_line]
-            ):
-                if page is not None:
-                    end_page = page
+            # Walk back over the section's non-blank lines; the blank lines
+            # that follow a page break must not push end_page onto the next page.
+            for line_index in range(boundary_line - 1, heading["line_number"], -1):
+                if lines[line_index].strip() and line_pages[line_index] is not None:
+                    end_page = line_pages[line_index]
                     break
 
         sections.append(
@@ -165,10 +198,18 @@ def extract_sections_from_markdown(markdown: str):
                 "level": heading["level"],
                 "title": heading["title"],
                 "source_text": source_text,
+                "own_text": own_text,
                 "start_page": heading["start_page"],
                 "end_page": end_page,
             }
         )
+
+    if not sections and has_page_markers:
+        # Docling PDF output with no headings at all (scanned book, OCR text,
+        # slides). Page groups give faculty something reviewable and editable
+        # instead of one monolithic block. DOCX output has no page markers, so
+        # its single-section behaviour below is untouched.
+        sections = _page_group_sections(lines, line_pages, current_page)
 
     if not sections:
         cleaned_document_text = _clean_source_text(
@@ -190,6 +231,50 @@ def extract_sections_from_markdown(markdown: str):
                 }
             )
 
+    return sections
+
+
+def _page_group_sections(lines, line_pages, last_page):
+    """Split heading-less PDF text into consecutive page groups of roughly
+    PAGE_GROUP_TARGET_CHARS characters. Deterministic for a given markdown, so
+    re-loading the processed file reproduces the same indices."""
+    pages = {}
+    for line, page in zip(lines, line_pages):
+        pages.setdefault(page or 1, []).append(line)
+    ordered = sorted(pages)
+    groups = []
+    current, current_chars = [], 0
+    for page in ordered:
+        text = _clean_source_text("\n".join(pages[page]))
+        if not text:
+            continue
+        current.append((page, text))
+        current_chars += len(text)
+        if current_chars >= PAGE_GROUP_TARGET_CHARS:
+            groups.append(current)
+            current, current_chars = [], 0
+    if current:
+        # A small trailing remainder joins the previous group rather than
+        # becoming a stub section of its own.
+        if groups and current_chars < PAGE_GROUP_TARGET_CHARS // 3:
+            groups[-1].extend(current)
+        else:
+            groups.append(current)
+
+    sections = []
+    for index, group in enumerate(groups):
+        start, end = group[0][0], group[-1][0]
+        title = f"Page {start}" if start == end else f"Pages {start}-{end}"
+        sections.append(
+            {
+                "index": index,
+                "level": 1,
+                "title": title,
+                "source_text": "\n\n".join(text for _, text in group),
+                "start_page": start,
+                "end_page": end,
+            }
+        )
     return sections
 
 
@@ -339,6 +424,26 @@ def _docx_table_to_markdown(table):
     return result
 
 
+def _docx_body_blocks(body):
+    """Yield the paragraphs and tables of a document body in order, looking
+    inside content controls (``w:sdt``). Word wraps cover pages, bibliographies
+    and any block a template author marks up in an sdt; ignoring those lost
+    their text. A generated table of contents is also an sdt, and its entries
+    are page-number noise rather than content, so that one is skipped.
+    """
+    for child in list(body):
+        if child.tag == f"{W}sdt":
+            gallery = child.find(f"./{W}sdtPr/{W}docPartObj/{W}docPartGallery")
+            if gallery is not None and "table of contents" in (gallery.get(f"{W}val") or "").lower():
+                continue
+            content = child.find(f"{W}sdtContent")
+            if content is not None:
+                yield from _docx_body_blocks(content)
+            continue
+        if child.tag in (f"{W}p", f"{W}tbl"):
+            yield child
+
+
 def _convert_docx(source: Path):
     """
     Convert DOCX to Markdown using Word's real paragraph styles.
@@ -360,7 +465,7 @@ def _convert_docx(source: Path):
 
     lines = []
 
-    for child in list(body):
+    for child in _docx_body_blocks(body):
         if child.tag == f"{W}p":
             text = _docx_paragraph_text(child)
             if not text:
@@ -385,35 +490,266 @@ def _convert_docx(source: Path):
     return _split_inline_markdown_headings("\n".join(lines)).strip()
 
 
-def _convert_pdf(source: Path, use_ocr: bool):
-    from docling.datamodel.base_models import InputFormat
+# ---- Docling / OCR lifecycle -------------------------------------------------
+#
+# Docling's layout model (PyTorch) and the RapidOCR models are large. They are
+# created once per configuration and cached for the duration of a processing
+# job, so the no-OCR and OCR passes of one document, or several documents in a
+# row, do not reload them; ``release_document_models()`` then drops them so
+# the embedded LLM has the RAM back before the outline call. The cache lives
+# in this module (one per process), guarded by a lock.
+
+_converter_lock = threading.Lock()
+_converters = {}
+
+
+def _pdf_pipeline_options(use_ocr: bool, full_page_ocr: bool):
     from docling.datamodel.pipeline_options import PdfPipelineOptions
+
+    options = PdfPipelineOptions()
+    options.do_ocr = use_ocr
+    options.do_table_structure = False
+    if use_ocr and full_page_ocr:
+        # Scanned pages carry no text layer (or a garbage one); OCR every
+        # page in full instead of only the bitmap regions Docling detects.
+        _enable_full_page_ocr(options.ocr_options)
+    # Offline: Docling normally fetches its layout models from Hugging Face on
+    # first use. `manage.py fetch_model --docling` stores them locally and we
+    # point the pipeline at that folder so no network is ever needed.
+    artifacts = docling_artifacts_dir()
+    if artifacts is not None:
+        options.artifacts_path = str(artifacts)
+    return options
+
+
+def _enable_full_page_ocr(ocr_options):
+    """Docling >= 2.9x expresses this as ``mode=OcrMode.FULL_PAGE`` and only
+    honours the older ``force_full_page_ocr`` flag at construction time;
+    earlier releases know just the flag. Set whichever the installed version
+    understands."""
+    try:
+        from docling.datamodel.pipeline_options import OcrMode
+
+        if hasattr(ocr_options, "mode"):
+            ocr_options.mode = OcrMode.FULL_PAGE
+            return
+    except ImportError:
+        pass
+    if hasattr(ocr_options, "force_full_page_ocr"):
+        ocr_options.force_full_page_ocr = True
+
+
+def _get_converter(use_ocr: bool, full_page_ocr: bool = False):
+    """One DocumentConverter per (ocr, full-page) configuration per process."""
+    from docling.datamodel.base_models import InputFormat
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = use_ocr
-    pipeline_options.do_table_structure = False
-
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=pipeline_options,
+    key = (bool(use_ocr), bool(use_ocr and full_page_ocr), str(docling_artifacts_dir() or ""))
+    with _converter_lock:
+        converter = _converters.get(key)
+        if converter is None:
+            logger.info("LocalMind: initialising Docling converter (ocr=%s, full_page_ocr=%s)", key[0], key[1])
+            converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=_pdf_pipeline_options(use_ocr, full_page_ocr)),
+                }
             )
-        }
-    )
+            _converters[key] = converter
+        else:
+            logger.info("LocalMind: reusing Docling converter (ocr=%s, full_page_ocr=%s)", key[0], key[1])
+        return converter
 
+
+def release_document_models():
+    """Drop cached Docling/OCR converters and their PyTorch models. Called
+    when a processing job finishes (before the LLM is asked for an outline)
+    so the two families of models are not resident at the same time."""
+    with _converter_lock:
+        count = len(_converters)
+        _converters.clear()
+    if count:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():  # pragma: no cover - CPU hosts
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        logger.info("LocalMind: released %s Docling converter(s) and their models", count)
+
+
+def _convert_pdf(source: Path, use_ocr: bool, full_page_ocr: bool = False):
+    converter = _get_converter(use_ocr, full_page_ocr)
     result = converter.convert(source)
     return result.document.export_to_markdown(
         page_break_placeholder=PAGE_BREAK_MARKER,
     )
 
 
+def _pdf_text_layer(source: Path, max_pages: int = 400):
+    """Read the PDF's own text layer with pypdfium2 (a Docling dependency).
+
+    Returns (markdown_with_page_breaks, meaningful_chars). Cheap, needs no
+    model, and is used twice: to decide up front whether OCR is required, and
+    as a last resort when Docling's layout pass drops text it did find.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except Exception as exc:  # pragma: no cover - pypdfium2 ships with docling
+        logger.warning("LocalMind: pypdfium2 unavailable (%s); skipping text-layer probe", exc)
+        return "", 0
+    pages_text = []
+    meaningful = 0
+    try:
+        pdf = pdfium.PdfDocument(str(source))
+        try:
+            for page_index in range(min(len(pdf), max_pages)):
+                page = pdf[page_index]
+                try:
+                    text = page.get_textpage().get_text_range() or ""
+                finally:
+                    page.close()
+                text = _clean_source_text(text)
+                meaningful += sum(char.isalnum() for char in text)
+                pages_text.append(text)
+        finally:
+            pdf.close()
+    except Exception as exc:
+        logger.warning("LocalMind: pypdfium2 could not read %s (%s)", source.name, exc)
+        return "", 0
+    markdown = f"\n\n{PAGE_BREAK_MARKER}\n\n".join(pages_text)
+    return markdown, meaningful
+
+
+def docling_artifacts_dir():
+    """Local Docling model folder (backend/models/docling by default) when it
+    has been populated; None means Docling uses its own cache/downloads."""
+    from django.conf import settings
+
+    folder = Path(settings.AI.get("DOCLING_ARTIFACTS") or Path(settings.BASE_DIR) / "models" / "docling")
+    if folder.is_dir() and any(folder.iterdir()):
+        # Belt and braces: even if a sub-model is missing, never phone home.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        return folder
+    return None
+
+
 def _convert_legacy_or_other(source: Path):
     from docling.document_converter import DocumentConverter
 
-    converter = DocumentConverter()
+    artifacts = docling_artifacts_dir()
+    converter = DocumentConverter() if artifacts is None else _converter_with_artifacts(artifacts)
     result = converter.convert(source)
     return result.document.export_to_markdown()
+
+
+def _converter_with_artifacts(artifacts: Path):
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
+    options = PdfPipelineOptions(artifacts_path=str(artifacts))
+    return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)})
+
+
+# ---- PDF structure inference ---------------------------------------------------
+
+_NUMBERED_HEADING_RE = re.compile(r"^(?P<num>\d{1,2}(?:\.\d{1,2}){0,3})\.?\s+(?P<title>[A-Za-z][^\n]{2,90})$")
+_KEYWORD_HEADING_RE = re.compile(
+    r"^(?:chapter|unit|part|section|lesson|module|lecture|topic|appendix)\s+(?:\d{1,3}|[ivxlc]{1,6})\b[\s:.\-]*(?P<title>.{0,90})$",
+    re.IGNORECASE,
+)
+_ROMAN_HEADING_RE = re.compile(r"^(?P<num>[IVXLC]{1,6})[.)]\s+(?P<title>[A-Za-z][^\n]{2,80})$")
+_TERMINAL_PUNCT = ".,;:!?"
+
+
+def _heading_like(line, previous_blank, next_line):
+    """Return (level, title) if a plain text line reads like a heading, else None."""
+    text = line.strip()
+    if not text or len(text) > 100 or text.startswith(("-", "*", "|", ">", "<", "#", "!", "[")):
+        return None
+    if text[-1] in _TERMINAL_PUNCT and not _NUMBERED_HEADING_RE.match(text):
+        return None
+    words = text.split()
+    if not any(char.isalpha() for char in text):
+        return None
+
+    match = _KEYWORD_HEADING_RE.match(text)
+    if match and len(words) <= 14:
+        return 1, text
+    match = _NUMBERED_HEADING_RE.match(text)
+    if match and len(words) <= 14:
+        depth = match.group("num").count(".") + 1
+        return min(depth, 3), text
+    match = _ROMAN_HEADING_RE.match(text)
+    if match and len(words) <= 12:
+        return 1, text
+
+    letters = [char for char in text if char.isalpha()]
+    if len(letters) >= 4 and len(words) <= 10 and all(char.isupper() for char in letters):
+        return 2, text
+
+    # Title Case: most words capitalised, short, set off by a blank line above
+    # and followed by a real paragraph. OCR noise rarely satisfies all three.
+    if previous_blank and 2 <= len(words) <= 10 and next_line and len(next_line.strip()) > 80:
+        capitalised = sum(1 for w in words if w[0].isupper())
+        if capitalised / len(words) >= 0.7 and not text.endswith(","):
+            return 2, text
+    return None
+
+
+def _count_markdown_headings(markdown):
+    return sum(1 for line in markdown.splitlines() if HEADING_RE.match(line.strip()))
+
+
+def infer_pdf_headings(markdown):
+    """Promote heading-like plain lines in PDF markdown to Markdown headings.
+
+    Docling marks headings only where its layout model recognises them; OCR
+    text and simply laid-out PDFs often arrive with none. This adds `#` lines
+    for numbered, keyword ("Chapter 3"), all-caps and Title-Case lines, keeps
+    every existing heading, and never changes body text. It is deterministic,
+    so the processed markdown on disk reproduces the same sections later.
+    """
+    lines = markdown.splitlines()
+    candidates = []
+    in_table = False
+    for position, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped.startswith("|"):
+            in_table = True
+            continue
+        if in_table and not stripped:
+            in_table = False
+        if in_table or not stripped or HEADING_RE.match(stripped) or stripped == PAGE_BREAK_MARKER:
+            continue
+        previous_blank = position == 0 or not lines[position - 1].strip() or lines[position - 1].strip() == PAGE_BREAK_MARKER
+        next_line = ""
+        for follow in lines[position + 1 : position + 4]:
+            if follow.strip() and follow.strip() != PAGE_BREAK_MARKER:
+                next_line = follow
+                break
+        found = _heading_like(stripped, previous_blank, next_line)
+        if found:
+            candidates.append((position, found[0], found[1]))
+
+    body_chars = sum(len(line.strip()) for line in lines if line.strip() and line.strip() != PAGE_BREAK_MARKER)
+    heading_chars = sum(len(title) for _, _, title in candidates)
+    if len(candidates) < MIN_STRUCTURED_HEADINGS or heading_chars > 0.2 * body_chars:
+        # Too few to help, or headings would make up a fifth of the text: that
+        # is a list or a slide deck where every line looks like a title.
+        return markdown, 0
+
+    for position, level, title in candidates:
+        lines[position] = f"{'#' * level} {title}"
+    return "\n".join(lines), len(candidates)
+
+
+def _has_text(markdown):
+    """True when anything but image/page markers and whitespace remains."""
+    without_breaks = "\n".join(line for line in str(markdown or "").splitlines() if line.strip() != PAGE_BREAK_MARKER)
+    return bool(_clean_source_text(without_breaks))
 
 
 def load_processed_sections(document):
@@ -428,6 +764,83 @@ def load_processed_sections(document):
     return extract_sections_from_markdown(markdown)
 
 
+def _parse_pdf(source: Path, original_name: str):
+    """PDF strategy, cheapest first:
+
+    1. Read the text layer with pypdfium2 to decide whether OCR is needed.
+    2. Text layer present: one Docling pass without OCR (layout + headings).
+       If Docling drops the text the text layer already gave us, use that.
+    3. No text layer (scanned) or nothing usable: one Docling pass with
+       full-page OCR.
+    4. Whatever came out, infer headings when Docling found fewer than two.
+    Each Docling pass reuses the cached converter; the models are released
+    by the caller when the job is done.
+    """
+    layer_markdown, layer_chars = _pdf_text_layer(source)
+    has_text_layer = layer_chars >= MIN_MEANINGFUL_TEXT_CHARS
+    logger.info(
+        "LocalMind: PDF text layer for %s: %s meaningful characters (%s)",
+        original_name, layer_chars, "will parse without OCR" if has_text_layer else "will OCR",
+    )
+
+    markdown, parse_mode = "", ""
+    docling_error = None
+    if has_text_layer:
+        try:
+            markdown = _convert_pdf(source, use_ocr=False)
+        except Exception as exc:  # Docling missing, model files absent, torch failure
+            docling_error = exc
+            logger.warning("LocalMind: Docling layout pass unavailable for %s (%s)", original_name, exc)
+            markdown = ""
+        if _has_meaningful_text(markdown):
+            parse_mode = "fast_no_ocr"
+        elif _has_meaningful_text(layer_markdown):
+            logger.warning(
+                "LocalMind: Docling layout pass returned no usable text for %s; using the PDF text layer directly",
+                original_name,
+            )
+            markdown, parse_mode = layer_markdown, "text_layer"
+
+    if not parse_mode:
+        logger.info("LocalMind: running OCR (full page) for %s", original_name)
+        try:
+            markdown = _convert_pdf(source, use_ocr=True, full_page_ocr=True)
+            parse_mode = "ocr_fallback"
+        except Exception as exc:
+            # An offline install without Docling (or without its model files)
+            # can still serve any PDF that carries a text layer; only scans
+            # genuinely need OCR. Surface a precise message for those.
+            docling_error = docling_error or exc
+            logger.warning("LocalMind: OCR pass unavailable for %s (%s)", original_name, exc)
+            if _has_meaningful_text(layer_markdown):
+                markdown, parse_mode = layer_markdown, "text_layer"
+            else:
+                raise NoExtractableContent(
+                    f"{original_name} needs OCR (it has no usable text layer) but the OCR engine is not available "
+                    f"on this machine: {docling_error}. Install Docling with its models (python manage.py fetch_model "
+                    "--docling) or upload a PDF that contains selectable text."
+                ) from exc
+        if not _has_meaningful_text(markdown) and _has_meaningful_text(layer_markdown):
+            # OCR found less than the (weak) text layer did; keep the better one.
+            markdown, parse_mode = layer_markdown, "text_layer"
+
+    if not _has_text(markdown):
+        raise NoExtractableContent(
+            f"No readable text could be extracted from {original_name}: the PDF has no text layer and OCR "
+            "produced nothing. Check that the pages are not blank, rotated, or scanned at a very low resolution."
+        )
+
+    if _count_markdown_headings(markdown) < MIN_STRUCTURED_HEADINGS:
+        markdown, inferred = infer_pdf_headings(markdown)
+        if inferred:
+            logger.info("LocalMind: inferred %s headings for %s (%s)", inferred, original_name, parse_mode)
+            parse_mode = f"{parse_mode}+inferred"  # stays within the 30-char column
+        else:
+            logger.info("LocalMind: no heading structure in %s; sections will follow page groups", original_name)
+
+    return markdown, parse_mode
+
+
 def parse_document(document):
     from django.conf import settings
 
@@ -435,22 +848,7 @@ def parse_document(document):
     extension = source.suffix.lower()
 
     if extension == ".pdf":
-        logger.info(
-            "LocalMind: trying PDF extraction without OCR for %s",
-            document.original_name,
-        )
-
-        markdown = _convert_pdf(source, use_ocr=False)
-
-        if _has_meaningful_text(markdown):
-            parse_mode = "fast_no_ocr"
-        else:
-            logger.info(
-                "LocalMind: insufficient text; retrying with OCR for %s",
-                document.original_name,
-            )
-            markdown = _convert_pdf(source, use_ocr=True)
-            parse_mode = "ocr_fallback"
+        markdown, parse_mode = _parse_pdf(source, document.original_name)
 
     elif extension == ".docx":
         logger.info(
@@ -467,9 +865,10 @@ def parse_document(document):
 
     markdown = _split_inline_markdown_headings(markdown)
 
-    if not markdown.strip():
-        raise ValueError(
-            "No readable content could be extracted from this document."
+    if not _has_text(markdown):
+        raise NoExtractableContent(
+            "No readable text could be extracted from this document, even after OCR. "
+            "It may be empty, image-only at too low a resolution, or encrypted."
         )
 
     processed_dir = Path(settings.MEDIA_ROOT) / "processed" / str(document.id)
@@ -487,6 +886,11 @@ def parse_document(document):
         len(headings),
         len(sections),
     )
+
+    if not sections:
+        raise NoExtractableContent(
+            "The document was read but contained no text that could form a section."
+        )
 
     return {
         "markdown": markdown,

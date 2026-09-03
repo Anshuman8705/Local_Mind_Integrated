@@ -96,7 +96,12 @@ export interface AuditLog { id: string; actor_email: string; actor_role: string;
 export interface ImportReport { total_rows: number; created: number; already_existing: number; invalid: number; errors: { row: number; email?: string; error: string }[] }
 
 export interface AIModelStatus { name: string; present: boolean }
+export type ComponentStatus = "READY" | "ERROR" | "MISSING";
+export interface SystemComponent { component: string; status: ComponentStatus; summary: string; [k: string]: unknown }
+export interface SystemStatus { status: ComponentStatus; components: SystemComponent[] }
 export interface AIStatus {
-  enabled: boolean; provider: string; reachable: boolean; ready: boolean;
+  enabled: boolean; provider: string; runtime?: string; reachable: boolean; ready: boolean;
   tutor_model: AIModelStatus; outline_model: AIModelStatus; error: string;
+  details?: { runtime?: { name: string; ready: boolean; error: string }; model_file?: { name: string; found: boolean; valid: boolean; size_mb: number; error: string }; loaded?: boolean; display_name?: string };
+  system?: SystemStatus;
 }

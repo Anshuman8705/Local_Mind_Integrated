@@ -50,6 +50,10 @@ OUTLINE_SCHEMA = {
 }
 
 
+def _has_meaningful_text(text):
+    return sum(c.isalnum() for c in str(text or "")) >= 200
+
+
 def clean_title(value):
     return " ".join(html.unescape(str(value or "")).split()).strip()
 
@@ -65,16 +69,36 @@ def source_hierarchy_outline(original_name, sections):
     levels = [s["level"] for s in sections if s.get("level")]
     chapter_level = min(levels)
     chapter_sections = [s for s in sections if s["level"] == chapter_level] or [sections[0]]
+    # Headings that come before the first chapter-level heading (a preface or
+    # introduction written as H2 ahead of the first H1) would otherwise be
+    # dropped, and their text with them. Promote them to chapters of their own.
+    first_chapter_index = chapter_sections[0]["index"]
+    leading = [s for s in sections if s["index"] < first_chapter_index and s.get("source_text", "").strip()]
+    if leading:
+        leading_level = min(s["level"] for s in leading)
+        chapter_sections = [s for s in leading if s["level"] == leading_level] + chapter_sections
 
     chapters = []
     for pos, ch in enumerate(chapter_sections):
         next_index = chapter_sections[pos + 1]["index"] if pos + 1 < len(chapter_sections) else float("inf")
-        nested = [s for s in sections if ch["index"] < s["index"] < next_index and s["level"] > chapter_level]
+        nested = [s for s in sections if ch["index"] < s["index"] < next_index and s["level"] > ch["level"]]
         modules = []
         if nested:
             module_level = min(s["level"] for s in nested)
             modules = [{"title": clean_title(s["title"]), "source_heading_index": s["index"]}
                        for s in nested if s["level"] == module_level]
+        if modules and _has_meaningful_text(ch.get("own_text", "")):
+            # The chapter's own introduction, written before its first
+            # sub-heading, would otherwise be invisible to students (they read
+            # modules, not chapters). Keep it as the chapter's first module.
+            modules.insert(0, {"title": f"{clean_title(ch['title'])}: Overview", "source_text": ch["own_text"],
+                               "start_page": ch.get("start_page"), "end_page": ch.get("end_page")})
+        if not modules:
+            # A chapter with no sub-headings (a flat document, or a short
+            # chapter written as one block) still needs something a student can
+            # open, and a book with no modules at all cannot be published. The
+            # chapter's own text becomes its single module.
+            modules = [{"title": clean_title(ch["title"]), "source_heading_index": ch["index"]}]
         chapters.append({"title": clean_title(ch["title"]), "source_heading_index": ch["index"], "modules": modules})
     title = chapters[0]["title"] if len(chapters) == 1 else Path(original_name).stem
     return {"document_title": title, "chapters": chapters}

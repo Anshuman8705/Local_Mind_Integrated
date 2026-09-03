@@ -84,3 +84,45 @@ def chapter_status(progress_rows, modules):
     if any(s == ProgressStatus.NEEDS_REVIEW for s in statuses):
         return ProgressStatus.NEEDS_REVIEW
     return ProgressStatus.IN_PROGRESS
+
+
+# ---------- opening modules on publish ----------
+
+def open_modules_for_publish(actor, modules, reason, target=None, request=None):
+    """Open every locked module in `modules` that has source text, in one
+    query, and write a single audit row naming the reason ("document.published",
+    "quiz.published", "assignment.published"). Publishing is an explicit act by
+    faculty or an administrator; students should see the result immediately
+    rather than after a second, separate "open module" step. Faculty can still
+    lock individual modules or chapters afterwards. Returns the number opened."""
+    from audit import services as audit
+
+    module_ids = [m.id for m in modules if m.availability != ModuleAvailability.OPEN and not m.source_missing]
+    if not module_ids:
+        return 0
+    now = timezone.now()
+    opened = Module.objects.filter(pk__in=module_ids).update(
+        availability=ModuleAvailability.OPEN, opened_by=actor, opened_at=now, updated_at=now,
+    )
+    for m in modules:
+        if m.id in module_ids:
+            m.availability, m.opened_by, m.opened_at = ModuleAvailability.OPEN, actor, now
+    if target is None:
+        target = modules[0].chapter.document
+    audit.record(actor, "module.opened_on_publish", target,
+                 {"reason": reason, "count": opened, "modules": [str(i) for i in module_ids]}, request)
+    return opened
+
+
+def open_target_modules(actor, obj, reason, request=None):
+    """For a quiz or assignment about to be published: open its module, or every
+    module in its chapter when none of them is open, so the published item is
+    actually visible to students. Subject-level items have nothing to open."""
+    if getattr(obj, "module_id", None):
+        module = Module.objects.select_related("chapter__document").get(pk=obj.module_id)
+        return open_modules_for_publish(actor, [module], reason, target=obj, request=request)
+    if getattr(obj, "chapter_id", None):
+        modules = list(Module.objects.filter(chapter_id=obj.chapter_id).select_related("chapter__document"))
+        if modules and not any(m.availability == ModuleAvailability.OPEN for m in modules):
+            return open_modules_for_publish(actor, modules, reason, target=obj, request=request)
+    return 0

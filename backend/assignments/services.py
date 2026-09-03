@@ -91,8 +91,9 @@ def create(actor, *, subject_id=None, module_id=None, chapter_id=None, request=N
     return a
 
 
-@transaction.atomic
 def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, **fields):
+    """The model call runs outside any transaction (see tutor.teach); only the
+    final insert is atomic."""
     subject, chapter, module, source, name = _target(actor, None, module_id, chapter_id)
     _require_manage(actor, subject)
     if not source.strip():
@@ -118,11 +119,12 @@ def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, 
                 "instructions": f"In 400-600 words, explain the ideas in '{name}'. Start from: \"{first}\". Use only the module material.",
                 "rubric": [{"criterion": "Accuracy against the source", "points": max_score // 2},
                            {"criterion": "Clarity and structure", "points": max_score - max_score // 2}]}
-    a = Assignment.objects.create(subject=subject, chapter=chapter, module=module, created_by=actor, generator=generator,
-                                  title=data["title"][:300], description=data["description"], instructions=data["instructions"],
-                                  rubric=_normalize_rubric(data["rubric"], max_score), max_score=max_score,
-                                  **{k: v for k, v in fields.items() if k in ("available_from", "due_at", "allow_late", "allow_resubmission")})
-    audit.record(actor, "assignment.generated", a, {"generator": generator, "warning": warning[:200]}, request)
+    with transaction.atomic():
+        a = Assignment.objects.create(subject=subject, chapter=chapter, module=module, created_by=actor, generator=generator,
+                                      title=data["title"][:300], description=data["description"], instructions=data["instructions"],
+                                      rubric=_normalize_rubric(data["rubric"], max_score), max_score=max_score,
+                                      **{k: v for k, v in fields.items() if k in ("available_from", "due_at", "allow_late", "allow_resubmission")})
+        audit.record(actor, "assignment.generated", a, {"generator": generator, "warning": warning[:200]}, request)
     return a, warning
 
 
@@ -149,6 +151,7 @@ def set_status(actor, a, status, request=None):
         if a.status == AssignmentStatus.PUBLISHED:
             raise Conflict("Already published.", code="INVALID_STATE")
         a.status, a.published_at = status, timezone.now()
+        learning.open_target_modules(actor, a, "assignment.published", request)
     elif status == AssignmentStatus.CLOSED:
         if a.status != AssignmentStatus.PUBLISHED:
             raise Conflict("Only published assignments can be closed.", code="INVALID_STATE")

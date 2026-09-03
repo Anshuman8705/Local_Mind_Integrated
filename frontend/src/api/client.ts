@@ -16,7 +16,12 @@ export interface Tokens { access: string; refresh: string; session_id?: string |
 function resolveBaseUrl(): string {
   const env = process.env.EXPO_PUBLIC_API_URL;
   const extra = (Constants.expoConfig?.extra as { apiUrl?: string } | undefined)?.apiUrl;
-  let url = env || extra || "http://127.0.0.1:8000";
+  // When the built web client is served by the LocalMind backend itself (the
+  // standalone/offline launcher), the API is same-origin: no configuration
+  // needed on any machine. The Expo dev server (port 8081/8082) still falls
+  // back to the configured URL.
+  const sameOrigin = Platform.OS === "web" && typeof window !== "undefined" && !/:(8081|8082|19006)$/.test(window.location.host) ? window.location.origin : "";
+  let url = env || sameOrigin || extra || "http://127.0.0.1:8000";
   if (Platform.OS === "android" && url.includes("127.0.0.1")) url = url.replace("127.0.0.1", "10.0.2.2");
   return url.replace(/\/$/, "");
 }

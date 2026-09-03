@@ -26,6 +26,8 @@ export default function AssignmentScreen() {
           <Row style={{ justifyContent: "space-between" }}><H1>{d.title}</H1><Badge value={d.status} /></Row>
           <Row><Chip label="Details" selected={tab === "edit"} onPress={() => setTab("edit")} /><Chip label={`Submissions (${d.submission_count ?? 0})`} selected={tab === "submissions"} onPress={() => setTab("submissions")} /></Row>
           <ErrorBanner message={status.error ?? save.error} />
+          {d.generator === "fallback" ? <Notice tone="warning" message="This assignment draft was produced without the AI (deterministic fallback). Review the description and rubric before publishing." /> : null}
+          {d.status === "draft" ? <Notice message="Publishing shows this assignment to enrolled students right away; if its module is still locked, publishing opens it." /> : null}
           <Row>
             {d.status === "draft" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}
             {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => status.run("closed")} busy={status.busy} /> : null}

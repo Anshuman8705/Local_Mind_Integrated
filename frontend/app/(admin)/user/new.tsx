@@ -16,7 +16,8 @@ export default function NewUser() {
     const profileKeys = kind === "faculty" ? ["employee_id", "department", "designation", "phone"] : ["roll_number", "program", "batch", "phone"];
     const profile = Object.fromEntries(profileKeys.filter((k) => f[k]).map((k) => [k, f[k]]));
     const u = await admin.createUser(kind, { email: f.email?.trim().toLowerCase(), full_name: f.full_name?.trim(), profile, ...(kind === "faculty" && subjectIds.length ? { subject_ids: subjectIds } : {}) });
-    router.replace({ pathname: "/(admin)/user/[id]", params: { id: u.id, kind } });
+    // Back to the People list (which reloads on focus) with a confirmation.
+    router.replace({ pathname: "/(admin)/users", params: { kind, notice: `${kind === "faculty" ? "Faculty member" : "Student"} ${u.full_name} created.` } });
   });
   return (
     <Screen>

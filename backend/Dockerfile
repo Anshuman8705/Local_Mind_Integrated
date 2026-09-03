@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 RUN useradd --system --create-home --home /app localmind
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 
 COPY --chown=localmind:localmind . .
 RUN mkdir -p /app/media /app/staticfiles && chown -R localmind:localmind /app
@@ -20,7 +20,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
     CMD curl -fsS http://127.0.0.1:8000/api/health/ || exit 1
 
 # migrate + collectstatic run in the entrypoint so a fresh container is usable;
-# check_ai gates on Ollama being ready with the models pulled.
+# check_ai gates on the configured AI provider being ready (embedded GGUF present, or Ollama with models pulled).
 COPY --chown=localmind:localmind deploy-entrypoint.sh /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "4", "--timeout", "300"]

@@ -39,6 +39,7 @@ export default function QuizScreen() {
             <Chip label="Settings" selected={tab === "settings"} onPress={() => setTab("settings")} />
             <Chip label="Attempts" selected={tab === "attempts"} onPress={() => setTab("attempts")} />
           </Row>
+          {d.status === "draft" || d.status === "closed" ? <Notice message="Publishing shows this quiz to enrolled students right away; if its module is still locked, publishing opens it." /> : null}
           <ErrorBanner message={status.error ?? save.error} />
           <Row>
             {d.status === "draft" || d.status === "closed" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}

@@ -62,8 +62,10 @@ def _fallback_lesson(module):
             "sections": sections, "key_terms": [], "summary": "AI tutoring is unavailable; this lesson mirrors the source text directly."}
 
 
-@transaction.atomic
 def teach(student, module_id, request=None):
+    """Not wrapped in a transaction: the model call can take a minute, and a
+    transaction open that long holds the SQLite write lock against every other
+    request. Only the cache write below is atomic."""
     module = _module(student, module_id)
     version = module.chapter.document.content_version
     cached = ModuleLesson.objects.filter(module=module, content_version=version, generator="ai").first()
@@ -78,8 +80,9 @@ def teach(student, module_id, request=None):
         schema=LESSON_SCHEMA, temperature=0.3)
     if result.ok:
         lesson = result.data
-        ModuleLesson.objects.update_or_create(module=module, content_version=version, defaults={"lesson": lesson, "generator": "ai", "model_name": result.model})
-        audit.record(student, "tutor.teach", module, {"generator": "ai"}, request)
+        with transaction.atomic():
+            ModuleLesson.objects.update_or_create(module=module, content_version=version, defaults={"lesson": lesson, "generator": "ai", "model_name": result.model})
+            audit.record(student, "tutor.teach", module, {"generator": "ai"}, request)
         return lesson, {"generator": "ai", "cached": False, "model": result.model}
     audit.record(student, "tutor.teach", module, {"generator": "fallback", "error": result.error_code}, request)
     return _fallback_lesson(module), {"generator": "fallback", "cached": False, "ai_error": result.error_code}

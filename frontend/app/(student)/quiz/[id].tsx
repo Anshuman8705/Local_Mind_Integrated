@@ -1,10 +1,10 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
-import { Alert, Pressable, Text } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Pressable, Text } from "react-native";
 import { student } from "@/api/endpoints";
 import type { StartAttempt } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Button, Card, ErrorBanner, H1, Input, Loading, Notice, P, Screen, colors } from "@/ui";
+import { Button, Card, ErrorBanner, H1, Input, Loading, Notice, P, Screen, colors, confirmAsync } from "@/ui";
 
 export default function QuizScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -14,20 +14,34 @@ export default function QuizScreen() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [remaining, setRemaining] = useState<number | null>(null);
   const start = useAction(async () => { const a = await student.startAttempt(id); setAttempt(a); });
-  const submit = useAction(async () => {
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const submit = useAction(async (force = false) => {
     if (!attempt) return;
-    const unanswered = attempt.questions.filter((q) => !answers[q.id]?.trim()).length;
-    if (unanswered > 0) {
-      const go = await new Promise<boolean>((r) => Alert.alert("Unanswered questions", `${unanswered} question(s) are blank. Submit anyway?`, [{ text: "Keep working", onPress: () => r(false), style: "cancel" }, { text: "Submit", onPress: () => r(true) }]));
+    const current = answersRef.current;
+    const unanswered = attempt.questions.filter((q) => !current[q.id]?.trim()).length;
+    if (unanswered > 0 && !force) {
+      const go = await confirmAsync("Unanswered questions", `${unanswered} question(s) are blank. Submit anyway?`, "Submit", "Keep working");
       if (!go) return;
     }
-    const res = await student.submitAttempt(attempt.attempt_id, answers);
+    const res = await student.submitAttempt(attempt.attempt_id, current);
     router.replace(`/(student)/attempt/${res.id}`);
   });
+  const submitRef = useRef(submit.run);
+  submitRef.current = submit.run;
   useEffect(() => {
     if (!attempt?.time_limit_minutes) return;
     const end = new Date(attempt.started_at).getTime() + attempt.time_limit_minutes * 60000;
-    const t = setInterval(() => setRemaining(Math.max(0, Math.round((end - Date.now()) / 1000))), 1000);
+    let fired = false;
+    const tick = () => {
+      const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      setRemaining(left);
+      // The server stops accepting the attempt at the limit; submit what the
+      // student has rather than letting them keep typing into a dead attempt.
+      if (left === 0 && !fired) { fired = true; void submitRef.current(true); }
+    };
+    tick();
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [attempt]);
 

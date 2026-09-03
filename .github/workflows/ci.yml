@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       # docling (PyTorch) is only needed to parse real PDFs; the suite mocks it.
-      - run: grep -v '^docling' requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt
+      - run: grep -v -E '^(docling|llama-cpp-python)' requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt
       - name: Tests on SQLite
         run: python manage.py test --noinput
       - name: Tests on PostgreSQL
@@ -39,12 +39,13 @@ jobs:
     defaults: { run: { working-directory: backend } }
     env:
       DJANGO_DEBUG: "true"
+      AI_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
-      - run: grep -v '^docling' requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt
+      - run: grep -v -E '^(docling|llama-cpp-python)' requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt
       - run: python manage.py migrate --noinput && python manage.py bootstrap_admin --email root@localmind.test
       - name: Start fake Ollama and the API
         run: |

@@ -383,7 +383,11 @@ check("publish", s == 200 and d.get("status") == "published", d)
 s, d = call("GET", f"/faculty/documents/{doc}/outline/", tok=ftok)
 mods = [m for c in d["chapters"] for m in c["modules"]]
 chapter1, chapter2 = d["chapters"][0], d["chapters"][1]
-check("modules locked on publish", all(m["availability"] == "locked" for m in mods), [m["availability"] for m in mods])
+check("modules with source opened on publish", all(m["availability"] == "open" for m in mods), [m["availability"] for m in mods])
+s, d = call("POST", f"/faculty/chapters/{chapter2['id']}/availability/", {"availability": "locked"}, tok=ftok)
+check("lock second chapter after publish", s == 200 and all(m["availability"] == "locked" for m in d), d)
+s, d = call("POST", f"/faculty/modules/{mods[0]['id']}/availability/", {"availability": "locked"}, tok=ftok)
+check("lock first module", s == 200 and d.get("availability") == "locked", d)
 s, d = call("POST", f"/faculty/modules/{mods[0]['id']}/availability/", {"availability": "open"}, tok=ftok)
 check("open first module", s == 200 and d.get("availability") == "open", d)
 s, d = call("POST", f"/faculty/modules/{mods[0]['id']}/availability/", {"availability": "sideways"}, tok=ftok)

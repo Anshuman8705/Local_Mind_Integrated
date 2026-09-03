@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { AppState, ScrollView, Text, View } from "react-native";
+import { AppState, Platform, ScrollView, Text, View } from "react-native";
 import { student } from "@/api/endpoints";
 import type { Message, TeachResponse } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
@@ -31,7 +31,7 @@ export default function ModuleScreen() {
       {mod.loading && !mod.data ? <Loading /> : null}
       {mod.data ? (
         <>
-          <View style={{ padding: tab === "ask" ? space.lg : 0, gap: 8 }}>
+          <View style={{ padding: tab === "ask" ? space.lg : 0, paddingBottom: tab === "ask" ? 0 : undefined, gap: 8 }}>
             <H1>{mod.data.title}</H1>
             <Row>
               <Chip label="Read" selected={tab === "read"} onPress={() => setTab("read")} />
@@ -92,18 +92,48 @@ function AskTab({ moduleId }: { moduleId: string }) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [question, setQuestion] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [restoring, setRestoring] = useState(true);
   const scroll = useRef<ScrollView>(null);
+  // Pick up where the student left off: the newest conversation on this
+  // module is reloaded so earlier questions and answers stay on screen
+  // instead of vanishing every time the tab is reopened.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const convs = await student.conversations(moduleId);
+        const latest = convs[0];
+        if (!latest || !alive) return;
+        const full = await student.conversation(latest.id);
+        if (!alive) return;
+        setConversationId(full.id);
+        setMessages(full.messages ?? []);
+      } catch { /* a missing history is not an error worth showing */ }
+      finally { if (alive) setRestoring(false); }
+    })();
+    return () => { alive = false; };
+  }, [moduleId]);
   const ask = useAction(async (text: string) => {
     const mine: Message = { id: `local-${Date.now()}`, role: "user", content: text, grounded: true, source_reference: "", created_at: new Date().toISOString() };
-    setMessages((m) => [...m, mine]); setQuestion("");
+    setMessages((m) => [...m, mine]); setQuestion(""); setSuggestions([]);
     const res = await student.ask(moduleId, text, conversationId);
     setConversationId(res.conversation_id); setMessages((m) => [...m, res.message]); setSuggestions(res.follow_up_suggestions ?? []);
   });
-  useEffect(() => { setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 50); }, [messages.length]);
+  const scrollToEnd = () => scroll.current?.scrollToEnd({ animated: true });
+  useEffect(() => { const t = setTimeout(scrollToEnd, 60); return () => clearTimeout(t); }, [messages.length, ask.busy, suggestions.length]);
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView ref={scroll} contentContainerStyle={{ padding: space.lg, gap: 10 }}>
-        {messages.length === 0 ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
+    <View style={{ flex: 1, minHeight: 0 }}>
+      <ScrollView
+        ref={scroll}
+        style={[{ flex: 1, minHeight: 0 }, Platform.OS === "web" && ({ overflowY: "auto" } as any)]}
+        contentContainerStyle={{ padding: space.lg, gap: 10 }}
+        showsVerticalScrollIndicator
+        persistentScrollbar
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={scrollToEnd}
+      >
+        {restoring ? <Loading /> : null}
+        {!restoring && messages.length === 0 ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
         {messages.map((m) => (
           <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "88%", backgroundColor: m.role === "user" ? colors.primary : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : colors.border }}>
             <Text style={{ color: m.role === "user" ? colors.primaryText : colors.text, fontSize: 15, lineHeight: 21 }}>{m.content}</Text>
@@ -115,7 +145,7 @@ function AskTab({ moduleId }: { moduleId: string }) {
         {suggestions.length ? <Row>{suggestions.map((s) => <Chip key={s} label={s} onPress={() => ask.run(s)} />)}</Row> : null}
       </ScrollView>
       <View style={{ flexDirection: "row", gap: 8, padding: space.md, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
-        <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder="Type your question" onSubmitEditing={() => question.trim() && ask.run(question.trim())} /></View>
+        <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder="Type your question" onSubmitEditing={() => question.trim() && ask.run(question.trim())} blurOnSubmit={false} editable={!ask.busy} /></View>
         <Button title="Ask" onPress={() => ask.run(question.trim())} disabled={!question.trim()} busy={ask.busy} />
       </View>
     </View>

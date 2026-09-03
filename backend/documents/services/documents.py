@@ -15,9 +15,14 @@ from learning.models import Chapter, Module, ModuleAvailability
 
 from ..models import Document, DocumentStatus, EDITABLE_STATUSES, REPROCESSABLE_STATUSES
 from . import outline as outline_service
-from .parser import load_processed_sections, parse_document
+from .parser import NoExtractableContent, load_processed_sections, parse_document, release_document_models
 
 logger = logging.getLogger("localmind.documents")
+
+# One document is parsed at a time per process: Docling's layout model plus
+# OCR already take most of a laptop's spare RAM, and the embedded LLM needs
+# the rest for the outline call that follows.
+_processing_lock = threading.Lock()
 
 MAGIC = {".pdf": (b"%PDF",), ".docx": (b"PK\x03\x04",), ".doc": (b"\xd0\xcf\x11\xe0",)}
 
@@ -91,10 +96,19 @@ def claim_for_processing(document):
 
 def run_processing(document_id):
     """The unit of work a background worker executes. Safe to call from a
-    thread, a process, or (later) a Celery task."""
+    thread, a process, or (later) a Celery task.
+
+    Order matters for memory: parse (Docling/OCR models resident), release
+    those models, then ask the embedded LLM for an outline. The LLM instance
+    itself is shared per process and is never unloaded here.
+    """
     document = Document.objects.get(pk=document_id)
     try:
-        parsed = parse_document(document)
+        with _processing_lock:
+            try:
+                parsed = parse_document(document)
+            finally:
+                release_document_models()
         outline, source = outline_service.build_proposed_outline(document, parsed["sections"], parsed["headings"])
         with transaction.atomic():
             outline_service.persist_outline(document, outline, parsed["sections"], user_edited=False)
@@ -108,6 +122,13 @@ def run_processing(document_id):
             document.save()
         audit.record(None, "document.processed", document, {"outline_source": source, "chapters": len(outline["chapters"])})
         logger.info("Processed document %s (%s)", document_id, source)
+    except NoExtractableContent as exc:
+        # Expected outcome for blank or unreadable files: a clear message, no traceback.
+        logger.warning("Processing of document %s produced no content: %s", document_id, exc)
+        Document.objects.filter(pk=document_id).update(
+            status=DocumentStatus.ERROR, error_message=str(exc)[:2000], updated_at=timezone.now(),
+        )
+        audit.record(None, "document.processing_failed", document, {"error": str(exc)[:300], "code": exc.code})
     except Exception as exc:
         logger.exception("Processing failed for document %s", document_id)
         Document.objects.filter(pk=document_id).update(
@@ -250,6 +271,13 @@ def publish(actor, document, request=None):
     document.published_by, document.published_at, document.unpublished_at = actor, now, None
     document.save()
     audit.record(actor, "document.published", document, {"version": document.content_version}, request)
+    # Publishing is what makes a book visible to students, so open every module
+    # that has source text. Faculty can still lock modules or chapters afterwards
+    # to pace the course; a re-publish of a book that already has open modules
+    # leaves their locks alone.
+    if not Module.objects.filter(chapter__document=document, availability=ModuleAvailability.OPEN).exists():
+        from learning import services as learning
+        learning.open_modules_for_publish(actor, list(Module.objects.filter(chapter__document=document)), "document.published", target=document, request=request)
     return document
 
 
