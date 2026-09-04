@@ -240,7 +240,7 @@ class DocumentLifecycleTests(TestCase):
         self.assertTrue(res.data["is_user_edited"])
         self.assertTrue(AuditLog.objects.filter(action="chapter.edited").exists())
 
-    def test_outline_put_preserves_ids_and_blocks_when_published(self, _):
+    def test_outline_put_preserves_ids(self, _):
         client, doc = self._processed_doc()
         outline = client.get(f"/api/faculty/documents/{doc.id}/outline/").data
         keep = outline["chapters"][0]
@@ -252,8 +252,10 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(res.data["outline_source"], "edited")
         pub = client.post(f"/api/faculty/documents/{doc.id}/publish/")
         self.assertEqual(pub.status_code, 200, pub.content)
+        # Editing a live book is allowed; the guard that matters is the one on
+        # modules with student work, covered separately below.
         res = client.put(f"/api/faculty/documents/{doc.id}/outline/", {"chapters": [{"title": "x", "modules": []}]}, format="json")
-        self.assertEqual(res.status_code, 409)
+        self.assertEqual(res.status_code, 200, res.content)
 
     def test_other_faculty_cannot_see_or_touch_document(self, _):
         client, doc = self._processed_doc()
@@ -310,6 +312,55 @@ class DocumentLifecycleTests(TestCase):
         assign(self.faculty, other)
         res = self.upload(subject=other)
         self.assertEqual(res.status_code, 201, res.content)
+
+    def test_a_published_book_can_still_be_restructured(self, _):
+        """Faculty edit live books; the change has to reach students rather
+        than being refused."""
+        from learning.models import Chapter, Module
+
+        client, doc = self._processed_doc()
+        client.post(f"/api/faculty/documents/{doc.id}/publish/")
+        outline = client.get(f"/api/faculty/documents/{doc.id}/outline/").data
+        chapter = outline["chapters"][0]
+        self.assertGreater(len(chapter["modules"]), 1)
+
+        # Drop the last module and rename the chapter.
+        payload = {"chapters": [{
+            "id": chapter["id"], "title": "Renamed chapter",
+            "source_heading_index": chapter.get("source_heading_index"),
+            "modules": [{"id": m["id"], "title": m["title"], "source_heading_index": m["source_heading_index"]}
+                        for m in chapter["modules"][:-1]],
+        }]}
+        res = client.put(f"/api/faculty/documents/{doc.id}/outline/", payload, format="json")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.data["status"], "published", "the book stays live while it is edited")
+        self.assertEqual(Chapter.objects.get(pk=chapter["id"]).title, "Renamed chapter")
+        self.assertEqual(Module.objects.filter(chapter__document=doc).count(), len(chapter["modules"]) - 1)
+
+    def test_a_module_with_student_progress_cannot_be_dropped(self, _):
+        """The guard that protects student work has to hold even now that a
+        published book is editable."""
+        from learning.models import Module, ModuleProgress
+
+        client, doc = self._processed_doc()
+        client.post(f"/api/faculty/documents/{doc.id}/publish/")
+        outline = client.get(f"/api/faculty/documents/{doc.id}/outline/").data
+        chapter = outline["chapters"][0]
+        doomed = chapter["modules"][-1]
+        ModuleProgress.objects.create(module=Module.objects.get(pk=doomed["id"]), student=self.student)
+
+        payload = {"chapters": [{
+            "id": chapter["id"], "title": chapter["title"],
+            "source_heading_index": chapter.get("source_heading_index"),
+            "modules": [{"id": m["id"], "title": m["title"], "source_heading_index": m["source_heading_index"]}
+                        for m in chapter["modules"][:-1]],
+        }]}
+        res = client.put(f"/api/faculty/documents/{doc.id}/outline/", payload, format="json")
+
+        self.assertEqual(res.status_code, 409, res.content)
+        self.assertEqual(res.data["error"]["code"], "MODULE_IN_USE")
+        self.assertTrue(Module.objects.filter(pk=doomed["id"]).exists())
 
     def test_delete_removes_the_book_and_the_quizzes_built_from_it(self, _):
         """The workspace deletes books now, so the PROTECT chain from quizzes

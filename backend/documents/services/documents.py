@@ -241,8 +241,10 @@ def replace_outline(actor, document, outline, request=None):
     _require_manage(actor, document.subject)
     if document.status not in EDITABLE_STATUSES:
         raise Conflict(f"The outline cannot be edited while the document is '{document.status}'.", code="INVALID_STATE")
-    if document.status == DocumentStatus.PUBLISHED:
-        raise Conflict("Unpublish the document before restructuring its outline.", code="PUBLISHED_STRUCTURE_LOCKED")
+    # A published book stays editable. Structure changes reach students on
+    # their next load, which is the point of editing a live book, and the
+    # deletion guard in persist_outline still refuses to remove a module that
+    # has student progress or a quiz built on it.
     sections = load_processed_sections(document)
     outline_service.persist_outline(document, outline, sections, user_edited=True)
     document.outline_source = "edited"

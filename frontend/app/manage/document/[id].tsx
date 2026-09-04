@@ -1,12 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Document, Outline, OutlineChapter, OutlineModule } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
 import { HeadingPicker } from "@/ui/HeadingPicker";
-import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
+import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmAsync, confirmDeleteAsync, fmtSeconds } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -15,7 +15,23 @@ export default function DocumentScreen() {
   const d = doc.data;
   // Poll while processing.
   useEffect(() => { if (d?.status !== "processing") return; const t = setInterval(doc.reload, 3000); return () => clearInterval(t); }, [d?.status, doc.reload]);
+  // The outline editor holds its edits in local state until Save. Marking a
+  // book ready or publishing it used to reload from the server, which threw
+  // those edits away silently: modules deleted a moment earlier reappeared.
+  // The editor reports whether it is dirty and hands up its save function, so
+  // a transition can offer to save first.
+  const [pending, setPending] = useState<{ dirty: boolean; save: () => Promise<void> } | null>(null);
   const act = useAction(async (action: "process" | "ready" | "publish" | "unpublish") => {
+    if (pending?.dirty) {
+      const ok = await confirmAsync(
+        "Save your outline changes first?",
+        "The outline has edits that have not been saved. Continuing without saving would discard them and reload the version on the server.",
+        "Save and Continue",
+        "Cancel",
+      );
+      if (!ok) return;
+      await pending.save();
+    }
     if (action === "process") await manage.process(id); else await manage.transition(id, action);
     await doc.reload();
   });
@@ -52,7 +68,9 @@ export default function DocumentScreen() {
             {d.status === "published" ? <Button title="Unpublish" small variant="secondary" onPress={() => act.run("unpublish")} busy={act.busy} /> : null}
             {d.status !== "processing" ? <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} /> : null}
           </Row>
-          {(d.status !== "uploaded" && d.status !== "processing" && d.status !== "error") ? <OutlineEditor documentId={id} locked={d.status === "published"} onSaved={doc.reload} /> : null}
+          {(d.status !== "uploaded" && d.status !== "processing" && d.status !== "error")
+            ? <OutlineEditor documentId={id} published={d.status === "published"} onSaved={doc.reload} onState={setPending} />
+            : null}
         </>
       ) : null}
     </Screen>
@@ -96,30 +114,84 @@ function ProcessingCard({ doc }: { doc: Document }) {
   );
 }
 
-function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; locked: boolean; onSaved: () => void }) {
+function OutlineEditor({ documentId, published, onSaved, onState }: { documentId: string; published: boolean; onSaved: () => void; onState: (s: { dirty: boolean; save: () => Promise<void> }) => void }) {
   const q = useAsync(() => manage.outline(documentId), [documentId]);
   const [chapters, setChapters] = useState<OutlineChapter[] | null>(null);
   const [dirty, setDirty] = useState(false);
   useEffect(() => { if (q.data) { setChapters(q.data.chapters.map((c) => ({ ...c, modules: c.modules.map((m) => ({ ...m })) }))); setDirty(false); } }, [q.data]);
-  const save = useAction(async () => {
+  /** What this save would do, in the words the confirmation needs. */
+  const changes = useMemo(() => {
+    const before = q.data?.chapters ?? [];
+    if (!chapters) return [];
+    const beforeModules = new Map(before.flatMap((c) => c.modules).map((m) => [m.id, m]));
+    const afterModules = chapters.flatMap((c) => c.modules);
+    const afterIds = new Set(afterModules.map((m) => m.id).filter(Boolean));
+    const removedModules = [...beforeModules.values()].filter((m) => !afterIds.has(m.id));
+    const removedChapters = before.filter((c) => !chapters.some((x) => x.id === c.id));
+    const added = afterModules.filter((m) => !m.id).length;
+    const renamed = afterModules.filter((m) => m.id && beforeModules.get(m.id)?.title !== m.title).length;
+    const retexted = afterModules.filter((m) => m.id && m.source_text !== undefined && beforeModules.get(m.id)?.source_text !== m.source_text).length;
+    const lines: string[] = [];
+    if (removedChapters.length) lines.push(`${removedChapters.length} chapter${removedChapters.length === 1 ? "" : "s"} removed`);
+    if (removedModules.length) lines.push(`${removedModules.length} module${removedModules.length === 1 ? "" : "s"} removed`);
+    if (added) lines.push(`${added} module${added === 1 ? "" : "s"} added`);
+    if (renamed) lines.push(`${renamed} title${renamed === 1 ? "" : "s"} changed`);
+    if (retexted) lines.push(`${retexted} module${retexted === 1 ? "" : "s"} with edited text`);
+    return lines;
+  }, [chapters, q.data]);
+
+  const persist = useCallback(async () => {
     if (!chapters) return;
-    if (locked) {
-      // Structure is frozen after publishing; only per-module text edits are allowed.
-      const original = new Map((q.data?.chapters ?? []).flatMap((c) => c.modules).map((m) => [m.id, m]));
-      for (const c of chapters) for (const m of c.modules) {
-        const o = m.id ? original.get(m.id) : undefined;
-        if (o && (o.title !== m.title || (m.source_text !== undefined && o.source_text !== m.source_text))) await manage.editModule(m.id!, { title: m.title, source_text: m.source_text });
-      }
-      await q.reload(); onSaved(); return;
-    }
     const payload = chapters.map((c, ci) => ({ id: c.id, title: c.title, order: ci + 1, source_heading_index: c.source_heading_index ?? null,
       modules: c.modules.map((m, mi) => ({ id: m.id, title: m.title, order: mi + 1, source_heading_index: m.source_heading_index ?? null, ...(m.source_text !== undefined ? { source_text: m.source_text } : {}) })) }));
     await manage.saveOutline(documentId, payload as OutlineChapter[]);
     await q.reload(); onSaved();
+  }, [chapters, documentId, q, onSaved]);
+
+  const save = useAction(async () => {
+    // Saving is the point of no return for a removal, so it states what is
+    // about to change, and says plainly when a live book is involved.
+    const ok = await confirmAsync(
+      "Save these outline changes?",
+      published
+        ? "This book is published, so the changes reach enrolled students as soon as they are saved."
+        : "The outline on the server will be replaced with what is on screen.",
+      "Save Outline",
+      "Keep Editing",
+      { tone: changes.some((l) => l.includes("removed")) ? "danger" : "primary", detail: changes.join(" · ") || undefined },
+    );
+    if (!ok) return;
+    await persist();
   });
   const avail = useAction(async (m: OutlineModule) => { if (!m.id) return; await manage.moduleAvailability(m.id, m.availability === "open" ? "locked" : "open"); await q.reload(); });
   const update = (fn: (c: OutlineChapter[]) => OutlineChapter[]) => { setChapters((c) => (c ? fn(c) : c)); setDirty(true); };
+  // Removing is the destructive edit here, so both levels ask first and the
+  // chapter warning names how many modules go with it.
+  const removeChapter = async (ci: number) => {
+    const ch = chapters?.[ci];
+    if (!ch) return;
+    const n = ch.modules.length;
+    const ok = await confirmDeleteAsync(
+      "Remove this chapter?",
+      n
+        ? `Its ${n} module${n === 1 ? "" : "s"} go with it. Nothing is removed from the book until you save the outline.`
+        : "Nothing is removed from the book until you save the outline.",
+      { detail: ch.title, okLabel: "Remove Chapter" },
+    );
+    if (ok) update((c) => c.filter((_, i) => i !== ci));
+  };
+  const removeModule = async (ci: number, mi: number) => {
+    const m = chapters?.[ci]?.modules[mi];
+    if (!m) return;
+    const ok = await confirmDeleteAsync(
+      "Remove this module?",
+      "Nothing is removed from the book until you save the outline. A module a student has already worked through cannot be removed.",
+      { detail: m.title, okLabel: "Remove Module" },
+    );
+    if (ok) update((c) => c.map((x, i) => (i === ci ? { ...x, modules: x.modules.filter((_, j) => j !== mi) } : x)));
+  };
   const headings = q.data?.headings ?? [];
+  useEffect(() => { onState({ dirty, save: persist }); }, [dirty, persist, onState]);
   // A real textbook has dozens of chapters and hundreds of modules. Rendering
   // all of them expanded put thousands of controls on one page, so chapters
   // open one at a time and the filter narrows the list to what is being
@@ -143,12 +215,13 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
     <>
       <Row style={{ justifyContent: "space-between" }}>
         <H2>Outline</H2>
-        {locked ? <P muted small>Structure is locked after publishing; text edits still allowed.</P> : <Button title="Add Chapter" small variant="secondary" onPress={() => update((c) => [...c, { title: `Chapter ${c.length + 1}`, order: c.length + 1, modules: [] }])} />}
+        <Button title="Add Chapter" small variant="secondary" onPress={() => update((c) => [...c, { title: `Chapter ${c.length + 1}`, order: c.length + 1, modules: [] }])} />
       </Row>
       <P muted small>
         {chapters.length} chapter{chapters.length === 1 ? "" : "s"} · {totalModules} module{totalModules === 1 ? "" : "s"}
         {q.data?.outline_source ? ` · outline from ${q.data.outline_source}` : ""}. Every module must map to a heading or carry its own text.
       </P>
+      {published ? <Notice tone="warning" message="This book is published. Saved changes reach enrolled students immediately, and a module a student has already worked through cannot be removed." /> : null}
       {chapters.length > 3 || totalModules > 12 ? (
         <Input compact value={filter} onChangeText={setFilter} placeholder="Find a chapter or module by title" />
       ) : null}
@@ -168,35 +241,33 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
                 onPress={() => setOpenChapter(expanded ? null : key)}
               />
             ) : null}
-            <View style={{ flex: 1 }}><Input value={ch.title} editable={!locked} onChangeText={(t) => update((c) => c.map((x, i) => (i === ci ? { ...x, title: t } : x)))} /></View>
+            <View style={{ flex: 1 }}><Input value={ch.title} onChangeText={(t) => update((c) => c.map((x, i) => (i === ci ? { ...x, title: t } : x)))} /></View>
             <P muted small>{ch.modules.length} module{ch.modules.length === 1 ? "" : "s"}</P>
-            {!locked ? <>
-              <Button title="↑" small variant="ghost" onPress={() => ci > 0 && update((c) => { const n = [...c]; [n[ci - 1], n[ci]] = [n[ci], n[ci - 1]]; return n; })} />
-              <Button title="↓" small variant="ghost" onPress={() => ci < chapters.length - 1 && update((c) => { const n = [...c]; [n[ci + 1], n[ci]] = [n[ci], n[ci + 1]]; return n; })} />
-              <Button title="Remove" small variant="ghost" onPress={() => update((c) => c.filter((_, i) => i !== ci))} />
-            </> : null}
+            <Button title="↑" small variant="ghost" onPress={() => ci > 0 && update((c) => { const n = [...c]; [n[ci - 1], n[ci]] = [n[ci], n[ci - 1]]; return n; })} />
+            <Button title="↓" small variant="ghost" onPress={() => ci < chapters.length - 1 && update((c) => { const n = [...c]; [n[ci + 1], n[ci]] = [n[ci], n[ci + 1]]; return n; })} />
+            <Button title="Remove" small variant="ghost" onPress={() => removeChapter(ci)} />
           </Row>
           {expanded ? modules.map((m) => {
             const mi = ch.modules.indexOf(m);
             return (
-            <ModuleRow key={m.id ?? `new-${ci}-${mi}`} m={m} locked={locked} headings={headings}
+            <ModuleRow key={m.id ?? `new-${ci}-${mi}`} m={m} headings={headings}
               onChange={(nm) => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: x.modules.map((y, j) => (j === mi ? nm : y)) } : x)))}
-              onRemove={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: x.modules.filter((_, j) => j !== mi) } : x)))}
+              onRemove={() => removeModule(ci, mi)}
               onMove={(dir) => update((c) => c.map((x, i) => { if (i !== ci) return x; const n = [...x.modules]; const t = mi + dir; if (t < 0 || t >= n.length) return x; [n[mi], n[t]] = [n[t], n[mi]]; return { ...x, modules: n }; }))}
               onToggle={() => avail.run(m)} />
             );
           }) : null}
-          {expanded && !locked ? <Button title="Add Module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
+          {expanded ? <Button title="Add Module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
         </Card>
         );
       })}
       <ErrorBanner message={save.error ?? avail.error} />
-      {dirty ? <Button title={locked ? "Save text edits" : "Save outline"} onPress={() => save.run()} busy={save.busy} /> : null}
+      {dirty ? <Button title="Save Outline" icon="save-outline" onPress={() => save.run()} busy={save.busy} /> : null}
     </>
   );
 }
 
-function ModuleRow({ m, locked, headings, onChange, onRemove, onMove, onToggle }: { m: OutlineModule; locked: boolean; headings: Outline["headings"]; onChange: (m: OutlineModule) => void; onRemove: () => void; onMove: (d: -1 | 1) => void; onToggle: () => void }) {
+function ModuleRow({ m, headings, onChange, onRemove, onMove, onToggle }: { m: OutlineModule; headings: Outline["headings"]; onChange: (m: OutlineModule) => void; onRemove: () => void; onMove: (d: -1 | 1) => void; onToggle: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <View style={{ borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, gap: 6 }}>
@@ -211,14 +282,13 @@ function ModuleRow({ m, locked, headings, onChange, onRemove, onMove, onToggle }
           <HeadingPicker
             headings={headings}
             value={m.source_heading_index}
-            disabled={locked}
             onChange={(index) => onChange(index === null
               ? { ...m, source_heading_index: null }
               : { ...m, source_heading_index: index, source_text: undefined })}
           />
           <Input label="Source text (edit to override the mapped section)" multiline value={m.source_text ?? ""} onChangeText={(t) => onChange({ ...m, source_text: t })} />
           <Row>
-            {!locked ? <><Button title="↑" small variant="ghost" onPress={() => onMove(-1)} /><Button title="↓" small variant="ghost" onPress={() => onMove(1)} /><Button title="Remove Module" small variant="ghost" onPress={onRemove} /></> : null}
+            <Button title="↑" small variant="ghost" onPress={() => onMove(-1)} /><Button title="↓" small variant="ghost" onPress={() => onMove(1)} /><Button title="Remove Module" small variant="ghost" onPress={onRemove} />
             {m.id ? <Button title={m.availability === "open" ? "Lock for students" : "Open for students"} small variant="secondary" onPress={onToggle} disabled={m.source_missing} /> : null}
           </Row>
         </>
