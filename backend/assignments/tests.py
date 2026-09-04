@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
+from audit.models import AuditLog
 from core.testing import assign, client_for, enroll, make_faculty, make_published_document, make_student, make_subject
 from learning.models import Module
 
@@ -92,3 +93,26 @@ class AssignmentTests(TestCase):
         sub = self.sc.post(f"/api/student/assignments/{a.id}/submissions/", {"content": "x"}, format="json").data
         res = self.fc.post(f"/api/faculty/assignment-submissions/{sub['id']}/evaluate/", {"score": 99}, format="json")
         self.assertEqual(res.status_code, 400)
+
+
+class AssignmentDeleteTests(TestCase):
+    """Submissions point at the assignment with PROTECT, so a delete has to
+    clear them first."""
+
+    def setUp(self):
+        self.faculty = make_faculty()
+        self.subject = make_subject(code="DELA")
+        assign(self.faculty, self.subject)
+        self.student = make_student()
+        enroll(self.student, self.subject)
+
+    def test_delete_removes_the_assignment_and_its_submissions(self):
+        from .models import Assignment, AssignmentSubmission
+
+        a = Assignment.objects.create(subject=self.subject, title="Removable", max_score=10)
+        AssignmentSubmission.objects.create(assignment=a, student=self.student, content="x", attempt_number=1)
+        res = client_for(self.faculty).delete(f"/api/faculty/assignments/{a.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(Assignment.objects.filter(pk=a.pk).exists())
+        self.assertFalse(AssignmentSubmission.objects.exists())
+        self.assertTrue(AuditLog.objects.filter(action="assignment.deleted").exists())

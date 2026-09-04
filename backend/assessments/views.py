@@ -61,6 +61,11 @@ class QuizDetailView(APIView):
         a = svc.update(request.user, a, request=request, **s.validated_data)
         return Response(AssessmentSerializer(a).data)
 
+    def delete(self, request, quiz_id):
+        a = get_or_404(svc.manageable(request.user), pk=quiz_id)
+        label = svc.delete(request.user, a, request)
+        return Response({"detail": f"{label} was deleted."})
+
 
 class QuizStatusView(APIView):
     permission_classes = [IsAdminOrFaculty]

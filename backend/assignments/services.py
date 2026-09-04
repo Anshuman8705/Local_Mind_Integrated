@@ -164,6 +164,22 @@ def set_status(actor, a, status, request=None):
 
 
 @transaction.atomic
+def delete(actor, a, request=None):
+    """Permanently remove an assignment and every submission made against it.
+
+    Submissions point at the assignment with PROTECT, so they are cleared
+    first; the evaluations attached to them go with them.
+    """
+    _require_manage(actor, a.subject)
+    label = a.title
+    submissions = AssignmentSubmission.objects.filter(assignment=a).count()
+    AssignmentSubmission.objects.filter(assignment=a).delete()
+    audit.record(actor, "assignment.deleted", a, {"title": label, "subject": a.subject.code, "submissions": submissions}, request)
+    a.delete()
+    return label
+
+
+@transaction.atomic
 def submit(student, assignment_id, content, time_spent_seconds=0, request=None):
     try:
         a = student_visible(student).get(pk=assignment_id)

@@ -59,6 +59,11 @@ class AssignmentDetailView(APIView):
         s.is_valid(raise_exception=True)
         return Response(AssignmentSerializer(svc.update(request.user, a, request=request, **s.validated_data)).data)
 
+    def delete(self, request, assignment_id):
+        a = get_or_404(svc.manageable(request.user), pk=assignment_id)
+        label = svc.delete(request.user, a, request)
+        return Response({"detail": f"{label} was deleted."})
+
 
 class AssignmentStatusView(APIView):
     permission_classes = [IsAdminOrFaculty]

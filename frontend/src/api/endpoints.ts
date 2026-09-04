@@ -72,6 +72,7 @@ export const manage = {
   generateQuiz: (body: Record<string, unknown>) => api<T.Quiz>("/faculty/quizzes/generate/", { method: "POST", body }),
   updateQuiz: (id: string, body: Record<string, unknown>) => api<T.Quiz>(`/faculty/quizzes/${id}/`, { method: "PATCH", body }),
   quizStatus: (id: string, status: string) => api<T.Quiz>(`/faculty/quizzes/${id}/status/`, { method: "POST", body: { status } }),
+  deleteQuiz: (id: string) => api<{ detail: string }>(`/faculty/quizzes/${id}/`, { method: "DELETE" }),
   quizAttempts: (id: string) => api<T.Paginated<T.Attempt>>(`/faculty/quizzes/${id}/attempts/`).then(list),
   reEvaluate: (attemptId: string, overrides?: Record<string, { score_awarded: number; feedback?: string }>) =>
     api<T.Attempt>(`/faculty/quiz-attempts/${attemptId}/re-evaluate/`, { method: "POST", body: overrides ? { overrides } : {} }),
@@ -82,6 +83,7 @@ export const manage = {
   generateAssignment: (body: Record<string, unknown>) => api<T.Assignment>("/faculty/assignments/generate/", { method: "POST", body }),
   updateAssignment: (id: string, body: Record<string, unknown>) => api<T.Assignment>(`/faculty/assignments/${id}/`, { method: "PATCH", body }),
   assignmentStatus: (id: string, status: string) => api<T.Assignment>(`/faculty/assignments/${id}/status/`, { method: "POST", body: { status } }),
+  deleteAssignment: (id: string) => api<{ detail: string }>(`/faculty/assignments/${id}/`, { method: "DELETE" }),
   submissions: (id: string) => api<T.Paginated<T.Submission>>(`/faculty/assignments/${id}/submissions/`).then(list),
   evaluate: (submissionId: string, body: { score: number; feedback: string }) => api<T.Submission>(`/faculty/assignment-submissions/${submissionId}/evaluate/`, { method: "POST", body }),
 
@@ -116,6 +118,7 @@ export const admin = {
     api<{ detail: string }>(`/admin/${kind}/${id}/`, { method: "DELETE", body: { reason } }),
   importUsers: (kind: "faculty" | "students", form: FormData) => api<T.ImportReport>(`/admin/${kind}/import/`, { method: "POST", form }),
   auditLogs: (q: Q = {}) => api<T.Paginated<T.AuditLog>>("/admin/audit-logs/", { query: q }),
+  auditActions: () => api<{ actions: { value: string; count: number }[]; targets: string[] }>("/admin/audit-logs/actions/"),
   platform: () => api<any>("/admin/analytics/platform/"),
   platformSubjects: () => api<any>("/admin/analytics/platform/subjects/"),
   aiStatus: (refresh = false) => api<T.AIStatus>("/admin/ai/status/", { query: { refresh: refresh ? 1 : undefined } }),

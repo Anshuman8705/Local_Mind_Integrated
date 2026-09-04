@@ -171,6 +171,23 @@ def set_status(actor, assessment, status, request=None):
     return assessment
 
 
+@transaction.atomic
+def delete(actor, assessment, request=None):
+    """Permanently remove a quiz and every attempt made on it.
+
+    Attempts point at the quiz with PROTECT, so they go first. A quiz that was
+    superseded by a newer version is referenced by that version through a
+    self-relation, which is SET_NULL and needs no special handling.
+    """
+    _require_manage(actor, assessment.subject)
+    label = assessment.title
+    attempts = AssessmentAttempt.objects.filter(assessment=assessment).count()
+    AssessmentAttempt.objects.filter(assessment=assessment).delete()
+    audit.record(actor, "quiz.deleted", assessment, {"title": label, "subject": assessment.subject.code, "attempts": attempts}, request)
+    assessment.delete()
+    return label
+
+
 # ---------- attempts ----------
 
 def _accessible_for_student(student, assessment_id):

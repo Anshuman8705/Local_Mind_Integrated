@@ -1,13 +1,14 @@
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Assignment } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors, fmtDate } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmDeleteAsync, fmtDate } from "@/ui";
 
 export default function AssignmentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const q = useAsync(() => manage.assignment(id), [id]);
   const [tab, setTab] = useState<"edit" | "submissions">("edit");
   const [d, setD] = useState<Assignment | null>(null);
@@ -16,6 +17,21 @@ export default function AssignmentScreen() {
   const edit = (fn: (a: Assignment) => Assignment) => { setD((a) => (a ? fn(a) : a)); setDirty(true); };
   const save = useAction(async () => { if (!d) return; await manage.updateAssignment(id, { title: d.title, description: d.description, instructions: d.instructions, rubric: d.rubric, max_score: d.max_score, due_at: d.due_at || null, available_from: d.available_from || null, allow_late: d.allow_late, allow_resubmission: d.allow_resubmission }); await q.reload(); });
   const status = useAction(async (s: string) => { await manage.assignmentStatus(id, s); await q.reload(); });
+  // Deleting an assignment takes every submission and its marks with it.
+  const remove = useAction(async () => {
+    if (!q.data) return;
+    const count = q.data.submission_count ?? 0;
+    const ok = await confirmDeleteAsync(
+      "Delete this assignment?",
+      count
+        ? `This permanently removes the assignment and the ${count} submission${count === 1 ? "" : "s"} against it, including any marks and feedback already given. It cannot be undone.`
+        : "This permanently removes the assignment and any submissions against it. It cannot be undone.",
+      { detail: q.data.title, okLabel: "Delete Assignment" },
+    );
+    if (!ok) return;
+    await manage.deleteAssignment(id);
+    router.replace("/manage/assignments");
+  });
   const rubricTotal = d?.rubric.reduce((t, r) => t + (Number(r.points) || 0), 0) ?? 0;
   return (
     <Screen refreshing={q.loading} onRefresh={q.reload}>
@@ -25,13 +41,14 @@ export default function AssignmentScreen() {
         <>
           <Row style={{ justifyContent: "space-between" }}><H1>{d.title}</H1><Badge value={d.status} /></Row>
           <Row><Chip label="Details" selected={tab === "edit"} onPress={() => setTab("edit")} /><Chip label={`Submissions (${d.submission_count ?? 0})`} selected={tab === "submissions"} onPress={() => setTab("submissions")} /></Row>
-          <ErrorBanner message={status.error ?? save.error} />
+          <ErrorBanner message={status.error ?? save.error ?? remove.error} />
           {d.generator === "fallback" ? <Notice tone="warning" message="This assignment draft was produced without the AI (deterministic fallback). Review the description and rubric before publishing." /> : null}
           {d.status === "draft" ? <Notice message="Publishing shows this assignment to enrolled students right away; if its module is still locked, publishing opens it." /> : null}
           <Row>
             {d.status === "draft" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}
             {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => status.run("closed")} busy={status.busy} /> : null}
             {dirty ? <Button title="Save Changes" small onPress={() => save.run()} busy={save.busy} disabled={rubricTotal !== d.max_score} /> : null}
+            <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} />
           </Row>
           {tab === "edit" ? (
             <Card>

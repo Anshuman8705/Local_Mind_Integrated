@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Question, Quiz } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, Input, Label, Loading, Notice, P, Row, Screen, colors, fmtDate, fmtSeconds, pct } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmDeleteAsync, fmtDate, fmtSeconds, pct } from "@/ui";
 
 export default function QuizScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -20,13 +20,29 @@ export default function QuizScreen() {
     if (res.id !== id) router.replace(`/manage/quiz/${res.id}`); else await q.reload();
   });
   const status = useAction(async (s: string) => { await manage.quizStatus(id, s); await q.reload(); });
+  // Deleting a quiz takes every attempt on it with it, so the warning says so
+  // and names how many results are about to go.
+  const remove = useAction(async () => {
+    if (!q.data) return;
+    const attempts = q.data.attempt_count ?? 0;
+    const ok = await confirmDeleteAsync(
+      "Delete this quiz?",
+      attempts
+        ? `This permanently removes the quiz and the ${attempts} student attempt${attempts === 1 ? "" : "s"} recorded against it, including their scores. It cannot be undone.`
+        : "This permanently removes the quiz and any results recorded against it. It cannot be undone.",
+      { detail: q.data.title, okLabel: "Delete Quiz" },
+    );
+    if (!ok) return;
+    await manage.deleteQuiz(id);
+    router.replace("/manage/quizzes");
+  });
   const d = draft;
   const edit = (fn: (z: Quiz) => Quiz) => { setDraft((z) => (z ? fn(z) : z)); setDirty(true); };
   const editQ = (i: number, fn: (x: Question) => Question) => edit((z) => ({ ...z, questions: z.questions!.map((x, j) => (j === i ? fn(x) : x)) }));
   const editable = d?.status !== "superseded";
   return (
     <Screen refreshing={q.loading} onRefresh={q.reload}>
-      <ErrorBanner message={q.error} onRetry={q.reload} />
+      <ErrorBanner message={q.error ?? remove.error} onRetry={q.reload} />
       {q.loading && !d ? <Loading /> : null}
       {d ? (
         <>
@@ -45,6 +61,7 @@ export default function QuizScreen() {
             {d.status === "draft" || d.status === "closed" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}
             {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => status.run("closed")} busy={status.busy} /> : null}
             {dirty && editable ? <Button title="Save Changes" small onPress={() => save.run()} busy={save.busy} /> : null}
+            <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} />
           </Row>
           {tab === "questions" ? (
             <>

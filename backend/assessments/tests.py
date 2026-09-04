@@ -287,3 +287,40 @@ class GenerationRulesTests(TestCase):
         self.assertFalse(result["is_correct"])
         self.assertEqual(result["score_awarded"], 0.0)
         self.assertEqual(result["evaluator"], "ollama:qwen3:1.7b")
+
+
+class QuizDeleteTests(TestCase):
+    """Faculty and admins delete quizzes outright, so the PROTECT chain from
+    attempts has to be cleared before the row goes."""
+
+    def setUp(self):
+        self.faculty = make_faculty()
+        self.subject = make_subject(code="DELQ")
+        assign(self.faculty, self.subject)
+        self.student = make_student()
+        enroll(self.student, self.subject)
+
+    def _quiz(self):
+        from .models import Assessment, AssessmentKind, AssessmentStatus
+        return Assessment.objects.create(subject=self.subject, kind=AssessmentKind.values[0], title="Removable",
+                                         status=AssessmentStatus.DRAFT, questions=[])
+
+    def test_delete_removes_the_quiz_and_its_attempts(self):
+        from .models import Assessment, AssessmentAttempt
+
+        quiz = self._quiz()
+        AssessmentAttempt.objects.create(assessment=quiz, student=self.student, attempt_number=1)
+        res = client_for(self.faculty).delete(f"/api/faculty/quizzes/{quiz.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(Assessment.objects.filter(pk=quiz.pk).exists())
+        self.assertFalse(AssessmentAttempt.objects.exists())
+        self.assertTrue(AuditLog.objects.filter(action="quiz.deleted").exists())
+
+    def test_faculty_cannot_delete_a_quiz_in_a_subject_they_do_not_manage(self):
+        from .models import Assessment
+
+        quiz = self._quiz()
+        other = make_faculty()
+        res = client_for(other).delete(f"/api/faculty/quizzes/{quiz.id}/")
+        self.assertIn(res.status_code, (403, 404))
+        self.assertTrue(Assessment.objects.filter(pk=quiz.pk).exists())

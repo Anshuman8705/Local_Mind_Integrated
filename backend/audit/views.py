@@ -1,4 +1,7 @@
+from django.db.models import Count
 from rest_framework.generics import ListAPIView
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from core.permissions import IsAdmin
 from .models import AuditLog
@@ -27,3 +30,23 @@ class AuditLogListView(ListAPIView):
         if params.get("until"):
             qs = qs.filter(created_at__lte=params["until"])
         return qs
+
+
+class AuditActionsView(APIView):
+    """The action names actually present in the log, with counts.
+
+    The audit filter used to be a free-text box that only matched an exact
+    action string, so it was useless unless you already knew that publishing a
+    book records "document.published". Serving the distinct values lets the
+    screen offer them as a list, and the list stays correct as new actions are
+    recorded without anyone editing the frontend.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        rows = AuditLog.objects.values("action").annotate(count=Count("id")).order_by("action")
+        return Response({
+            "actions": [{"value": r["action"], "count": r["count"]} for r in rows],
+            "targets": sorted({t for t in AuditLog.objects.values_list("target_type", flat=True).distinct() if t}),
+        })
