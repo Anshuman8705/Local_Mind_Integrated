@@ -297,3 +297,49 @@ class ImportHeaderNormalisationTests(TestCase):
                  "Batch": "batch", "Phone": "phone", "Department": "department"}
         for raw, expected in cases.items():
             self.assertEqual(_normalize_header(raw), expected, raw)
+
+
+class ImportTemplateTests(TestCase):
+    """The screen, the template and the parser must describe one sheet."""
+
+    def setUp(self):
+        self.client = client_for(make_admin())
+
+    def test_template_headers_match_what_the_parser_accepts(self):
+        import base64
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        from accounts.services.excel_import import OPTIONAL_HEADERS, REQUIRED_HEADERS
+
+        res = self.client.get("/api/admin/students/import/template/")
+        self.assertEqual(res.status_code, 200, res.content)
+        names = [c["name"] for c in res.data["columns"]]
+        self.assertEqual(set(names), REQUIRED_HEADERS | OPTIONAL_HEADERS[Role.STUDENT])
+        self.assertTrue(all(c["required"] for c in res.data["columns"] if c["name"] in REQUIRED_HEADERS))
+
+        book = load_workbook(BytesIO(base64.b64decode(res.data["content_base64"])))
+        header = [c.value for c in book.active[1]]
+        self.assertEqual(header, names)
+        self.assertGreaterEqual(book.active.max_row, 2, "the template carries example rows")
+
+    def test_the_template_it_serves_imports_cleanly(self):
+        import base64
+        from io import BytesIO
+
+        res = self.client.get("/api/admin/students/import/template/")
+        payload = BytesIO(base64.b64decode(res.data["content_base64"]))
+        payload.name = "template.xlsx"
+
+        imported = self.client.post("/api/admin/students/import/", {"file": payload}, format="multipart")
+
+        self.assertEqual(imported.status_code, 200, imported.content)
+        self.assertEqual(imported.data["invalid"], 0, imported.data["errors"])
+        self.assertEqual(imported.data["created"], 2)
+
+    def test_faculty_template_covers_subject_codes(self):
+        res = self.client.get("/api/admin/faculty/import/template/")
+        self.assertIn("subject_codes", [c["name"] for c in res.data["columns"]])
+        aliases = {c["name"]: c["aliases"] for c in res.data["columns"]}
+        self.assertIn("full_name", aliases["name"])

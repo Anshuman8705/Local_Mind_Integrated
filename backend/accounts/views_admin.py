@@ -119,6 +119,29 @@ class UserResetPasswordView(_RoleScopedMixin, APIView):
         return Response({"detail": "Password reset to the onboarding password; the user must change it at next login."})
 
 
+class UserImportTemplateView(_RoleScopedMixin, APIView):
+    """The columns this role's sheet may contain, plus a starter workbook.
+
+    Served rather than restated in the client so the screen, the template and
+    the parser cannot drift apart. The workbook comes back base64-encoded so
+    the browser downloads it through the same authenticated request as
+    everything else, with no token in a URL.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        import base64
+
+        from .services.excel_import import build_template, column_spec
+
+        return Response({
+            "columns": column_spec(self.role),
+            "filename": f"localmind-{'faculty' if self.role == Role.FACULTY else 'students'}-template.xlsx",
+            "content_base64": base64.b64encode(build_template(self.role)).decode(),
+        })
+
+
 class UserImportView(_RoleScopedMixin, APIView):
     permission_classes = [IsAdmin]
     parser_classes = [MultiPartParser, FormParser]
@@ -139,4 +162,5 @@ def role_views(role):
         "reactivate": type(f"{role.title()}ReactivateView", (UserReactivateView,), {"role": role}),
         "reset_password": type(f"{role.title()}ResetPasswordView", (UserResetPasswordView,), {"role": role}),
         "import": type(f"{role.title()}ImportView", (UserImportView,), {"role": role}),
+        "import_template": type(f"{role.title()}ImportTemplateView", (UserImportTemplateView,), {"role": role}),
     }

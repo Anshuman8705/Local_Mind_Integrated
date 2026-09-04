@@ -34,6 +34,63 @@ HEADER_ALIASES = {
 }
 MAX_ROWS = 5000
 
+# The columns an admin actually types, with an example and the alternative
+# spellings the parser accepts. Served to the client and used to build the
+# downloadable template, so the screen, the template and the parser can never
+# describe different sheets.
+COLUMN_EXAMPLES = {
+    "name": "Priya Kulkarni", "email": "priya@example.edu",
+    "roll_number": "CS4750", "program": "B.Tech CSE", "batch": "2026", "phone": "9876543210",
+    "employee_id": "EMP1042", "department": "Computer Science", "designation": "Associate Professor",
+    "subject_codes": "CS101, CS201",
+}
+COLUMN_ORDER = {
+    Role.STUDENT: ["name", "email", "roll_number", "program", "batch", "phone"],
+    Role.FACULTY: ["name", "email", "employee_id", "department", "designation", "phone", "subject_codes"],
+}
+
+
+def column_spec(role) -> list[dict]:
+    """What the sheet may contain, for this role, in the order a template
+    should list it."""
+    aliases: dict[str, list[str]] = {}
+    for alias, canonical in HEADER_ALIASES.items():
+        if alias != canonical:
+            aliases.setdefault(canonical, []).append(alias)
+    return [
+        {
+            "name": name,
+            "required": name in REQUIRED_HEADERS,
+            "example": COLUMN_EXAMPLES.get(name, ""),
+            "aliases": sorted(aliases.get(name, [])),
+        }
+        for name in COLUMN_ORDER[role]
+    ]
+
+
+def build_template(role) -> bytes:
+    """A starter workbook: the header row this parser expects plus two example
+    rows. Typing the headers by hand is where most failed imports begin."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    columns = column_spec(role)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "students" if role == Role.STUDENT else "faculty"
+    ws.append([c["name"] for c in columns])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.append([c["example"] for c in columns])
+    second = dict(COLUMN_EXAMPLES, name="Anand Rao", email="anand@example.edu",
+                  roll_number="CS4751", employee_id="EMP1043")
+    ws.append([second.get(c["name"], "") for c in columns])
+    for i, c in enumerate(columns, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = max(14, len(c["name"]) + 6)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
 
 @dataclass
 class ParsedRow:

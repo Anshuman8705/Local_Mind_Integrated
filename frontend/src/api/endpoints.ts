@@ -117,6 +117,8 @@ export const admin = {
   deleteUser: (kind: "faculty" | "students", id: string, reason = "") =>
     api<{ detail: string }>(`/admin/${kind}/${id}/`, { method: "DELETE", body: { reason } }),
   importUsers: (kind: "faculty" | "students", form: FormData) => api<T.ImportReport>(`/admin/${kind}/import/`, { method: "POST", form }),
+  importTemplate: (kind: "faculty" | "students") =>
+    api<{ columns: { name: string; required: boolean; example: string; aliases: string[] }[]; filename: string; content_base64: string }>(`/admin/${kind}/import/template/`),
   auditLogs: (q: Q = {}) => api<T.Paginated<T.AuditLog>>("/admin/audit-logs/", { query: q }),
   auditActions: () => api<{ actions: { value: string; count: number }[]; targets: string[] }>("/admin/audit-logs/actions/"),
   platform: () => api<any>("/admin/analytics/platform/"),
