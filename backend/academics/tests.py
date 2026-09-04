@@ -59,6 +59,22 @@ class SubjectTests(TestCase):
         self.assertIn(res.status_code, (401, 403))
         self.assertTrue(Subject.objects.filter(pk=subject.pk).exists())
 
+    def test_student_search_can_exclude_those_already_enrolled(self):
+        """The enrol picker asks for candidates for one subject, so anyone
+        already on it must not come back."""
+        subject = make_subject()
+        already = make_student(name="Already Enrolled")
+        available = make_student(name="Not Yet Enrolled")
+        enroll(already, subject)
+
+        everyone = self.client.get("/api/admin/students/search/").data
+        self.assertIn(str(already.id), [s["id"] for s in everyone])
+
+        candidates = self.client.get(f"/api/admin/students/search/?subject={subject.id}").data
+        ids = [s["id"] for s in candidates]
+        self.assertNotIn(str(already.id), ids)
+        self.assertIn(str(available.id), ids)
+
     def test_assign_and_unassign_faculty(self):
         subject = make_subject()
         faculty = make_faculty()

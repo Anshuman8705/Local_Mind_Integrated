@@ -3,7 +3,8 @@ import React, { useState } from "react";
 import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, Empty, ErrorBanner, H1, H2, Input, ListRow, Loading, Notice, P, Row, Screen, Stat, fmtSeconds, pct } from "@/ui";
+import { StudentPicker } from "@/ui/StudentPicker";
+import { Badge, Button, Card, Chip, Empty, ErrorBanner, H1, H2, Loading, Notice, P, Row, Screen, Stat, fmtSeconds, pct } from "@/ui";
 
 type Tab = "overview" | "students" | "modules";
 
@@ -46,19 +47,15 @@ export default function SubjectScreen() {
 
 function StudentsTab({ subjectId }: { subjectId: string }) {
   const rows = useAsync(() => manage.subjectStudentsAnalytics(subjectId), [subjectId]);
-  const [q, setQ] = useState("");
-  const [found, setFound] = useState<{ id: string; email: string; full_name: string; roll_number: string }[]>([]);
-  const search = useAction(async () => { setFound(await manage.searchStudents(q)); });
-  const enroll = useAction(async (sid: string) => { await manage.enroll(subjectId, [sid]); setFound((f) => f.filter((x) => x.id !== sid)); await rows.reload(); });
   const drop = useAction(async (sid: string) => { await manage.discontinueEnrollment(subjectId, sid); await rows.reload(); });
   return (
     <>
-      <Card>
-        <H2>Enrol a student</H2>
-        <Row><View style={{ flex: 1 }}><Input value={q} onChangeText={setQ} placeholder="Name, email or roll number" onSubmitEditing={() => search.run()} /></View><Button title="Search" small onPress={() => search.run()} busy={search.busy} disabled={q.length < 2} /></Row>
-        <ErrorBanner message={search.error ?? enroll.error} />
-        {found.map((f) => <ListRow key={f.id} title={f.full_name} subtitle={`${f.email}${f.roll_number ? ` · ${f.roll_number}` : ""}`} right={<Button title="Enrol" small onPress={() => enroll.run(f.id)} busy={enroll.busy} />} />)}
-      </Card>
+      <StudentPicker
+        subjectId={subjectId}
+        search={manage.searchStudents}
+        enrol={(ids) => manage.enroll(subjectId, ids)}
+        onDone={rows.reload}
+      />
       <H2>Enrolled students</H2>
       <ErrorBanner message={rows.error ?? drop.error} onRetry={rows.reload} />
       {rows.loading ? <Loading /> : null}

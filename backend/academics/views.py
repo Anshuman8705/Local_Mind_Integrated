@@ -160,7 +160,15 @@ class StudentSearchView(ListAPIView):
         qs = User.objects.filter(role=Role.STUDENT, status="active")
         if q:
             qs = qs.filter(Q(email__icontains=q) | Q(full_name__icontains=q) | Q(student_profile__roll_number__icontains=q))
-        qs = qs.select_related("student_profile")[:50]
+        # ?subject=<id> leaves out anyone already actively enrolled there, so the
+        # picker only ever offers students the caller can actually add. Without
+        # it the list happily showed people who were already on the course and
+        # enrolling them again did nothing.
+        subject_id = request.query_params.get("subject")
+        if subject_id:
+            enrolled = Enrollment.objects.filter(subject_id=subject_id, status=EnrollmentStatus.ACTIVE).values("student_id")
+            qs = qs.exclude(id__in=enrolled)
+        qs = qs.select_related("student_profile").order_by("full_name")[:50]
         return Response([
             {"id": str(u.id), "email": u.email, "full_name": u.full_name,
              "roll_number": getattr(getattr(u, "student_profile", None), "roll_number", "")}

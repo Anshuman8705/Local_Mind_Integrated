@@ -51,7 +51,7 @@ export const manage = {
   subjectStudents: (id: string) => api<{ id: string; student_id: string; student_email: string; student_name: string; status: string; enrolled_at: string }[]>(`/faculty/subjects/${id}/students/`),
   enroll: (id: string, student_ids: string[]) => api<{ results: { student_id: string; status: string }[] }>(`/faculty/subjects/${id}/students/`, { method: "POST", body: { student_ids } }),
   discontinueEnrollment: (subjectId: string, studentId: string) => api(`/faculty/subjects/${subjectId}/students/${studentId}/discontinue/`, { method: "POST" }),
-  searchStudents: (q: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/faculty/students/search/", { query: { q } }),
+  searchStudents: (q: string, subject?: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/faculty/students/search/", { query: { q, subject } }),
 
   documents: (q: Q = {}) => api<T.Paginated<T.Document>>("/faculty/documents/", { query: q }).then(list),
   document: (id: string) => api<T.Document>(`/faculty/documents/${id}/`),
@@ -106,7 +106,7 @@ export const admin = {
   subjectStudents: (id: string) => manage.subjectStudents(id),
   enroll: (id: string, student_ids: string[]) => api<{ results: { student_id: string; status: string }[] }>(`/admin/subjects/${id}/students/`, { method: "POST", body: { student_ids } }),
   discontinueEnrollment: (subjectId: string, studentId: string) => api(`/admin/subjects/${subjectId}/students/${studentId}/discontinue/`, { method: "POST" }),
-  searchStudents: (q: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/admin/students/search/", { query: { q } }),
+  searchStudents: (q: string, subject?: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/admin/students/search/", { query: { q, subject } }),
 
   users: (kind: "faculty" | "students", q: Q = {}) => api<T.Paginated<T.User>>(`/admin/${kind}/`, { query: q }).then(list),
   user: (kind: "faculty" | "students", id: string) => api<T.User>(`/admin/${kind}/${id}/`),

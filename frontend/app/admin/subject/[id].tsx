@@ -1,9 +1,9 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useState } from "react";
-import { View } from "react-native";
+import React from "react";
 import { admin } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, ListRow, Loading, Notice, P, Row, Screen, confirmDeleteAsync } from "@/ui";
+import { StudentPicker } from "@/ui/StudentPicker";
+import { Badge, Button, Card, ErrorBanner, H1, H2, ListRow, Loading, Notice, P, Row, Screen, confirmDeleteAsync } from "@/ui";
 
 export default function AdminSubject() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -28,9 +28,6 @@ export default function AdminSubject() {
   });
   const assign = useAction(async (fid: string) => { await admin.assignFaculty(id, [fid]); await q.reload(); });
   const unassign = useAction(async (fid: string) => { await admin.unassignFaculty(id, fid); await q.reload(); });
-  const [search, setSearch] = useState(""); const [found, setFound] = useState<{ id: string; full_name: string; email: string; roll_number: string }[]>([]);
-  const doSearch = useAction(async () => setFound(await admin.searchStudents(search)));
-  const enroll = useAction(async (sid: string) => { await admin.enroll(id, [sid]); setFound((f) => f.filter((x) => x.id !== sid)); await students.reload(); });
   const drop = useAction(async (sid: string) => { await admin.discontinueEnrollment(id, sid); await students.reload(); });
   const s = q.data;
   const assigned = new Set((s?.faculty ?? []).filter((f) => f.status === "active").map((f) => f.faculty_id));
@@ -56,11 +53,13 @@ export default function AdminSubject() {
             <Row>{allFaculty.data?.filter((f) => !assigned.has(f.id)).map((f) => <Button key={f.id} title={`+ ${f.full_name}`} small variant="secondary" onPress={() => assign.run(f.id)} />)}</Row>
           </Card>
           <H2>Students ({students.data?.filter((e) => e.status === "active").length ?? 0})</H2>
-          <Card>
-            <Row><View style={{ flex: 1 }}><Input placeholder="Search students to enrol" value={search} onChangeText={setSearch} onSubmitEditing={() => doSearch.run()} /></View><Button title="Search" small onPress={() => doSearch.run()} busy={doSearch.busy} disabled={search.length < 2} /></Row>
-            <ErrorBanner message={doSearch.error ?? enroll.error ?? drop.error} />
-            {found.map((f) => <ListRow key={f.id} title={f.full_name} subtitle={f.email} right={<Button title="Enrol" small onPress={() => enroll.run(f.id)} />} />)}
-          </Card>
+          <ErrorBanner message={drop.error} />
+          <StudentPicker
+            subjectId={id}
+            search={admin.searchStudents}
+            enrol={(ids) => admin.enroll(id, ids)}
+            onDone={students.reload}
+          />
           {students.data?.filter((e) => e.status === "active").map((e) => <ListRow key={e.id} title={e.student_name} subtitle={e.student_email} right={<Button title="Remove" small variant="ghost" onPress={() => drop.run(e.student_id)} />} />)}
         </>
       ) : null}
