@@ -20,18 +20,18 @@ type IconName = keyof typeof Ionicons.glyphMap;
 /**
  * How wide the content column is allowed to get.
  *
- * Prose has a cap because a line of text that runs the width of a 27in monitor
- * is genuinely hard to read. Lists and dashboards do not: they were being
- * squeezed into the middle of the window with empty bands either side, so they
- * run to the edge of the viewport (less the gutters) up to a generous ceiling.
+ * Every screen runs to the edge of the viewport, less the gutters, up to a
+ * generous ceiling. Long-read pages do not get a narrower Screen: they cap
+ * their own text column for line length and put a summary alongside it, which
+ * keeps the prose readable without leaving half the window empty.
  */
-const contentWidth = (reading?: boolean, wide?: boolean) => (reading ? 900 : wide ? 1920 : 1680);
+const contentWidth = (wide?: boolean) => (wide ? 1920 : 1680);
 
 /**
  * Page container. Gutters scale with the viewport (34px desktop, 18px phone)
  * so cards line up with the header title above them.
  */
-export function Screen({ children, scroll = true, refreshing, onRefresh, padded = true, wide, reading, toolbar, actions }: { children: React.ReactNode; scroll?: boolean; refreshing?: boolean; onRefresh?: () => void; padded?: boolean; wide?: boolean; reading?: boolean; toolbar?: React.ReactNode; actions?: React.ReactNode }) {
+export function Screen({ children, scroll = true, refreshing, onRefresh, padded = true, wide, toolbar, actions }: { children: React.ReactNode; scroll?: boolean; refreshing?: boolean; onRefresh?: () => void; padded?: boolean; wide?: boolean; toolbar?: React.ReactNode; actions?: React.ReactNode }) {
   const { width } = useWindowDimensions();
   const gutter = width >= bp.desktop ? 34 : width >= bp.tablet ? 24 : 18;
   // No manual refresh control anywhere. Native keeps the pull gesture, and on
@@ -42,7 +42,7 @@ export function Screen({ children, scroll = true, refreshing, onRefresh, padded 
     // When the screen does not scroll (chat layouts) the inner box must take
     // the full height and be allowed to shrink, otherwise a child ScrollView
     // grows with its content on web and pushes the input bar off screen.
-    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.lg, gap: space.md }, { maxWidth: contentWidth(reading, wide), width: "100%", alignSelf: reading ? "flex-start" : "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
+    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.lg, gap: space.md }, { maxWidth: contentWidth(wide), width: "100%", alignSelf: "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
       {bar}
       {children}
     </View>
