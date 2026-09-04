@@ -48,17 +48,46 @@ def validate_upload(uploaded_file):
     return ext
 
 
+def file_digest(uploaded_file) -> str:
+    """SHA-256 of the upload, read in chunks so a 100 MB book is not held twice
+    in memory. Leaves the file rewound for the storage backend."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for chunk in uploaded_file.chunks():
+        digest.update(chunk)
+    uploaded_file.seek(0)
+    return digest.hexdigest()
+
+
 @transaction.atomic
 def upload_document(actor, subject, uploaded_file, title="", request=None):
     _require_manage(actor, subject)
     if subject.status != SubjectStatus.ACTIVE:
         raise Conflict("Books can only be uploaded to active subjects.", code="SUBJECT_INACTIVE")
     ext = validate_upload(uploaded_file)
+    digest = file_digest(uploaded_file)
+    # The same book must not sit on a subject twice: it would be parsed twice,
+    # produce two sets of modules and two reading paths for the same content.
+    # Matching on the hash rather than the filename catches a re-upload that
+    # was renamed first, which is the common case.
+    existing = Document.objects.filter(subject=subject, content_hash=digest).exclude(content_hash="").first()
+    if existing:
+        name = existing.title or existing.original_name
+        # A copy that failed to parse is the one case where re-uploading is a
+        # reasonable instinct, so say what to do instead of just refusing.
+        hint = (" That copy failed to process; open it to retry, or delete it first."
+                if existing.status == DocumentStatus.ERROR else "")
+        raise Conflict(
+            f'This book is already on {subject.code} as "{name}".{hint}',
+            code="DUPLICATE_DOCUMENT",
+            details={"document_id": str(existing.id), "title": name, "status": existing.status},
+        )
     document = Document(
         subject=subject, uploaded_by=actor,
         original_name=Path(uploaded_file.name).name[:300],
         title=(title or Path(uploaded_file.name).stem)[:300],
-        file_type=ext.lstrip("."), file_size=uploaded_file.size,
+        file_type=ext.lstrip("."), file_size=uploaded_file.size, content_hash=digest,
     )
     document.file = uploaded_file  # upload_to uses document.id, which exists already
     document.save()

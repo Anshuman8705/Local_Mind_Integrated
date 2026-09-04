@@ -284,6 +284,33 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/archive/").data["status"], "archived")
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/process/").status_code, 409)
 
+    def test_the_same_book_cannot_be_uploaded_twice_to_one_subject(self, _):
+        """Two copies would be parsed twice and give students two reading paths
+        through identical content."""
+        first = self.upload()
+        self.assertEqual(first.status_code, 201, first.content)
+
+        again = self.upload()
+
+        self.assertEqual(again.status_code, 409, again.content)
+        self.assertEqual(again.data["error"]["code"], "DUPLICATE_DOCUMENT")
+        self.assertEqual(Document.objects.filter(subject=self.subject).count(), 1)
+
+    def test_a_renamed_copy_of_the_same_book_is_still_a_duplicate(self, _):
+        """Matching on content rather than filename is the whole point."""
+        self.upload()
+        again = self.upload(name="renamed-copy.pdf")
+        self.assertEqual(again.status_code, 409, again.content)
+        self.assertEqual(again.data["error"]["code"], "DUPLICATE_DOCUMENT")
+
+    def test_the_same_book_may_be_uploaded_to_a_different_subject(self, _):
+        """The rule is per subject; one book can legitimately be on two courses."""
+        self.upload()
+        other = make_subject(code="OTHER")
+        assign(self.faculty, other)
+        res = self.upload(subject=other)
+        self.assertEqual(res.status_code, 201, res.content)
+
     def test_delete_removes_the_book_and_the_quizzes_built_from_it(self, _):
         """The workspace deletes books now, so the PROTECT chain from quizzes
         and assignments back to chapters has to be cleared first."""

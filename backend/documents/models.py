@@ -85,6 +85,10 @@ class Document(TimeStampedUUIDModel):
     file = models.FileField(upload_to=document_upload_path)
     file_type = models.CharField(max_length=10)
     file_size = models.PositiveBigIntegerField(default=0)
+    # SHA-256 of the uploaded bytes. Identifies the same book across renames,
+    # which a filename comparison cannot do. Blank on rows created before this
+    # field existed, and those are simply skipped by the duplicate check.
+    content_hash = models.CharField(max_length=64, blank=True, db_index=True)
     status = models.CharField(max_length=30, choices=DocumentStatus.choices, default=DocumentStatus.UPLOADED, db_index=True)
 
     processed_markdown_path = models.CharField(max_length=500, blank=True)
