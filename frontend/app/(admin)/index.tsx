@@ -1,7 +1,7 @@
 import React from "react";
 import { admin } from "@/api/endpoints";
 import { useAsync } from "@/hooks/useAsync";
-import { Badge, Card, ErrorBanner, H2, ListRow, Loading, P, ProgressBar, Row, Screen, Stat, colors, fmtSeconds, pct } from "@/ui";
+import { Badge, Card, CardGrid, ErrorBanner, H2, ListRow, Loading, P, ProgressBar, Row, Screen, Stat, colors, fmtSeconds, pct } from "@/ui";
 
 export default function Overview() {
   const q = useAsync(() => admin.platform(), []);
@@ -49,10 +49,12 @@ export default function Overview() {
         </>
       ) : null}
       <H2 icon="library-outline">Subjects</H2>
-      {subs.data?.subjects?.map((s: any) => (
-        <ListRow key={s.subject_id} icon="library-outline" title={`${s.code} · ${s.name}`}
-          subtitle={`${s.faculty.length ? s.faculty.join(", ") : "No faculty assigned"} · ${s.students_enrolled} students · ${s.documents_published} books · ${s.quiz_attempts} attempts (avg ${pct(s.quiz_average)}) · ${s.students_active_in_window} active`} />
-      ))}
+      <CardGrid>
+        {subs.data?.subjects?.map((s: any) => (
+          <ListRow key={s.subject_id} icon="library-outline" title={`${s.code} · ${s.name}`}
+            subtitle={`${s.faculty.length ? s.faculty.join(", ") : "No faculty assigned"} · ${s.students_enrolled} students · ${s.documents_published} books · ${s.quiz_attempts} attempts (avg ${pct(s.quiz_average)}) · ${s.students_active_in_window} active`} />
+        ))}
+      </CardGrid>
     </Screen>
   );
 }

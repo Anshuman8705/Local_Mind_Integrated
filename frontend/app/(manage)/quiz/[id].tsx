@@ -44,7 +44,7 @@ export default function QuizScreen() {
           <Row>
             {d.status === "draft" || d.status === "closed" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}
             {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => status.run("closed")} busy={status.busy} /> : null}
-            {dirty && editable ? <Button title="Save changes" small onPress={() => save.run()} busy={save.busy} /> : null}
+            {dirty && editable ? <Button title="Save Changes" small onPress={() => save.run()} busy={save.busy} /> : null}
           </Row>
           {tab === "questions" ? (
             <>
@@ -69,7 +69,7 @@ export default function QuizScreen() {
               ))}
               {editable ? <Row>
                 <Button title="Add MCQ" small variant="secondary" onPress={() => edit((z) => ({ ...z, questions: [...(z.questions ?? []), { id: `q${Date.now()}`, type: "mcq", question: "", options: ["A", "B", "C", "D"].map((k) => ({ key: k, text: "" })), correct_answer: "A", explanation: "" }] }))} />
-                <Button title="Add written question" small variant="secondary" onPress={() => edit((z) => ({ ...z, questions: [...(z.questions ?? []), { id: `q${Date.now()}`, type: "subjective", question: "", expected_rubric: "" }] }))} />
+                <Button title="Add Written Question" small variant="secondary" onPress={() => edit((z) => ({ ...z, questions: [...(z.questions ?? []), { id: `q${Date.now()}`, type: "subjective", question: "", expected_rubric: "" }] }))} />
               </Row> : null}
             </>
           ) : tab === "settings" ? (
@@ -126,8 +126,8 @@ function AttemptsTab({ quizId }: { quizId: string }) {
                 </View>
               ))}
               <Row>
-                {Object.keys(overrides).length ? <Button title="Apply overrides" small onPress={() => re.run(a.id, true)} busy={re.busy} /> : null}
-                <Button title="Re-run AI evaluation" small variant="secondary" onPress={() => re.run(a.id, false)} busy={re.busy} />
+                {Object.keys(overrides).length ? <Button title="Apply Overrides" small onPress={() => re.run(a.id, true)} busy={re.busy} /> : null}
+                <Button title="Re-Run AI Evaluation" small variant="secondary" onPress={() => re.run(a.id, false)} busy={re.busy} />
               </Row>
             </>
           ) : null}

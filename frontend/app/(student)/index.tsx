@@ -3,7 +3,7 @@ import React from "react";
 import { student } from "@/api/endpoints";
 import { useAuth } from "@/auth/AuthContext";
 import { useAsync } from "@/hooks/useAsync";
-import { Empty, ErrorBanner, ListRow, Loading, PageHeading, Screen } from "@/ui";
+import { CardGrid, Empty, ErrorBanner, ListRow, Loading, PageHeading, Screen } from "@/ui";
 
 export default function Subjects() {
   const { user } = useAuth();
@@ -15,7 +15,9 @@ export default function Subjects() {
       <ErrorBanner message={q.error} onRetry={q.reload} />
       {q.loading && !q.data ? <Loading /> : null}
       {q.data?.length === 0 ? <Empty text="You are not enrolled in any subject yet." /> : null}
-      {q.data?.map((s) => <ListRow key={s.id} icon="library-outline" title={s.name} subtitle={s.code} badge={s.status} onPress={() => router.push(`/(student)/subject/${s.id}`)} />)}
+      <CardGrid>
+        {q.data?.map((s) => <ListRow key={s.id} icon="library-outline" title={s.name} subtitle={s.code} badge={s.status === "active" ? undefined : s.status} onPress={() => router.push(`/(student)/subject/${s.id}`)} />)}
+      </CardGrid>
     </Screen>
   );
 }

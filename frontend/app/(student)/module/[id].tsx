@@ -26,7 +26,7 @@ export default function ModuleScreen() {
   }, [id]);
 
   return (
-    <Screen scroll={tab !== "ask"} padded={tab !== "ask"}>
+    <Screen scroll={tab !== "ask"} padded={tab !== "ask"} reading>
       {mod.error ? <ErrorBanner message={mod.error} onRetry={mod.reload} /> : null}
       {mod.loading && !mod.data ? <Loading /> : null}
       {mod.data ? (

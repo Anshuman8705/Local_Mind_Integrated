@@ -1,21 +1,34 @@
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { View } from "react-native";
 import { manage } from "@/api/endpoints";
-import type { Outline, OutlineChapter, OutlineModule } from "@/api/types";
+import type { Document, Outline, OutlineChapter, OutlineModule } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmAsync } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const doc = useAsync(() => manage.document(id), [id]);
   const d = doc.data;
   // Poll while processing.
   useEffect(() => { if (d?.status !== "processing") return; const t = setInterval(doc.reload, 3000); return () => clearInterval(t); }, [d?.status, doc.reload]);
-  const act = useAction(async (action: "process" | "ready" | "publish" | "unpublish" | "archive") => {
-    if (action === "archive") { const ok = await confirm("Archive this book? Students will no longer see it."); if (!ok) return; }
+  const act = useAction(async (action: "process" | "ready" | "publish" | "unpublish") => {
     if (action === "process") await manage.process(id); else await manage.transition(id, action);
     await doc.reload();
+  });
+  // Deleting a book takes its chapters, modules and any quiz or assignment
+  // built on them with it, so the warning names the book and says so.
+  const remove = useAction(async () => {
+    if (!d) return;
+    const ok = await confirmDeleteAsync(
+      "Delete this book?",
+      "This permanently removes the book, its chapters and modules, and any quiz or assignment built from them, along with student attempts and submissions. It cannot be undone.",
+      { detail: `${d.title} · ${d.original_name}`, okLabel: "Delete Book" },
+    );
+    if (!ok) return;
+    await manage.deleteDocument(id);
+    router.replace("/(manage)/books");
   });
   return (
     <Screen refreshing={doc.loading} onRefresh={doc.reload}>
@@ -25,17 +38,17 @@ export default function DocumentScreen() {
         <>
           <H1>{d.title}</H1>
           <Row><Badge value={d.status} /><P muted small>{d.original_name} · {d.chapter_count ?? 0} chapters · {d.module_count ?? 0} modules · v{d.content_version}</P></Row>
-          {d.status === "processing" ? <Notice message="Parsing the book and drafting an outline. This page refreshes automatically." /> : null}
+          {d.status === "processing" ? <ProcessingCard doc={d} /> : null}
           {d.status === "error" ? <Notice tone="warning" message={`Processing failed: ${d.error_message || "unknown error"}. You can retry.`} /> : null}
           {d.missing_source_modules ? <Notice tone="warning" message={`${d.missing_source_modules} module(s) have no source text. Point them at a heading or paste text before publishing.`} /> : null}
           {(d.status === "ready" || d.status === "under_review" || d.status === "unpublished") ? <Notice message="Publishing makes the book visible to enrolled students and opens every module that has source text. You can lock individual modules or chapters afterwards to pace the course." /> : null}
-          <ErrorBanner message={act.error} />
+          <ErrorBanner message={act.error ?? remove.error} />
           <Row>
             {(d.status === "uploaded" || d.status === "error") ? <Button title="Process" small onPress={() => act.run("process")} busy={act.busy} /> : null}
-            {d.status === "under_review" ? <Button title="Mark ready" small onPress={() => act.run("ready")} busy={act.busy} /> : null}
+            {d.status === "under_review" ? <Button title="Mark Ready" small onPress={() => act.run("ready")} busy={act.busy} /> : null}
             {(d.status === "ready" || d.status === "under_review" || d.status === "unpublished") ? <Button title="Publish" small onPress={() => act.run("publish")} busy={act.busy} /> : null}
             {d.status === "published" ? <Button title="Unpublish" small variant="secondary" onPress={() => act.run("unpublish")} busy={act.busy} /> : null}
-            {d.status !== "archived" ? <Button title="Archive" small variant="ghost" onPress={() => act.run("archive")} busy={act.busy} /> : null}
+            {d.status !== "processing" ? <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} /> : null}
           </Row>
           {(d.status !== "uploaded" && d.status !== "processing" && d.status !== "error") ? <OutlineEditor documentId={id} locked={d.status === "published"} onSaved={doc.reload} /> : null}
         </>
@@ -44,8 +57,41 @@ export default function DocumentScreen() {
   );
 }
 
-function confirm(msg: string) {
-  return confirmAsync("Confirm", msg);
+/**
+ * What the person sees while a book is being processed.
+ *
+ * The pipeline is a fixed sequence rather than a per-item loop (the parser
+ * returns the whole book at once, and the outline is planned in a single
+ * request), so this reports the step in flight and, once the outline exists,
+ * the real number of chapters and modules about to be created.
+ */
+const STAGE_LABEL: Record<string, string> = {
+  queued: "Waiting for the parser",
+  reading: "Reading the file",
+  outline: "Planning the outline",
+  structure: "Creating chapters and modules",
+};
+
+function ProcessingCard({ doc }: { doc: Document }) {
+  const p = doc.progress;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const started = doc.processing_started_at ? new Date(doc.processing_started_at).getTime() : null;
+  const elapsed = started ? Math.max(0, Math.round((now - started) / 1000)) : null;
+  return (
+    <Card accent={colors.accent}>
+      <Row style={{ justifyContent: "space-between" }}>
+        <H2 icon="sync-outline">{p ? STAGE_LABEL[p.stage] ?? "Processing" : "Processing"}</H2>
+        <P muted small>{p ? `Step ${p.step} of ${p.total_steps}` : "Starting"}</P>
+      </Row>
+      <ProgressBar value={p?.percent ?? 0} />
+      {p?.detail ? <P small>{p.detail}</P> : null}
+      <P muted small>
+        Reading a scanned book takes the longest; the page updates on its own.
+        {elapsed !== null ? ` Running for ${fmtSeconds(elapsed)}.` : ""}
+      </P>
+    </Card>
+  );
 }
 
 function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; locked: boolean; onSaved: () => void }) {
@@ -78,7 +124,7 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
     <>
       <Row style={{ justifyContent: "space-between" }}>
         <H2>Outline</H2>
-        {locked ? <P muted small>Structure is locked after publishing; text edits still allowed.</P> : <Button title="Add chapter" small variant="secondary" onPress={() => update((c) => [...c, { title: `Chapter ${c.length + 1}`, order: c.length + 1, modules: [] }])} />}
+        {locked ? <P muted small>Structure is locked after publishing; text edits still allowed.</P> : <Button title="Add Chapter" small variant="secondary" onPress={() => update((c) => [...c, { title: `Chapter ${c.length + 1}`, order: c.length + 1, modules: [] }])} />}
       </Row>
       {q.data?.outline_source ? <P muted small>Outline source: {q.data.outline_source}. Every module must map to a heading or carry its own text.</P> : null}
       {chapters.map((ch, ci) => (
@@ -98,7 +144,7 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
               onMove={(dir) => update((c) => c.map((x, i) => { if (i !== ci) return x; const n = [...x.modules]; const t = mi + dir; if (t < 0 || t >= n.length) return x; [n[mi], n[t]] = [n[t], n[mi]]; return { ...x, modules: n }; }))}
               onToggle={() => avail.run(m)} />
           ))}
-          {!locked ? <Button title="Add module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
+          {!locked ? <Button title="Add Module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
         </Card>
       ))}
       <ErrorBanner message={save.error ?? avail.error} />
@@ -127,7 +173,7 @@ function ModuleRow({ m, locked, headings, onChange, onRemove, onMove, onToggle }
           </Row> : null}
           <Input label="Source text (edit to override the mapped section)" multiline value={m.source_text ?? ""} onChangeText={(t) => onChange({ ...m, source_text: t })} />
           <Row>
-            {!locked ? <><Button title="↑" small variant="ghost" onPress={() => onMove(-1)} /><Button title="↓" small variant="ghost" onPress={() => onMove(1)} /><Button title="Remove module" small variant="ghost" onPress={onRemove} /></> : null}
+            {!locked ? <><Button title="↑" small variant="ghost" onPress={() => onMove(-1)} /><Button title="↓" small variant="ghost" onPress={() => onMove(1)} /><Button title="Remove Module" small variant="ghost" onPress={onRemove} /></> : null}
             {m.id ? <Button title={m.availability === "open" ? "Lock for students" : "Open for students"} small variant="secondary" onPress={onToggle} disabled={m.source_missing} /> : null}
           </Row>
         </>

@@ -26,6 +26,39 @@ class SubjectTests(TestCase):
         self.assertEqual(self.client.post(url, {"status": "archived"}, format="json").data["status"], "archived")
         self.assertEqual(self.client.post(url, {"status": "active"}, format="json").status_code, 409)
 
+    def test_delete_subject_removes_it_and_everything_it_owns(self):
+        """The admin console deletes subjects outright, so the PROTECT chain
+        from documents, quizzes and assignments has to be cleared first."""
+        from assessments.models import Assessment, AssessmentKind
+        from assignments.models import Assignment
+        from documents.models import Document
+        from learning.models import Chapter
+
+        subject = make_subject()
+        student = make_student()
+        enroll(student, subject)
+        document = Document.objects.create(subject=subject, original_name="book.pdf", title="Book", file_type="pdf")
+        chapter = Chapter.objects.create(document=document, title="Chapter one", order=1)
+        Assessment.objects.create(subject=subject, chapter=chapter, kind=AssessmentKind.values[0], title="Quiz one")
+        Assignment.objects.create(subject=subject, chapter=chapter, title="Assignment one")
+
+        res = self.client.delete(f"/api/admin/subjects/{subject.id}/")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(Subject.objects.filter(pk=subject.pk).exists())
+        self.assertFalse(Document.objects.filter(pk=document.pk).exists())
+        self.assertFalse(Chapter.objects.filter(pk=chapter.pk).exists())
+        self.assertFalse(Assessment.objects.exists())
+        self.assertFalse(Assignment.objects.exists())
+        self.assertFalse(Enrollment.objects.exists())
+        self.assertTrue(AuditLog.objects.filter(action="subject.deleted").exists())
+
+    def test_delete_subject_needs_admin(self):
+        subject = make_subject()
+        res = client_for(make_faculty()).delete(f"/api/admin/subjects/{subject.id}/")
+        self.assertIn(res.status_code, (401, 403))
+        self.assertTrue(Subject.objects.filter(pk=subject.pk).exists())
+
     def test_assign_and_unassign_faculty(self):
         subject = make_subject()
         faculty = make_faculty()

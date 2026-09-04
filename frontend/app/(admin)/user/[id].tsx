@@ -1,18 +1,34 @@
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { admin, manage } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, Stat, fmtSeconds, pct } from "@/ui";
+import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, Stat, confirmDeleteAsync, fmtSeconds, pct } from "@/ui";
 
 export default function UserScreen() {
   const { id, kind: k } = useLocalSearchParams<{ id: string; kind?: string }>();
+  const router = useRouter();
   const kind = k === "faculty" ? "faculty" : "students";
   const q = useAsync(() => admin.user(kind, id), [kind, id]);
   const [f, setF] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   useEffect(() => { if (q.data) setF({ full_name: q.data.full_name, ...(q.data.profile ?? {}) } as Record<string, string>); }, [q.data]);
   const save = useAction(async () => { const { full_name, ...profile } = f; await admin.updateUser(kind, id, { full_name, profile }); await q.reload(); });
-  const act = useAction(async (a: "discontinue" | "reactivate" | "reset-password") => { await admin.userAction(kind, id, a, a === "discontinue" ? { reason } : {}); await q.reload(); });
+  const act = useAction(async (a: "reactivate" | "reset-password") => { await admin.userAction(kind, id, a); await q.reload(); });
+  // Deleting an account takes its enrolments, attempts, submissions and
+  // progress with it, so the warning spells that out and names the person.
+  const remove = useAction(async () => {
+    const person = q.data;
+    if (!person) return;
+    const what = kind === "faculty" ? "faculty member" : "student";
+    const ok = await confirmDeleteAsync(
+      `Delete this ${what}?`,
+      `This permanently removes the account and everything tied to it: enrolments or subject assignments, quiz attempts, assignment submissions and learning progress. It cannot be undone.`,
+      { detail: `${person.full_name} · ${person.email}`, okLabel: "Delete Account" },
+    );
+    if (!ok) return;
+    await admin.deleteUser(kind, id, reason);
+    router.replace({ pathname: "/(admin)/users", params: { kind, notice: `${person.full_name} was deleted.` } });
+  });
   const analytics = useAsync(() => (kind === "students" ? manage.studentAnalytics(id) : Promise.resolve(null)), [kind, id]);
   const u = q.data;
   return (
@@ -32,10 +48,13 @@ export default function UserScreen() {
           </Card>
           <Card>
             <H2>Account</H2>
-            <ErrorBanner message={act.error} />
-            {u.status === "active" ? <><Input label="Reason (optional)" value={reason} onChangeText={setReason} /><Button title="Discontinue account" variant="danger" small onPress={() => act.run("discontinue")} busy={act.busy} /></> : <Button title="Reactivate account" small onPress={() => act.run("reactivate")} busy={act.busy} />}
+            <ErrorBanner message={act.error ?? remove.error} />
+            {u.status === "discontinued" ? <Button title="Reactivate Account" small onPress={() => act.run("reactivate")} busy={act.busy} /> : null}
             <Notice message="Reset password sets the account back to the initial password and forces a change at next login." />
-            <Button title="Reset password" variant="secondary" small onPress={() => act.run("reset-password")} busy={act.busy} />
+            <Button title="Reset Password" variant="secondary" small onPress={() => act.run("reset-password")} busy={act.busy} />
+            <Input label="Reason (optional)" value={reason} onChangeText={setReason} />
+            <Notice tone="warning" message="Deleting removes the account and all of its records from the database. The audit log keeps a note of who deleted it and when." />
+            <Button title="Delete Account" icon="trash-outline" variant="danger" small onPress={() => remove.run()} busy={remove.busy} />
           </Card>
         </>
       ) : null}

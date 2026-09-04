@@ -44,13 +44,27 @@ class DocumentSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True, default="")
     chapter_count = serializers.SerializerMethodField()
     module_count = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = ["id", "subject_id", "subject_code", "title", "original_name", "file_type", "file_size", "status",
                   "outline_source", "parse_mode", "error_message", "uploaded_by_id", "uploaded_by_name",
                   "processed_at", "reviewed_at", "published_at", "unpublished_at", "archived_at",
-                  "content_version", "last_edited_at", "chapter_count", "module_count", "created_at", "updated_at"]
+                  "content_version", "last_edited_at", "chapter_count", "module_count", "progress",
+                  "processing_started_at", "created_at", "updated_at"]
+
+    def get_progress(self, doc):
+        """Null unless a run is in flight, so the client can simply check for it."""
+        if not doc.progress_total_steps:
+            return None
+        return {
+            "step": doc.progress_step,
+            "total_steps": doc.progress_total_steps,
+            "stage": doc.progress_stage,
+            "detail": doc.progress_detail,
+            "percent": round(100 * doc.progress_step / doc.progress_total_steps),
+        }
 
     def get_chapter_count(self, doc) -> int:
         return getattr(doc, "chapter_count", None) if hasattr(doc, "chapter_count") else doc.chapters.count()

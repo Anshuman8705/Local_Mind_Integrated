@@ -36,8 +36,8 @@ export function ProfileScreen() {
         </Card>
       ) : null}
       <Row style={{ gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 200 }}><Button title="Change password" icon="key-outline" variant="secondary" onPress={() => router.push("/change-password")} /></View>
-        <View style={{ flex: 1, minWidth: 200 }}><Button title="Sign out" icon="log-out-outline" variant="danger" onPress={() => logout()} /></View>
+        <View style={{ flex: 1, minWidth: 200 }}><Button title="Change Password" icon="key-outline" variant="secondary" onPress={() => router.push("/change-password")} /></View>
+        <View style={{ flex: 1, minWidth: 200 }}><Button title="Sign Out" icon="log-out-outline" variant="danger" onPress={() => logout()} /></View>
       </Row>
     </Screen>
   );

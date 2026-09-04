@@ -94,6 +94,33 @@ def claim_for_processing(document):
     return True
 
 
+# The pipeline is a fixed sequence of steps rather than a per-item loop: the
+# parser hands back the whole book at once and the outline call plans every
+# chapter in one request, so honest progress means naming the step in flight
+# and, once the outline exists, the number of chapters and modules it will
+# create. Each label is written straight to the row so a poll can read it.
+PROCESSING_STEPS = 4
+
+
+def set_progress(document_id, step, stage, detail=""):
+    """Publish progress from the worker.
+
+    Uses queryset.update() rather than instance.save(): run_processing does its
+    real work outside a transaction, and the final persist runs inside one, so
+    an ORM save there would stay invisible until commit.
+    """
+    Document.objects.filter(pk=document_id).update(
+        progress_step=step, progress_total_steps=PROCESSING_STEPS,
+        progress_stage=stage[:40], progress_detail=detail[:200], updated_at=timezone.now(),
+    )
+
+
+def clear_progress(document_id):
+    Document.objects.filter(pk=document_id).update(
+        progress_step=0, progress_total_steps=0, progress_stage="", progress_detail="", updated_at=timezone.now(),
+    )
+
+
 def run_processing(document_id):
     """The unit of work a background worker executes. Safe to call from a
     thread, a process, or (later) a Celery task.
@@ -104,12 +131,19 @@ def run_processing(document_id):
     """
     document = Document.objects.get(pk=document_id)
     try:
+        set_progress(document_id, 1, "queued", "Waiting for the parser to be free")
         with _processing_lock:
             try:
+                set_progress(document_id, 2, "reading", f"Reading {document.original_name}")
                 parsed = parse_document(document)
             finally:
                 release_document_models()
+        set_progress(document_id, 3, "outline", f"Planning an outline from {len(parsed['headings'])} headings")
         outline, source = outline_service.build_proposed_outline(document, parsed["sections"], parsed["headings"])
+        chapters = outline.get("chapters") or []
+        module_count = sum(len(c.get("modules") or []) for c in chapters)
+        set_progress(document_id, 4, "structure",
+                     f"Creating {module_count} module{'' if module_count == 1 else 's'} across {len(chapters)} chapter{'' if len(chapters) == 1 else 's'}")
         with transaction.atomic():
             outline_service.persist_outline(document, outline, parsed["sections"], user_edited=False)
             document.processed_markdown_path = parsed["markdown_path"]
@@ -120,6 +154,7 @@ def run_processing(document_id):
             document.processed_at = timezone.now()
             document.error_message = ""
             document.save()
+        clear_progress(document_id)
         audit.record(None, "document.processed", document, {"outline_source": source, "chapters": len(outline["chapters"])})
         logger.info("Processed document %s (%s)", document_id, source)
     except NoExtractableContent as exc:
@@ -128,6 +163,7 @@ def run_processing(document_id):
         Document.objects.filter(pk=document_id).update(
             status=DocumentStatus.ERROR, error_message=str(exc)[:2000], updated_at=timezone.now(),
         )
+        clear_progress(document_id)
         audit.record(None, "document.processing_failed", document, {"error": str(exc)[:300], "code": exc.code})
     except Exception as exc:
         logger.exception("Processing failed for document %s", document_id)
@@ -135,6 +171,7 @@ def run_processing(document_id):
             status=DocumentStatus.ERROR, error_message=(str(exc) or "Document processing failed.")[:2000],
             updated_at=timezone.now(),
         )
+        clear_progress(document_id)
         audit.record(None, "document.processing_failed", document, {"error": str(exc)[:300]})
 
 
@@ -291,6 +328,49 @@ def unpublish(actor, document, request=None):
     document.save(update_fields=["status", "unpublished_at", "updated_at"])
     audit.record(actor, "document.unpublished", document, {}, request)
     return document
+
+
+@transaction.atomic
+def delete_document(actor, document, request=None):
+    """Permanently remove a book and everything built from it.
+
+    Quizzes and assignments point at Chapter and Module with PROTECT, so those
+    are cleared first; chapters, modules, lessons, conversations and progress
+    then cascade when the document row goes. The uploaded file and the parsed
+    markdown are removed from disk too, since nothing else refers to them.
+    """
+    import shutil
+
+    from assessments.models import Assessment, AssessmentAttempt
+    from assignments.models import Assignment, AssignmentSubmission
+
+    _require_manage(actor, document.subject)
+    if document.status == DocumentStatus.PROCESSING:
+        raise Conflict("Wait for processing to finish before deleting this book.", code="INVALID_STATE")
+
+    label = document.title or document.original_name
+    scope = {"chapter__document": document}
+    scope_module = {"module__chapter__document": document}
+
+    assignments = Assignment.objects.filter(**scope) | Assignment.objects.filter(**scope_module)
+    AssignmentSubmission.objects.filter(assignment__in=assignments).delete()
+    assignments.delete()
+
+    assessments = Assessment.objects.filter(**scope) | Assessment.objects.filter(**scope_module)
+    AssessmentAttempt.objects.filter(assessment__in=assessments).delete()
+    assessments.delete()
+
+    try:
+        if document.file:
+            document.file.delete(save=False)
+    except Exception:  # a missing file must not block the delete
+        logger.warning("Could not remove the stored file for document %s", document.pk)
+    processed_dir = Path(settings.MEDIA_ROOT) / "processed" / str(document.id)
+    shutil.rmtree(processed_dir, ignore_errors=True)
+
+    audit.record(actor, "document.deleted", document, {"subject": document.subject.code, "title": label}, request)
+    document.delete()
+    return label
 
 
 @transaction.atomic

@@ -61,6 +61,12 @@ class AdminSubjectDetailView(APIView):
         subject = services.update_subject(request.user, subject, request=request, **serializer.validated_data)
         return Response(SubjectSerializer(subject).data)
 
+    def delete(self, request, subject_id):
+        """Permanent delete. Replaces the old archive action in the admin UI."""
+        subject = get_or_404(Subject.objects.all(), pk=subject_id)
+        label = services.delete_subject(request.user, subject, request)
+        return Response({"detail": f"{label} was deleted."}, status=status.HTTP_200_OK)
+
 
 class AdminSubjectStatusView(APIView):
     permission_classes = [IsAdmin]

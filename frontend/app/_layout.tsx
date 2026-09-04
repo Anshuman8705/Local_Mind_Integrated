@@ -4,7 +4,7 @@ import React, { useEffect } from "react";
 import { View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
-import { Loading, colors } from "@/ui";
+import { DialogHost, Loading, colors } from "@/ui";
 
 function Gate({ children }: { children: React.ReactNode }) {
   const { ready, user, mustChangePassword } = useAuth();
@@ -41,6 +41,9 @@ export default function RootLayout() {
             <Stack.Screen name="(manage)" options={{ headerShown: false }} />
             <Stack.Screen name="(admin)" options={{ headerShown: false }} />
           </Stack>
+          {/* One dialog host for the whole app: every confirmation and warning
+              renders here, centred, instead of in a browser popup. */}
+          <DialogHost />
         </Gate>
       </AuthProvider>
     </SafeAreaProvider>

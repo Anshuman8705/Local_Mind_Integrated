@@ -31,7 +31,7 @@ export default function AssignmentScreen() {
           <Row>
             {d.status === "draft" ? <Button title="Publish" small onPress={() => status.run("published")} busy={status.busy} disabled={dirty} /> : null}
             {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => status.run("closed")} busy={status.busy} /> : null}
-            {dirty ? <Button title="Save changes" small onPress={() => save.run()} busy={save.busy} disabled={rubricTotal !== d.max_score} /> : null}
+            {dirty ? <Button title="Save Changes" small onPress={() => save.run()} busy={save.busy} disabled={rubricTotal !== d.max_score} /> : null}
           </Row>
           {tab === "edit" ? (
             <Card>
@@ -48,7 +48,7 @@ export default function AssignmentScreen() {
                   <Button title="×" small variant="ghost" onPress={() => edit((a) => ({ ...a, rubric: a.rubric.filter((_, j) => j !== i) }))} />
                 </Row>
               ))}
-              <Button title="Add criterion" small variant="secondary" onPress={() => edit((a) => ({ ...a, rubric: [...a.rubric, { criterion: "", points: 0 }] }))} />
+              <Button title="Add Criterion" small variant="secondary" onPress={() => edit((a) => ({ ...a, rubric: [...a.rubric, { criterion: "", points: 0 }] }))} />
             </Card>
           ) : <SubmissionsTab assignment={d} />}
         </>
@@ -79,7 +79,7 @@ function SubmissionsTab({ assignment }: { assignment: Assignment }) {
             <Input label={`Score (0–${assignment.max_score})`} value={scores[s.id]?.score ?? (s.score != null ? String(s.score) : "")} keyboardType="decimal-pad" style={{ width: 90 }} onChangeText={(t) => setScores((x) => ({ ...x, [s.id]: { score: t, feedback: x[s.id]?.feedback ?? s.feedback ?? "" } }))} />
             <View style={{ flex: 1 }}><Input label="Feedback" value={scores[s.id]?.feedback ?? s.feedback ?? ""} onChangeText={(t) => setScores((x) => ({ ...x, [s.id]: { score: x[s.id]?.score ?? (s.score != null ? String(s.score) : ""), feedback: t } }))} /></View>
           </Row>
-          <Button title="Save evaluation" small onPress={() => evaluate.run(s.id)} busy={evaluate.busy} disabled={!scores[s.id]?.score} />
+          <Button title="Save Evaluation" small onPress={() => evaluate.run(s.id)} busy={evaluate.busy} disabled={!scores[s.id]?.score} />
         </Card>
       ))}
     </>

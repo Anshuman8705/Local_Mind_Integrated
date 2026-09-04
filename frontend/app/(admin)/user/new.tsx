@@ -40,7 +40,7 @@ export default function NewUser() {
         <Input label="Phone" value={f.phone ?? ""} onChangeText={set("phone")} keyboardType="phone-pad" />
         <Notice message="The account is created with the platform's initial password and must change it at first login." />
         <ErrorBanner message={create.error} />
-        <Button title="Create account" onPress={() => create.run()} busy={create.busy} disabled={!f.email || !f.full_name} />
+        <Button title="Create Account" onPress={() => create.run()} busy={create.busy} disabled={!f.email || !f.full_name} />
       </Card>
     </Screen>
   );

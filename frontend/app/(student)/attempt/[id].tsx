@@ -12,7 +12,7 @@ export default function AttemptScreen() {
   const remediate = useAction(async () => { setRem(await student.remediation(id)); });
   const a = q.data;
   return (
-    <Screen refreshing={q.loading} onRefresh={q.reload}>
+    <Screen refreshing={q.loading} onRefresh={q.reload} reading>
       <ErrorBanner message={q.error} onRetry={q.reload} />
       {q.loading && !a ? <Loading /> : null}
       {a ? (
@@ -27,7 +27,7 @@ export default function AttemptScreen() {
           {a.status === "evaluated" ? <Badge value={a.passed ? "passed" : "not passed"} color={a.passed ? colors.success : colors.danger} /> : null}
           {a.status === "evaluated" && !a.passed ? (
             <>
-              <Button title="Show me what to review" variant="secondary" onPress={() => remediate.run()} busy={remediate.busy} />
+              <Button title="Show Me What to Review" variant="secondary" onPress={() => remediate.run()} busy={remediate.busy} />
               <ErrorBanner message={remediate.error} />
             </>
           ) : null}

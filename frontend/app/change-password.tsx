@@ -21,8 +21,8 @@ export default function ChangePassword() {
         <Input label="Confirm new password" value={confirm} onChangeText={setConfirm} secureTextEntry />
         <P muted small>At least eight characters, not entirely numeric, not too similar to your email, and different from the current one.</P>
         <ErrorBanner message={action.error} />
-        <Button title="Save new password" onPress={() => action.run()} busy={action.busy} disabled={!current || !next || !confirm} />
-        <Button title="Sign out instead" variant="ghost" onPress={() => logout()} />
+        <Button title="Save New Password" onPress={() => action.run()} busy={action.busy} disabled={!current || !next || !confirm} />
+        <Button title="Sign Out Instead" variant="ghost" onPress={() => logout()} />
       </Card>
     </Screen>
   );

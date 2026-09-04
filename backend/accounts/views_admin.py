@@ -83,6 +83,13 @@ class UserDetailView(_RoleScopedMixin, APIView):
         user = user_service.update_user(request.user, user, request=request, **serializer.validated_data)
         return Response(UserSerializer(user).data)
 
+    def delete(self, request, user_id):
+        """Permanent delete. Replaces the old discontinue action in the admin UI."""
+        user = get_or_404(self.queryset(), pk=user_id)
+        reason = (request.data or {}).get("reason", "") if hasattr(request, "data") else ""
+        label = user_service.delete_user(request.user, user, reason, request)
+        return Response({"detail": f"{label} was deleted."})
+
 
 class UserDiscontinueView(_RoleScopedMixin, APIView):
     permission_classes = [IsAdmin]

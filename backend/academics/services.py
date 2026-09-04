@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from accounts.models import AccountStatus, Role, User
@@ -61,6 +62,63 @@ def set_subject_status(actor, subject, status, request=None):
     subject.save()
     audit.record(actor, f"subject.{status}", subject, {}, request)
     return subject
+
+
+def _discard_document_files(document):
+    """Best effort removal of the uploaded file and its processed markdown."""
+    from pathlib import Path
+
+    try:
+        if document.file:
+            document.file.delete(save=False)
+    except Exception:  # storage problems must not block the delete
+        pass
+    if document.processed_markdown_path:
+        try:
+            Path(document.processed_markdown_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+@transaction.atomic
+def delete_subject(actor, subject, request=None):
+    """Permanently remove a subject and everything that hangs off it.
+
+    Documents, quizzes and assignments point at Subject with PROTECT, so the
+    dependants are cleared in dependency order before the subject row goes.
+    Chapters, modules, lessons, conversations, progress and enrolments all
+    cascade on their own once their parent is gone.
+    """
+    from assessments.models import Assessment, AssessmentAttempt
+    from assignments.models import Assignment, AssignmentSubmission
+    from documents.models import Document
+
+    label = f"{subject.code} {subject.name}"
+    scope = (
+        Q(subject=subject)
+        | Q(chapter__document__subject=subject)
+        | Q(module__chapter__document__subject=subject)
+    )
+
+    assignments = Assignment.objects.filter(scope)
+    AssignmentSubmission.objects.filter(assignment__in=assignments).delete()
+    assignments.delete()
+
+    assessments = Assessment.objects.filter(scope)
+    AssessmentAttempt.objects.filter(assessment__in=assessments).delete()
+    assessments.delete()
+
+    documents = list(Document.objects.filter(subject=subject))
+    for document in documents:
+        _discard_document_files(document)
+    Document.objects.filter(subject=subject).delete()
+
+    audit.record(
+        actor, "subject.deleted", subject,
+        {"code": subject.code, "name": subject.name, "documents": len(documents)}, request,
+    )
+    subject.delete()
+    return label
 
 
 # ---------- Faculty assignment ----------

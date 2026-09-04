@@ -14,6 +14,11 @@ export const auth = {
   logout: (refresh: string, session_id: string | null) => api("/auth/logout/", { method: "POST", body: { refresh, session_id } }),
 };
 
+/** Reference data the screens read instead of restating the models. */
+export const meta = {
+  choices: () => api<Record<string, { value: string; label: string }[]>>("/meta/choices/"),
+};
+
 export const student = {
   subjects: () => api<T.Subject[]>("/student/subjects/").then(list),
   documents: (subjectId: string) => api<(T.Document & { open_module_count: number; completed_modules: number; progress_percent: number })[]>(`/student/subjects/${subjectId}/documents/`),
@@ -56,6 +61,7 @@ export const manage = {
   saveOutline: (id: string, chapters: T.OutlineChapter[], document_title?: string) =>
     api<T.Document>(`/faculty/documents/${id}/outline/`, { method: "PUT", body: { chapters, document_title } }),
   transition: (id: string, action: "ready" | "publish" | "unpublish" | "archive") => api<T.Document>(`/faculty/documents/${id}/${action}/`, { method: "POST" }),
+  deleteDocument: (id: string) => api<{ detail: string }>(`/faculty/documents/${id}/`, { method: "DELETE" }),
   editModule: (id: string, body: { title?: string; source_text?: string }) => api<T.ModuleFull>(`/faculty/modules/${id}/`, { method: "PATCH", body }),
   moduleAvailability: (id: string, availability: T.ModuleAvailability) => api<T.ModuleFull>(`/faculty/modules/${id}/availability/`, { method: "POST", body: { availability } }),
   chapterAvailability: (id: string, availability: T.ModuleAvailability) => api(`/faculty/chapters/${id}/availability/`, { method: "POST", body: { availability } }),
@@ -92,6 +98,7 @@ export const admin = {
   createSubject: (body: { name: string; code: string; description?: string }) => api<T.Subject>("/admin/subjects/", { method: "POST", body }),
   updateSubject: (id: string, body: Record<string, unknown>) => api<T.Subject>(`/admin/subjects/${id}/`, { method: "PATCH", body }),
   subjectStatus: (id: string, status: string) => api<T.Subject>(`/admin/subjects/${id}/status/`, { method: "POST", body: { status } }),
+  deleteSubject: (id: string) => api<{ detail: string }>(`/admin/subjects/${id}/`, { method: "DELETE" }),
   assignFaculty: (id: string, faculty_ids: string[]) => api(`/admin/subjects/${id}/faculty/`, { method: "POST", body: { faculty_ids } }),
   unassignFaculty: (id: string, facultyId: string) => api(`/admin/subjects/${id}/faculty/${facultyId}/`, { method: "DELETE" }),
   subjectStudents: (id: string) => manage.subjectStudents(id),
@@ -105,6 +112,8 @@ export const admin = {
   updateUser: (kind: "faculty" | "students", id: string, body: Record<string, unknown>) => api<T.User>(`/admin/${kind}/${id}/`, { method: "PATCH", body }),
   userAction: (kind: "faculty" | "students", id: string, action: "discontinue" | "reactivate" | "reset-password", body: Record<string, unknown> = {}) =>
     api<T.User>(`/admin/${kind}/${id}/${action}/`, { method: "POST", body }),
+  deleteUser: (kind: "faculty" | "students", id: string, reason = "") =>
+    api<{ detail: string }>(`/admin/${kind}/${id}/`, { method: "DELETE", body: { reason } }),
   importUsers: (kind: "faculty" | "students", form: FormData) => api<T.ImportReport>(`/admin/${kind}/import/`, { method: "POST", form }),
   auditLogs: (q: Q = {}) => api<T.Paginated<T.AuditLog>>("/admin/audit-logs/", { query: q }),
   platform: () => api<any>("/admin/analytics/platform/"),

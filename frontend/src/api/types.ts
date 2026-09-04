@@ -38,6 +38,9 @@ export interface Document {
   file_type: string; file_size?: number; error_message?: string; content_version: number;
   chapter_count?: number; module_count?: number; missing_source_modules?: number; outline_source?: string;
   uploaded_by_name?: string; created_at: string; published_at?: string | null;
+  processing_started_at?: string | null;
+  /** Present only while a processing run is in flight. */
+  progress?: { step: number; total_steps: number; stage: string; detail: string; percent: number } | null;
 }
 export interface DocumentTree { id: string; title: string; subject_id: string; content_version: number; chapters: Chapter[] }
 export interface Heading { index: number; level: number; title: string; start_page?: number; end_page?: number }

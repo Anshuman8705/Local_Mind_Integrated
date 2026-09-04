@@ -26,9 +26,9 @@ export default function NewAssignment() {
       <Card>
         <Notice message="Generated assignments draft a description, instructions and rubric from the source text. You review and edit before publishing." />
         <ErrorBanner message={generate.error ?? blank.error} />
-        <Button title="Generate draft" onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />
+        <Button title="Generate Draft" onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />
         <P muted small>Generation needs a module or chapter; a subject-level assignment starts blank.</P>
-        <Button title="Create blank draft" variant="secondary" onPress={() => blank.run()} busy={blank.busy} disabled={!ready} />
+        <Button title="Create Blank Draft" variant="secondary" onPress={() => blank.run()} busy={blank.busy} disabled={!ready} />
       </Card>
     </Screen>
   );

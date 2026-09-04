@@ -53,7 +53,7 @@ export function LoginScreen({ role }: { role: Role }) {
                   <Pressable onPress={() => setShow((v) => !v)} hitSlop={8} style={s.eye}><Ionicons name={show ? "eye-off-outline" : "eye-outline"} size={19} color={colors.muted} /></Pressable>
                 </View>
                 <ErrorBanner message={action.error} />
-                <Button title="Sign in" icon="log-in-outline" onPress={() => action.run()} busy={action.busy} disabled={!email || !password} />
+                <Button title="Sign In" icon="log-in-outline" onPress={() => action.run()} busy={action.busy} disabled={!email || !password} />
               </View>
             </View>
             <Text style={s.server}>Server · {BASE_URL}</Text>

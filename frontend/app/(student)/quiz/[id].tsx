@@ -57,7 +57,7 @@ export default function QuizScreen() {
             <P muted>{info.data.question_count} questions · pass mark {info.data.pass_percentage}%{info.data.time_limit_minutes ? ` · ${info.data.time_limit_minutes} minutes` : ""}{info.data.max_attempts ? ` · ${info.data.attempts_used ?? 0} of ${info.data.max_attempts} attempts used` : ""}</P>
             {info.data.best_percentage != null ? <P muted>Your best so far: {Math.round(info.data.best_percentage)}%</P> : null}
             <ErrorBanner message={start.error} />
-            <Button title="Start quiz" onPress={() => start.run()} busy={start.busy} />
+            <Button title="Start Quiz" onPress={() => start.run()} busy={start.busy} />
           </Card>
         ) : null}
       </Screen>
@@ -81,7 +81,7 @@ export default function QuizScreen() {
         </Card>
       ))}
       <ErrorBanner message={submit.error} />
-      <Button title="Submit answers" onPress={() => submit.run()} busy={submit.busy} />
+      <Button title="Submit Answers" onPress={() => submit.run()} busy={submit.busy} />
     </Screen>
   );
 }

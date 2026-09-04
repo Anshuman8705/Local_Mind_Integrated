@@ -1,16 +1,31 @@
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
 import { View } from "react-native";
 import { admin } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, ListRow, Loading, Notice, P, Row, Screen } from "@/ui";
+import { Badge, Button, Card, ErrorBanner, H1, H2, Input, ListRow, Loading, Notice, P, Row, Screen, confirmDeleteAsync } from "@/ui";
 
 export default function AdminSubject() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const q = useAsync(() => admin.subject(id), [id]);
   const students = useAsync(() => admin.subjectStudents(id), [id]);
   const allFaculty = useAsync(() => admin.users("faculty", { status: "active" }), []);
   const status = useAction(async (s: string) => { await admin.subjectStatus(id, s); await q.reload(); });
+  // Deleting a subject removes its books, quizzes, assignments and enrolments
+  // with it, so the warning names the subject and says what goes with it.
+  const remove = useAction(async () => {
+    const subject = q.data;
+    if (!subject) return;
+    const ok = await confirmDeleteAsync(
+      "Delete this subject?",
+      "This permanently removes the subject along with its books, modules, quizzes, assignments, submissions and enrolment records. It cannot be undone.",
+      { detail: `${subject.code} · ${subject.name}`, okLabel: "Delete Subject" },
+    );
+    if (!ok) return;
+    await admin.deleteSubject(id);
+    router.replace({ pathname: "/(admin)/subjects", params: { notice: `${subject.code} · ${subject.name} was deleted.` } });
+  });
   const assign = useAction(async (fid: string) => { await admin.assignFaculty(id, [fid]); await q.reload(); });
   const unassign = useAction(async (fid: string) => { await admin.unassignFaculty(id, fid); await q.reload(); });
   const [search, setSearch] = useState(""); const [found, setFound] = useState<{ id: string; full_name: string; email: string; roll_number: string }[]>([]);
@@ -26,13 +41,13 @@ export default function AdminSubject() {
       {s ? (
         <>
           <Row style={{ justifyContent: "space-between" }}><H1>{s.code} · {s.name}</H1><Badge value={s.status} /></Row>
-          <ErrorBanner message={status.error} />
+          <ErrorBanner message={status.error ?? remove.error} />
           <Row>
             {s.status === "active" ? <Button title="Discontinue" small variant="secondary" onPress={() => status.run("discontinued")} busy={status.busy} /> : null}
             {s.status === "discontinued" ? <Button title="Reactivate" small onPress={() => status.run("active")} busy={status.busy} /> : null}
-            {s.status !== "archived" ? <Button title="Archive (permanent)" small variant="danger" onPress={() => status.run("archived")} busy={status.busy} /> : null}
+            <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} />
           </Row>
-          {s.status === "archived" ? <Notice tone="warning" message="Archived subjects are read-only." /> : null}
+          {s.status === "archived" ? <Notice tone="warning" message="Archived subjects are read-only. Delete removes the subject and its content for good." /> : null}
           <H2>Faculty</H2>
           <ErrorBanner message={assign.error ?? unassign.error} />
           {(s.faculty ?? []).filter((f) => f.status === "active").map((f) => <ListRow key={f.faculty_id} title={f.full_name} subtitle={f.email} right={<Button title="Remove" small variant="ghost" onPress={() => unassign.run(f.faculty_id)} />} />)}

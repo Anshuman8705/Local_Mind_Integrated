@@ -59,6 +59,12 @@ class DocumentDetailView(APIView):
     def get(self, request, document_id):
         return Response(DocumentDetailSerializer(_doc(request.user, document_id)).data)
 
+    def delete(self, request, document_id):
+        """Permanent delete. Replaces the old archive action in the workspace."""
+        document = _doc(request.user, document_id)
+        label = svc.delete_document(request.user, document, request)
+        return Response({"detail": f"{label} was deleted."})
+
 
 class _Transition(APIView):
     permission_classes = [IsAdminOrFaculty]

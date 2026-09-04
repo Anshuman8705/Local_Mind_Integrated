@@ -22,7 +22,28 @@ import { BASE_URL } from "@/api/client";
 import { Gradient } from "./Gradient";
 import { bp, colors, space } from "./theme";
 
-type IconName = keyof typeof Ionicons.glyphMap;
+export type IconName = keyof typeof Ionicons.glyphMap;
+
+/**
+ * Options the LocalMind shell reads but React Navigation does not declare.
+ *
+ * `backTo` names where the header's back arrow should land. Detail and form
+ * screens live inside the tab navigator, so a plain goBack() drops the person
+ * on whichever tab was visited last (usually the portal's first tab) instead
+ * of the list they came from. `subtitle` overrides the line under the title.
+ */
+export interface ShellExtras {
+  backTo?: string;
+  subtitle?: string;
+}
+
+/**
+ * Merges the shell-only keys into a screen's options. The navigator's options
+ * type is a closed object literal, so the extras are attached here and read
+ * back out of `options` in ShellHeader. Typing stays intact for every real
+ * option because only the first argument drives inference.
+ */
+export const shellScreen = <T,>(options: T, extras: ShellExtras): T => ({ ...options, ...extras }) as T;
 
 export type PortalMeta = {
   /** Short line under the brand mark in the sidebar, e.g. "Faculty workspace". */
@@ -284,8 +305,18 @@ export function ShellHeader({
 }: BottomTabHeaderProps & { meta: PortalMeta }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const desktop = width >= bp.desktop;
-  const canBack = navigation.canGoBack();
+  // A screen can name where its back arrow leads. Detail and form screens live
+  // inside the tab navigator, so a plain goBack() lands on whichever tab was
+  // visited last (usually the portal's first tab) rather than the list the
+  // person actually came from. `backTo` pins that destination.
+  const backTo = (options as { backTo?: string }).backTo;
+  const canBack = !!backTo || navigation.canGoBack();
+  const goBack = () => {
+    if (backTo) router.replace(backTo as never);
+    else navigation.goBack();
+  };
   const icon = ICONS[route.name] ?? "ellipse-outline";
   const subtitle = (options as { subtitle?: string }).subtitle ?? meta.name;
   return (
@@ -302,7 +333,7 @@ export function ShellHeader({
       <View style={s.topLeft}>
         {canBack ? (
           <Pressable
-            onPress={() => navigation.goBack()}
+            onPress={goBack}
             accessibilityRole="button"
             accessibilityLabel="Go back"
             hitSlop={8}
@@ -422,7 +453,7 @@ export function UserMenu({ compact }: { compact?: boolean }) {
                 />
                 <MenuItem
                   icon="key-outline"
-                  label="Change password"
+                  label="Change Password"
                   onPress={() => go("/change-password")}
                 />
                 <View
@@ -434,7 +465,7 @@ export function UserMenu({ compact }: { compact?: boolean }) {
                 />
                 <MenuItem
                   icon="log-out-outline"
-                  label="Sign out"
+                  label="Sign Out"
                   danger
                   onPress={() => {
                     close();

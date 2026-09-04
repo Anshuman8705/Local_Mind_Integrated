@@ -31,12 +31,12 @@ export default function NewQuiz() {
         <Row><Input label="MCQs" value={mcqs} onChangeText={setMcqs} keyboardType="number-pad" style={{ width: 80 }} /><Input label="Written" value={subjective} onChangeText={setSubjective} keyboardType="number-pad" style={{ width: 80 }} /></Row>
         <Notice message="Questions are grounded in the selected module or chapter text. If the AI is unavailable you get a labelled placeholder draft to edit; it cannot be published as is." />
         <ErrorBanner message={generate.error} />
-        <Button title="Generate draft" onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />
+        <Button title="Generate Draft" onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />
       </Card>
       <Card>
         <P>Or start a blank quiz and write questions yourself.</P>
         <ErrorBanner message={manual.error} />
-        <Button title="Create blank draft" variant="secondary" onPress={() => manual.run()} busy={manual.busy} disabled={!ready} />
+        <Button title="Create Blank Draft" variant="secondary" onPress={() => manual.run()} busy={manual.busy} disabled={!ready} />
       </Card>
     </Screen>
   );

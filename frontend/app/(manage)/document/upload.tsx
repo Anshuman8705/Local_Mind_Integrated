@@ -37,7 +37,7 @@ export default function Upload() {
         <Row><Button title={file ? "Change file" : "Choose file"} variant="secondary" small onPress={pick} />{file ? <P small>{file.name}</P> : null}</Row>
         <Notice message="After upload the book is parsed and an outline is drafted. You will review and fix the outline before anything is published." />
         <ErrorBanner message={upload.error} />
-        <Button title="Upload and process" onPress={() => upload.run()} busy={upload.busy} disabled={!file || !subjectId} />
+        <Button title="Upload and Process" onPress={() => upload.run()} busy={upload.busy} disabled={!file || !subjectId} />
       </Card>
     </Screen>
   );

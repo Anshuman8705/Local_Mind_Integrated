@@ -125,6 +125,29 @@ def discontinue_user(actor, user, reason="", request=None):
 
 
 @transaction.atomic
+def delete_user(actor, user, reason="", request=None):
+    """Permanently remove a student or faculty account.
+
+    Everything owned by the account (profile, enrolments, subject links,
+    attempts, submissions, conversations, progress, sessions) cascades away.
+    Audit rows survive because their actor link is nulled rather than deleted,
+    so the trail of what the account did before removal stays readable.
+    """
+    if user.pk == getattr(actor, "pk", None):
+        raise ValidationFailed("You cannot delete your own account.", code="SELF_DELETE")
+    if user.role == Role.ADMIN:
+        raise ValidationFailed("Administrator accounts cannot be deleted here.", code="CANNOT_DELETE_ADMIN")
+    label = f"{user.full_name} <{user.email}>"
+    _revoke_all_tokens(user)
+    audit.record(
+        actor, "user.deleted", user,
+        {"email": user.email, "full_name": user.full_name, "role": user.role, "reason": reason}, request,
+    )
+    user.delete()
+    return label
+
+
+@transaction.atomic
 def reactivate_user(actor, user, request=None):
     if user.status == AccountStatus.ACTIVE:
         raise Conflict("This account is already active.", code="ALREADY_ACTIVE")

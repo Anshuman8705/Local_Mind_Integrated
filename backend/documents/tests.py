@@ -284,6 +284,38 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/archive/").data["status"], "archived")
         self.assertEqual(client.post(f"/api/faculty/documents/{doc.id}/process/").status_code, 409)
 
+    def test_delete_removes_the_book_and_the_quizzes_built_from_it(self, _):
+        """The workspace deletes books now, so the PROTECT chain from quizzes
+        and assignments back to chapters has to be cleared first."""
+        from assessments.models import Assessment, AssessmentKind
+        from assignments.models import Assignment
+        from learning.models import Chapter, Module
+
+        client, doc = self._processed_doc()
+        chapter = Chapter.objects.filter(document=doc).first()
+        Assessment.objects.create(subject=doc.subject, chapter=chapter, kind=AssessmentKind.values[0], title="Quiz")
+        Assignment.objects.create(subject=doc.subject, chapter=chapter, title="Assignment")
+
+        res = client.delete(f"/api/faculty/documents/{doc.id}/")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(Document.objects.filter(pk=doc.pk).exists())
+        self.assertFalse(Chapter.objects.filter(document_id=doc.pk).exists())
+        self.assertFalse(Module.objects.filter(chapter__document_id=doc.pk).exists())
+        self.assertFalse(Assessment.objects.exists())
+        self.assertFalse(Assignment.objects.exists())
+        self.assertTrue(AuditLog.objects.filter(action="document.deleted").exists())
+        # The subject the book belonged to is untouched.
+        self.assertTrue(type(doc.subject).objects.filter(pk=doc.subject_id).exists())
+
+    def test_delete_is_refused_while_processing(self, _):
+        from django.utils import timezone
+        doc = Document.objects.get(pk=self.upload().data["id"])
+        Document.objects.filter(pk=doc.pk).update(status=DocumentStatus.PROCESSING, processing_started_at=timezone.now())
+        res = client_for(self.faculty).delete(f"/api/faculty/documents/{doc.id}/")
+        self.assertEqual(res.status_code, 409)
+        self.assertTrue(Document.objects.filter(pk=doc.pk).exists())
+
     def test_stuck_processing_is_reclaimable_after_stale_window(self, _):
         from datetime import timedelta
         from io import StringIO

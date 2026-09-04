@@ -3,7 +3,7 @@ from io import BytesIO
 from django.test import TestCase
 from openpyxl import Workbook
 
-from academics.models import FacultySubject
+from academics.models import FacultySubject, Subject
 from audit.models import AuditLog
 from core.testing import (
     INITIAL, STRONG, bearer, client_for, login, make_admin, make_faculty, make_student, make_subject,
@@ -169,6 +169,39 @@ class AdminUserManagementTests(TestCase):
         self.assertEqual(self.client.post(f"/api/admin/students/{student.id}/discontinue/", {}, format="json").status_code, 409)
         res = self.client.post(f"/api/admin/students/{student.id}/reactivate/", {}, format="json")
         self.assertEqual(res.data["status"], "active")
+
+    def test_delete_student_removes_the_account_and_its_records(self):
+        """The People screen deletes accounts now, so the row and everything
+        hanging off it must go while the audit trail survives."""
+        from academics.models import Enrollment
+
+        student = make_student()
+        subject = make_subject(code="CS103")
+        Enrollment.objects.create(student=student, subject=subject)
+
+        res = self.client.delete(f"/api/admin/students/{student.id}/", {"reason": "left the programme"}, format="json")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(User.objects.filter(pk=student.pk).exists())
+        self.assertFalse(Enrollment.objects.filter(student_id=student.pk).exists())
+        entry = AuditLog.objects.get(action="user.deleted")
+        self.assertEqual(entry.summary["reason"], "left the programme")
+
+    def test_delete_faculty_releases_its_subject_assignments(self):
+        faculty = make_faculty()
+        subject = make_subject(code="CS104")
+        FacultySubject.objects.create(faculty=faculty, subject=subject)
+        res = self.client.delete(f"/api/admin/faculty/{faculty.id}/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertFalse(User.objects.filter(pk=faculty.pk).exists())
+        self.assertFalse(FacultySubject.objects.filter(faculty_id=faculty.pk).exists())
+        self.assertTrue(Subject.objects.filter(pk=subject.pk).exists())
+
+    def test_cannot_delete_own_account(self):
+        admin = make_admin(email="second-admin@example.edu")
+        res = client_for(admin).delete(f"/api/admin/faculty/{admin.id}/")
+        self.assertEqual(res.status_code, 404)  # an admin is not inside the faculty scope
+        self.assertTrue(User.objects.filter(pk=admin.pk).exists())
 
     def test_cannot_discontinue_self(self):
         res = self.client.post(f"/api/admin/faculty/{self.admin.id}/discontinue/", {}, format="json")

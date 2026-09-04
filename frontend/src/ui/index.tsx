@@ -1,11 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, RefreshControl, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Platform, Pressable, RefreshControl, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle, useWindowDimensions } from "react-native";
 import { Gradient } from "./Gradient";
 import { bp, colors, font, gradients, radius, radiusSm, space, statusColor } from "./theme";
 
 export { Gradient };
 export { colors, gradients, space, radius, radiusSm, bp, font };
+// Every popup in the product goes through this one centred dialog, so nothing
+// falls back to the browser's own confirm box.
+export { DialogHost, alertAsync, confirmAsync, confirmDeleteAsync } from "./Confirm";
+export type { DialogOptions, DialogTone } from "./Confirm";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -14,26 +18,32 @@ type IconName = keyof typeof Ionicons.glyphMap;
 /* ------------------------------------------------------------------ */
 
 /**
- * Page container. Content is capped at a readable width and centred, with
- * gutters that scale with the viewport (34px desktop, 18px phone) so cards
- * line up with the header title above them.
+ * How wide the content column is allowed to get.
+ *
+ * Prose has a cap because a line of text that runs the width of a 27in monitor
+ * is genuinely hard to read. Lists and dashboards do not: they were being
+ * squeezed into the middle of the window with empty bands either side, so they
+ * run to the edge of the viewport (less the gutters) up to a generous ceiling.
  */
-export function Screen({ children, scroll = true, refreshing, onRefresh, padded = true, wide }: { children: React.ReactNode; scroll?: boolean; refreshing?: boolean; onRefresh?: () => void; padded?: boolean; wide?: boolean }) {
+const contentWidth = (reading?: boolean, wide?: boolean) => (reading ? 900 : wide ? 1920 : 1680);
+
+/**
+ * Page container. Gutters scale with the viewport (34px desktop, 18px phone)
+ * so cards line up with the header title above them.
+ */
+export function Screen({ children, scroll = true, refreshing, onRefresh, padded = true, wide, reading, toolbar, actions }: { children: React.ReactNode; scroll?: boolean; refreshing?: boolean; onRefresh?: () => void; padded?: boolean; wide?: boolean; reading?: boolean; toolbar?: React.ReactNode; actions?: React.ReactNode }) {
   const { width } = useWindowDimensions();
   const gutter = width >= bp.desktop ? 34 : width >= bp.tablet ? 24 : 18;
-  // Browsers have no pull-to-refresh, so a screen that offers onRefresh gets a
-  // small refresh control of its own on web; native keeps the pull gesture.
-  const webRefresh = Platform.OS === "web" && onRefresh ? (
-    <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: -space.sm }}>
-      <Button title="Refresh" icon="refresh-outline" variant="ghost" small onPress={onRefresh} busy={!!refreshing} />
-    </View>
-  ) : null;
+  // No manual refresh control anywhere. Native keeps the pull gesture, and on
+  // the web useAsync already refetches whenever the screen regains focus or
+  // the browser tab becomes visible again, so a button only added clutter.
+  const bar = toolbar || actions ? <Toolbar right={actions}>{toolbar}</Toolbar> : null;
   const inner = (
     // When the screen does not scroll (chat layouts) the inner box must take
     // the full height and be allowed to shrink, otherwise a child ScrollView
     // grows with its content on web and pushes the input bar off screen.
-    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.xl, gap: space.md }, { maxWidth: wide ? 1400 : 1100, width: "100%", alignSelf: "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
-      {webRefresh}
+    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.lg, gap: space.md }, { maxWidth: contentWidth(reading, wide), width: "100%", alignSelf: "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
+      {bar}
       {children}
     </View>
   );
@@ -44,23 +54,6 @@ export function Screen({ children, scroll = true, refreshing, onRefresh, padded 
       {inner}
     </ScrollView>
   );
-}
-
-/**
- * Yes/no confirmation that works everywhere. React Native Web implements
- * Alert.alert as a no-op, so a promise built on its button callbacks never
- * resolves in the browser and the calling button spins forever. On web this
- * uses window.confirm; on native it uses the platform alert.
- */
-export function confirmAsync(title: string, message: string, okLabel = "Yes", cancelLabel = "Cancel"): Promise<boolean> {
-  if (Platform.OS === "web") {
-    const w = globalThis as unknown as { confirm?: (m: string) => boolean };
-    return Promise.resolve(typeof w.confirm === "function" ? w.confirm(`${title}\n\n${message}`) : true);
-  }
-  return new Promise<boolean>((resolve) => Alert.alert(title, message, [
-    { text: cancelLabel, style: "cancel", onPress: () => resolve(false) },
-    { text: okLabel, onPress: () => resolve(true) },
-  ], { cancelable: true, onDismiss: () => resolve(false) }));
 }
 
 export function Card({ children, style, onPress, accent }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; onPress?: () => void; accent?: string }) {
@@ -77,11 +70,55 @@ export function Grid({ children, min = 300, gap = space.lg }: { children: React.
   return <View style={{ flexDirection: "row", flexWrap: "wrap", gap }}>{React.Children.map(children, (c) => (c ? <View style={{ flex: 1, minWidth: min }}>{c}</View> : null))}</View>;
 }
 
+/**
+ * Lays list rows out in as many columns as the window can actually hold.
+ *
+ * A single column of full-width bars leaves most of a desktop window empty
+ * once there are only a handful of records. The column count is measured from
+ * the viewport rather than fixed, so the same list is one column on a phone and
+ * three on a wide monitor with nothing to configure. Cells use padding plus a
+ * negative margin on the container instead of `gap`, because a percentage width
+ * combined with `gap` overflows the row.
+ */
+export function CardGrid({ children, min = 440, gap = space.md }: { children: React.ReactNode; min?: number; gap?: number }) {
+  const { width } = useWindowDimensions();
+  const items = React.Children.toArray(children).filter(Boolean);
+  if (items.length === 0) return null;
+  const gutter = width >= bp.desktop ? 34 : width >= bp.tablet ? 24 : 18;
+  const sidebar = width >= bp.desktop ? 264 : 0;
+  const available = Math.min(width - sidebar, contentWidth()) - gutter * 2;
+  const columns = Math.max(1, Math.min(items.length, Math.floor(available / min)));
+  if (columns === 1) return <View style={{ gap }}>{items}</View>;
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", margin: -gap / 2 }}>
+      {items.map((child, i) => (
+        <View key={i} style={{ width: `${100 / columns}%`, padding: gap / 2 }}>{child}</View>
+      ))}
+    </View>
+  );
+}
+
 export function Row({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return <View style={[{ flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap" }, style]}>{children}</View>;
 }
 
 export function Divider() { return <View style={{ height: 1, backgroundColor: colors.border, marginVertical: space.xs }} />; }
+
+/**
+ * One line of list controls: filters and a search box on the left, the actions
+ * that create things on the right. List screens used to stack each of those in
+ * its own Row, which left three mostly empty bands above the results on a wide
+ * screen. Everything wraps on a phone, so the same markup still reads well at
+ * 380px.
+ */
+export function Toolbar({ children, right }: { children?: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <View style={s.toolbar}>
+      <View style={s.toolbarGroup}>{children}</View>
+      {right ? <View style={s.toolbarActions}>{right}</View> : null}
+    </View>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Typography                                                          */
@@ -148,12 +185,18 @@ export function Button({ title, onPress, variant = "primary", disabled, busy, sm
   );
 }
 
-export function Input(props: TextInputProps & { label?: string; error?: string | null }) {
-  const { label, error, style, ...rest } = props;
+/**
+ * `containerStyle` sizes the wrapper rather than the field, which is what a
+ * search box in a toolbar needs: `flex: 1` on the TextInput alone does nothing
+ * because the wrapper is the flex child. `compact` trims the height so the
+ * field lines up with the small buttons and chips beside it.
+ */
+export function Input(props: TextInputProps & { label?: string; error?: string | null; containerStyle?: StyleProp<ViewStyle>; compact?: boolean }) {
+  const { label, error, style, containerStyle, compact, ...rest } = props;
   return (
-    <View style={{ gap: 6 }}>
+    <View style={[{ gap: 6 }, containerStyle]}>
       {label ? <Label>{label}</Label> : null}
-      <TextInput placeholderTextColor={colors.faint} selectionColor={colors.primary} {...rest} style={[s.input, rest.multiline && { minHeight: 110, textAlignVertical: "top" }, error && { borderColor: colors.danger }, style]} />
+      <TextInput placeholderTextColor={colors.faint} selectionColor={colors.primary} {...rest} style={[s.input, compact && s.inputCompact, rest.multiline && { minHeight: 110, textAlignVertical: "top" }, error && { borderColor: colors.danger }, style]} />
       {error ? <Text style={{ color: colors.danger, fontSize: 12 }}>{error}</Text> : null}
     </View>
   );
@@ -161,7 +204,7 @@ export function Input(props: TextInputProps & { label?: string; error?: string |
 
 export function Badge({ value, color }: { value: string; color?: string }) {
   const c = color ?? statusColor[value] ?? colors.muted;
-  return <View style={[s.badge, { borderColor: `${c}66`, backgroundColor: `${c}1A` }]}><Text style={{ color: c, fontSize: 11, fontWeight: "700", letterSpacing: 0.3 }}>{value.replace(/_/g, " ")}</Text></View>;
+  return <View style={[s.badge, { borderColor: `${c}66`, backgroundColor: `${c}1A` }]}><Text style={{ color: c, fontSize: 11, fontWeight: "700", letterSpacing: 0.3, textTransform: "capitalize" }}>{value.replace(/_/g, " ")}</Text></View>;
 }
 
 export function Chip({ label, selected, onPress }: { label: string; selected?: boolean; onPress?: () => void }) {
@@ -284,6 +327,10 @@ const s = StyleSheet.create({
   btnInner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 18, minHeight: 46 },
   btnInnerSmall: { paddingVertical: 7, paddingHorizontal: 12, minHeight: 34 },
   input: { borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radiusSm, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, backgroundColor: colors.bg, color: colors.text },
+  inputCompact: { paddingVertical: 7, paddingHorizontal: 12, fontSize: 14 },
+  toolbar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.md, flexWrap: "wrap" },
+  toolbarGroup: { flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap", flex: 1, minWidth: 240 },
+  toolbarActions: { flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap" },
   badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   chip: { borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.chipBg, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 7 },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },

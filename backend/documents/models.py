@@ -61,6 +61,14 @@ class Document(TimeStampedUUIDModel):
     parse_mode = models.CharField(max_length=30, blank=True)
     error_message = models.TextField(blank=True)
 
+    # Live progress for the processing run. Written with queryset.update() from
+    # the worker so the value is visible to the API while the job is still going,
+    # rather than sitting inside an open transaction until the end.
+    progress_step = models.PositiveSmallIntegerField(default=0)
+    progress_total_steps = models.PositiveSmallIntegerField(default=0)
+    progress_stage = models.CharField(max_length=40, blank=True)
+    progress_detail = models.CharField(max_length=200, blank=True)
+
     processing_started_at = models.DateTimeField(null=True, blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")

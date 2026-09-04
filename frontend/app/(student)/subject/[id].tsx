@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React from "react";
 import { student } from "@/api/endpoints";
 import { useAsync } from "@/hooks/useAsync";
-import { Empty, ErrorBanner, H2, ListRow, Loading, Screen, Stat, Row, pct, fmtSeconds } from "@/ui";
+import { CardGrid, Empty, ErrorBanner, H2, ListRow, Loading, Row, Screen, Stat, fmtSeconds, pct } from "@/ui";
 
 export default function SubjectScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -25,9 +25,11 @@ export default function SubjectScreen() {
       <ErrorBanner message={docs.error} onRetry={docs.reload} />
       {docs.loading && !docs.data ? <Loading /> : null}
       {docs.data?.length === 0 ? <Empty text="No published books yet." /> : null}
-      {docs.data?.map((d) => (
-        <ListRow key={d.id} title={d.title} subtitle={`${d.open_module_count} of ${d.module_count} modules open · ${d.completed_modules} completed · ${Math.round(d.progress_percent)}%`} onPress={() => router.push(`/(student)/document/${d.id}`)} />
-      ))}
+      <CardGrid>
+        {docs.data?.map((d) => (
+          <ListRow key={d.id} icon="book-outline" title={d.title} subtitle={`${d.open_module_count} of ${d.module_count} modules open · ${d.completed_modules} completed · ${Math.round(d.progress_percent)}%`} onPress={() => router.push(`/(student)/document/${d.id}`)} />
+        ))}
+      </CardGrid>
     </Screen>
   );
 }

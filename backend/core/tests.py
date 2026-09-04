@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.db import connection
-from django.test import TransactionTestCase
+from django.test import TestCase, TransactionTestCase
 
 from ai.gateway import AIResult
 from assessments.models import AssessmentAttempt, AttemptStatus
@@ -92,3 +92,29 @@ class SqliteConfigurationTests(TransactionTestCase):
             # mode is always "memory"; the busy timeout must still be applied.
             c.execute("PRAGMA busy_timeout")
             self.assertGreaterEqual(c.fetchone()[0], 5000)
+
+
+class MetaChoicesTests(TestCase):
+    """The client builds its filters from this, so it has to stay in step with
+    the models rather than with a list someone typed into a screen."""
+
+    def test_choices_come_from_the_models_and_hide_retired_states(self):
+        from core.testing import make_admin
+
+        res = client_for(make_admin()).get("/api/meta/choices/")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        subject = [c["value"] for c in res.data["subject_status"]]
+        self.assertIn("active", subject)
+        self.assertIn("discontinued", subject)
+        self.assertNotIn("archived", subject)  # subjects are deleted, not archived
+        self.assertNotIn("archived", [c["value"] for c in res.data["document_status"]])
+        self.assertNotIn("superseded", [c["value"] for c in res.data["quiz_status"]])
+        self.assertNotIn("discontinued", [c["value"] for c in res.data["account_status"]])
+        # Labels are Django's own, not something the client invents.
+        self.assertEqual(
+            [c["label"] for c in res.data["subject_status"] if c["value"] == "active"], ["Active"],
+        )
+
+    def test_choices_need_authentication(self):
+        self.assertIn(client_for().get("/api/meta/choices/").status_code, (401, 403))
