@@ -43,6 +43,38 @@ class DocumentQuerySet(models.QuerySet):
         return self.none()
 
 
+class DocumentChunk(TimeStampedUUIDModel):
+    """A retrieval unit: one slice of a module's source text.
+
+    Built once by ``services.chunking`` when a module's content version
+    changes, and read by ``services.retrieval`` on every tutor question, so no
+    request ever splits text itself. Keyed by content version, which means an
+    edit to the book leaves the old rows behind harmlessly and the next
+    retrieval rebuilds against the new version.
+    """
+
+    document = models.ForeignKey("documents.Document", on_delete=models.CASCADE, related_name="chunks")
+    module = models.ForeignKey("learning.Module", on_delete=models.CASCADE, related_name="chunks")
+    content_version = models.PositiveIntegerField(db_index=True)
+    order = models.PositiveIntegerField()
+    text = models.TextField()
+    char_count = models.PositiveIntegerField(default=0)
+    page_start = models.PositiveIntegerField(null=True, blank=True)
+    page_end = models.PositiveIntegerField(null=True, blank=True)
+    heading = models.CharField(max_length=300, blank=True)
+    terms = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["module", "order"]
+        indexes = [models.Index(fields=["module", "content_version"], name="documents_d_module__f0d97f_idx")]
+        constraints = [
+            models.UniqueConstraint(fields=("module", "content_version", "order"), name="uniq_chunk_per_module_version"),
+        ]
+
+    def __str__(self):
+        return f"{self.module_id} chunk {self.order} (v{self.content_version})"
+
+
 class Document(TimeStampedUUIDModel):
     """A book or course document owned by a subject."""
 
