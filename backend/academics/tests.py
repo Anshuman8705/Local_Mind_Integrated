@@ -59,6 +59,43 @@ class SubjectTests(TestCase):
         self.assertIn(res.status_code, (401, 403))
         self.assertTrue(Subject.objects.filter(pk=subject.pk).exists())
 
+    def test_a_student_can_be_enrolled_on_several_subjects(self):
+        """The unique constraint is on the student and subject pair, not on the
+        student, so one person can sit on as many courses as they are given."""
+        student = make_student()
+        maths = make_subject(code="MA101", name="Mathematics")
+        physics = make_subject(code="PH101", name="Physics")
+        chemistry = make_subject(code="CH101", name="Chemistry")
+
+        for subject in (maths, physics, chemistry):
+            res = self.client.post(f"/api/admin/subjects/{subject.id}/students/",
+                                   {"student_ids": [str(student.id)]}, format="json")
+            self.assertEqual(res.status_code, 201, res.content)
+            self.assertEqual(res.data["results"][0]["status"], "enrolled")
+
+        active = Enrollment.objects.filter(student=student, status="active")
+        self.assertEqual(active.count(), 3)
+        self.assertEqual(sorted(e.subject.code for e in active), ["CH101", "MA101", "PH101"])
+
+        # The student portal shows every one of them.
+        subjects = client_for(student).get("/api/student/subjects/").data
+        codes = sorted(s["code"] for s in (subjects if isinstance(subjects, list) else subjects["results"]))
+        self.assertEqual(codes, ["CH101", "MA101", "PH101"])
+
+    def test_the_enrol_picker_only_hides_a_student_from_the_subject_they_are_on(self):
+        """Excluding the already-enrolled must be per subject: a student on one
+        course has to stay available for every other."""
+        student = make_student()
+        maths = make_subject(code="MA102")
+        physics = make_subject(code="PH102")
+        enroll(student, maths)
+
+        on_maths = self.client.get(f"/api/admin/students/search/?subject={maths.id}").data
+        on_physics = self.client.get(f"/api/admin/students/search/?subject={physics.id}").data
+
+        self.assertNotIn(str(student.id), [s["id"] for s in on_maths])
+        self.assertIn(str(student.id), [s["id"] for s in on_physics])
+
     def test_student_search_can_exclude_those_already_enrolled(self):
         """The enrol picker asks for candidates for one subject, so anyone
         already on it must not come back."""
