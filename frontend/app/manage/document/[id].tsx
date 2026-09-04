@@ -1,11 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Document, Outline, OutlineChapter, OutlineModule } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
+import { useDebounced } from "@/hooks/useDebounced";
 import { HeadingPicker } from "@/ui/HeadingPicker";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
+import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -119,6 +120,23 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
   const avail = useAction(async (m: OutlineModule) => { if (!m.id) return; await manage.moduleAvailability(m.id, m.availability === "open" ? "locked" : "open"); await q.reload(); });
   const update = (fn: (c: OutlineChapter[]) => OutlineChapter[]) => { setChapters((c) => (c ? fn(c) : c)); setDirty(true); };
   const headings = q.data?.headings ?? [];
+  // A real textbook has dozens of chapters and hundreds of modules. Rendering
+  // all of them expanded put thousands of controls on one page, so chapters
+  // open one at a time and the filter narrows the list to what is being
+  // looked for. A short book (three chapters or fewer) opens fully, because
+  // collapsing it would only add clicks.
+  const [openChapter, setOpenChapter] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const needle = useDebounced(filter, 150).trim().toLowerCase();
+  const small = (chapters?.length ?? 0) <= 3;
+  const shown = useMemo(() => {
+    if (!chapters) return [];
+    if (!needle) return chapters.map((c, i) => ({ chapter: c, index: i, modules: c.modules }));
+    return chapters
+      .map((c, i) => ({ chapter: c, index: i, modules: c.modules.filter((m) => m.title.toLowerCase().includes(needle)) }))
+      .filter((row) => row.modules.length > 0 || row.chapter.title.toLowerCase().includes(needle));
+  }, [chapters, needle]);
+  const totalModules = chapters?.reduce((n, c) => n + c.modules.length, 0) ?? 0;
   if (q.loading && !chapters) return <Loading />;
   if (!chapters) return <ErrorBanner message={q.error} onRetry={q.reload} />;
   return (
@@ -127,27 +145,51 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
         <H2>Outline</H2>
         {locked ? <P muted small>Structure is locked after publishing; text edits still allowed.</P> : <Button title="Add Chapter" small variant="secondary" onPress={() => update((c) => [...c, { title: `Chapter ${c.length + 1}`, order: c.length + 1, modules: [] }])} />}
       </Row>
-      {q.data?.outline_source ? <P muted small>Outline source: {q.data.outline_source}. Every module must map to a heading or carry its own text.</P> : null}
-      {chapters.map((ch, ci) => (
-        <Card key={ch.id ?? `new-${ci}`} style={{ borderLeftWidth: 4, borderLeftColor: colors.primary }}>
+      <P muted small>
+        {chapters.length} chapter{chapters.length === 1 ? "" : "s"} · {totalModules} module{totalModules === 1 ? "" : "s"}
+        {q.data?.outline_source ? ` · outline from ${q.data.outline_source}` : ""}. Every module must map to a heading or carry its own text.
+      </P>
+      {chapters.length > 3 || totalModules > 12 ? (
+        <Input compact value={filter} onChangeText={setFilter} placeholder="Find a chapter or module by title" />
+      ) : null}
+      {needle && shown.length === 0 ? <Empty text="Nothing in this outline matches that." icon="search-outline" /> : null}
+      {shown.map(({ chapter: ch, index: ci, modules }) => {
+        const key = ch.id ?? `new-${ci}`;
+        const expanded = small || !!needle || openChapter === key;
+        return (
+        <Card key={key} style={{ borderLeftWidth: 4, borderLeftColor: colors.primary }}>
           <Row>
+            {!small && !needle ? (
+              <Button
+                title=""
+                icon={expanded ? "chevron-down" : "chevron-forward"}
+                small
+                variant="ghost"
+                onPress={() => setOpenChapter(expanded ? null : key)}
+              />
+            ) : null}
             <View style={{ flex: 1 }}><Input value={ch.title} editable={!locked} onChangeText={(t) => update((c) => c.map((x, i) => (i === ci ? { ...x, title: t } : x)))} /></View>
+            <P muted small>{ch.modules.length} module{ch.modules.length === 1 ? "" : "s"}</P>
             {!locked ? <>
               <Button title="↑" small variant="ghost" onPress={() => ci > 0 && update((c) => { const n = [...c]; [n[ci - 1], n[ci]] = [n[ci], n[ci - 1]]; return n; })} />
               <Button title="↓" small variant="ghost" onPress={() => ci < chapters.length - 1 && update((c) => { const n = [...c]; [n[ci + 1], n[ci]] = [n[ci], n[ci + 1]]; return n; })} />
               <Button title="Remove" small variant="ghost" onPress={() => update((c) => c.filter((_, i) => i !== ci))} />
             </> : null}
           </Row>
-          {ch.modules.map((m, mi) => (
+          {expanded ? modules.map((m) => {
+            const mi = ch.modules.indexOf(m);
+            return (
             <ModuleRow key={m.id ?? `new-${ci}-${mi}`} m={m} locked={locked} headings={headings}
               onChange={(nm) => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: x.modules.map((y, j) => (j === mi ? nm : y)) } : x)))}
               onRemove={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: x.modules.filter((_, j) => j !== mi) } : x)))}
               onMove={(dir) => update((c) => c.map((x, i) => { if (i !== ci) return x; const n = [...x.modules]; const t = mi + dir; if (t < 0 || t >= n.length) return x; [n[mi], n[t]] = [n[t], n[mi]]; return { ...x, modules: n }; }))}
               onToggle={() => avail.run(m)} />
-          ))}
-          {!locked ? <Button title="Add Module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
+            );
+          }) : null}
+          {expanded && !locked ? <Button title="Add Module" small variant="ghost" onPress={() => update((c) => c.map((x, i) => (i === ci ? { ...x, modules: [...x.modules, { title: "New module", order: x.modules.length + 1, source_heading_index: null, source_text: "" }] } : x)))} /> : null}
         </Card>
-      ))}
+        );
+      })}
       <ErrorBanner message={save.error ?? avail.error} />
       {dirty ? <Button title={locked ? "Save text edits" : "Save outline"} onPress={() => save.run()} busy={save.busy} /> : null}
     </>
