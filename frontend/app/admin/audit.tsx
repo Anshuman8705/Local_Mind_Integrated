@@ -5,7 +5,8 @@ import { admin } from "@/api/endpoints";
 import type { AuditLog } from "@/api/types";
 import { useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
-import { Button, Card, Chip, Empty, ErrorBanner, Input, Loading, P, Row, Screen, colors, space } from "@/ui";
+import { Button, Card, Empty, ErrorBanner, Input, Loading, P, Row, Screen, colors, space } from "@/ui";
+import { SelectField } from "@/ui/SelectField";
 
 /**
  * The audit log, written for reading.
@@ -68,6 +69,9 @@ function summaryValue(value: unknown): string {
   return String(value);
 }
 
+const HIDDEN_KEYS = new Set(["conversation", "latency_ms", "modules", "document_id", "module_id", "subject_id", "attempt_id"]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const dayKey = (iso: string) => new Date(iso).toDateString();
 
 function dayLabel(iso: string) {
@@ -86,7 +90,11 @@ function Entry({ log }: { log: AuditLog }) {
   const { entity, verb } = splitAction(log.action);
   const tone = toneFor(verb);
   const colour = TONES[tone];
-  const pairs = Object.entries(log.summary ?? {}).filter(([, v]) => v !== "" && v !== null && v !== undefined);
+  const pairs = Object.entries(log.summary ?? {})
+    .filter(([, v]) => v !== "" && v !== null && v !== undefined)
+    // Internal identifiers and timings tell a reader nothing and crowd out the
+    // values that do, like a reason or an old-to-new change.
+    .filter(([key, v]) => !HIDDEN_KEYS.has(key) && !(typeof v === "string" && UUID.test(v)));
   return (
     <Card style={{ flexDirection: "row", gap: space.md, alignItems: "flex-start" }}>
       <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colour}22`, alignItems: "center", justifyContent: "center" }}>
@@ -97,7 +105,7 @@ function Entry({ log }: { log: AuditLog }) {
         {log.target_label ? <P small>{log.target_label}</P> : null}
         <P muted small>
           {log.actor_email || "system"}
-          {log.actor_role ? ` \u00b7 ${log.actor_role}` : ""} \u00b7 {time(log.created_at)}
+          {log.actor_role ? ` \u00b7 ${log.actor_role}` : ""}{` \u00b7 ${time(log.created_at)}`}
         </P>
         {pairs.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm, marginTop: 2 }}>
@@ -141,11 +149,17 @@ export default function Audit() {
       onRefresh={q.reload}
       toolbar={
         <>
-          <Input compact containerStyle={{ flex: 1, minWidth: 180, maxWidth: 300 }} placeholder="Filter by who did it" value={actor} onChangeText={(t) => { setActor(t); setPage(1); }} />
-          <Chip label="All actions" selected={action === ""} onPress={() => set("")} />
-          {known.data?.actions.map((a) => (
-            <Chip key={a.value} label={`${sentence(a.value)} (${a.count})`} selected={action === a.value} onPress={() => set(a.value)} />
-          ))}
+          <Input compact containerStyle={{ flex: 1, minWidth: 180, maxWidth: 280 }} placeholder="Filter by who did it" value={actor} onChangeText={(t) => { setActor(t); setPage(1); }} />
+          <SelectField
+            label="All actions"
+            value={action}
+            onChange={set}
+            placeholder="Search actions"
+            options={[
+              { value: "", label: "All actions" },
+              ...(known.data?.actions ?? []).map((a) => ({ value: a.value, label: sentence(a.value), hint: String(a.count) })),
+            ]}
+          />
         </>
       }
     >
@@ -163,7 +177,7 @@ export default function Audit() {
       ))}
       {q.data && q.data.count > 0 ? (
         <Row style={{ justifyContent: "space-between", marginTop: space.md }}>
-          <P muted small>{q.data.count} entries \u00b7 page {page}</P>
+          <P muted small>{`${q.data.count} entries \u00b7 page ${page}`}</P>
           <Row>
             {page > 1 ? <Button title="Previous" icon="chevron-back-outline" small variant="secondary" onPress={() => setPage((p) => p - 1)} /> : null}
             {q.data.next ? <Button title="Next" icon="chevron-forward-outline" small variant="secondary" onPress={() => setPage((p) => p + 1)} /> : null}
