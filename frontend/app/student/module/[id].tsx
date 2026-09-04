@@ -4,7 +4,7 @@ import { AppState, Platform, ScrollView, Text, View } from "react-native";
 import { student } from "@/api/endpoints";
 import type { Message, TeachResponse } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, colors, space } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, colors, pct, space } from "@/ui";
 
 type Tab = "read" | "lesson" | "ask";
 
@@ -32,16 +32,19 @@ export default function ModuleScreen() {
     return () => { clearInterval(tick); sub.remove(); flush(); };
   }, [id]);
 
+  // Book and chapter often carry the same title, in which case printing both
+  // reads as a stutter.
+  const crumbs = [mod.data?.document_title, mod.data?.chapter_title].filter(Boolean);
+  const trail = [...new Set(crumbs)].join(" · ");
+
   return (
-    <Screen scroll={tab !== "ask"} padded={tab !== "ask"} reading>
+    <Screen scroll={tab !== "ask"} padded={tab !== "ask"}>
       {mod.error ? <ErrorBanner message={mod.error} onRetry={mod.reload} /> : null}
       {mod.loading && !mod.data ? <Loading /> : null}
       {mod.data ? (
         <>
           <View style={{ padding: tab === "ask" ? space.lg : 0, paddingBottom: tab === "ask" ? 0 : undefined, gap: 8 }}>
-            {mod.data.document_title ? (
-              <P muted small>{mod.data.document_title}{mod.data.chapter_title ? ` · ${mod.data.chapter_title}` : ""}</P>
-            ) : null}
+            {trail ? <P muted small>{trail}</P> : null}
             <H1>{mod.data.title}</H1>
             <Row>
               <Chip label="Read" selected={tab === "read"} onPress={() => setTab("read")} />
@@ -49,22 +52,50 @@ export default function ModuleScreen() {
               <Chip label="Ask a doubt" selected={tab === "ask"} onPress={() => setTab("ask")} />
             </Row>
           </View>
-          {tab === "read" ? (
-            <>
-              <Card><P>{mod.data.source_text}</P></Card>
-              {quizzes.data?.length ? (
-                <>
-                  <H2>Quizzes for this module</H2>
-                  {quizzes.data.map((qz) => (
-                    <Card key={qz.id} onPress={() => router.push(`/student/quiz/${qz.id}`)} style={{ flexDirection: "row", alignItems: "center" }}>
-                      <View style={{ flex: 1 }}><P>{qz.title}</P><P muted small>{qz.question_count} questions · pass {qz.pass_percentage}% · best {qz.best_percentage ?? "—"}{qz.best_percentage != null ? "%" : ""}</P></View>
-                      <Badge value={qz.passed ? "passed" : qz.attempts_used ? "attempted" : "new"} color={qz.passed ? colors.success : colors.primary} />
+          {/* Reading and the lesson keep a readable measure, and everything
+              that used to sit underneath the text moves alongside it so a wide
+              window is used rather than left blank. The aside wraps below on a
+              narrow screen. */}
+          {tab === "ask" ? <AskTab moduleId={id} /> : (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
+              <View style={{ flex: 1, minWidth: 320, maxWidth: 840, gap: space.md }}>
+                {tab === "read" ? <Card><P>{mod.data.source_text}</P></Card> : <LessonTab moduleId={id} />}
+              </View>
+              <View style={{ width: 300, flexGrow: 1, minWidth: 260, maxWidth: 360, gap: space.md }}>
+                <Card>
+                  <H2 icon="stats-chart-outline">This module</H2>
+                  <Row style={{ justifyContent: "space-between" }}>
+                    <P muted small>Status</P>
+                    <Badge value={mod.data.progress?.status ?? "not_started"} />
+                  </Row>
+                  {mod.data.progress?.best_quiz_percentage != null ? (
+                    <Row style={{ justifyContent: "space-between" }}>
+                      <P muted small>Best quiz</P>
+                      <P small>{pct(mod.data.progress.best_quiz_percentage)}</P>
+                    </Row>
+                  ) : null}
+                  {mod.data.start_page ? (
+                    <Row style={{ justifyContent: "space-between" }}>
+                      <P muted small>Pages</P>
+                      <P small>{mod.data.start_page}{mod.data.end_page && mod.data.end_page !== mod.data.start_page ? `–${mod.data.end_page}` : ""}</P>
+                    </Row>
+                  ) : null}
+                </Card>
+                <Card>
+                  <H2 icon="help-circle-outline">Quizzes</H2>
+                  {quizzes.data?.length ? quizzes.data.map((qz) => (
+                    <Card key={qz.id} onPress={() => router.push(`/student/quiz/${qz.id}`)} style={{ gap: 4 }}>
+                      <Row style={{ justifyContent: "space-between" }}>
+                        <P small style={{ flex: 1, fontWeight: "600" }}>{qz.title}</P>
+                        <Badge value={qz.passed ? "passed" : qz.attempts_used ? "attempted" : "new"} color={qz.passed ? colors.success : colors.primary} />
+                      </Row>
+                      <P muted small>{qz.question_count} questions · pass {qz.pass_percentage}% · best {qz.best_percentage ?? "—"}{qz.best_percentage != null ? "%" : ""}</P>
                     </Card>
-                  ))}
-                </>
-              ) : null}
-            </>
-          ) : tab === "lesson" ? <LessonTab moduleId={id} /> : <AskTab moduleId={id} />}
+                  )) : <P muted small>No quiz has been set for this module yet.</P>}
+                </Card>
+              </View>
+            </View>
+          )}
         </>
       ) : null}
     </Screen>
