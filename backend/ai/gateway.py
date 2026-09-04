@@ -76,7 +76,9 @@ def trim_source(text: str, limit: int | None = None) -> str:
     """Cut source text to the configured character budget on a paragraph or
     sentence boundary so the model never sees a half-word at the end."""
     text = text or ""
-    limit = limit or _ai_setting("MAX_SOURCE_CHARS", 14000)
+    if limit is None:
+        from ai.config import source_chars
+        limit = source_chars()
     if len(text) <= limit:
         return text
     cut = text[:limit]
@@ -146,7 +148,7 @@ class AIProvider(Protocol):
     name: str
 
     def generate_structured(self, *, model: str, messages: list[dict], schema: dict,
-                            temperature: float, timeout: int) -> AIResult: ...
+                            temperature: float, timeout: int, budget=None) -> AIResult: ...
 
     def list_models(self, timeout: int = 3) -> tuple[bool, list[str], str]: ...
 
@@ -157,17 +159,20 @@ class OllamaProvider:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
 
-    def _options(self, temperature: float) -> dict:
+    def _options(self, temperature: float, budget=None) -> dict:
         return {
             "temperature": temperature,
-            "top_p": 0.1 if temperature == 0 else 0.9,
-            "num_ctx": _ai_setting("NUM_CTX", 16384),
-            "num_predict": _ai_setting("NUM_PREDICT", 4096),
+            "top_p": (budget.top_p if budget else (0.1 if temperature == 0 else 0.9)),
+            "num_ctx": budget.num_ctx if budget else _ai_setting("NUM_CTX", 16384),
+            # A per-task cap: a 100-word answer and a ten-question quiz used to
+            # share one 4096-token ceiling, so every short call paid for the
+            # longest one.
+            "num_predict": budget.max_tokens if budget else _ai_setting("NUM_PREDICT", 4096),
             # Fewer degenerate repetitions from small models on long lists.
             "repeat_penalty": 1.1,
         }
 
-    def generate_structured(self, *, model, messages, schema, temperature, timeout):
+    def generate_structured(self, *, model, messages, schema, temperature, timeout, budget=None):
         import requests
 
         started = time.monotonic()
@@ -182,7 +187,7 @@ class OllamaProvider:
                     # qwen3 is a reasoning model; with structured output the
                     # reasoning tokens only cost latency. Requires Ollama >= 0.9.
                     "think": False,
-                    "options": self._options(temperature),
+                    "options": self._options(temperature, budget),
                     "keep_alive": _ai_setting("KEEP_ALIVE", "30m"),
                 },
                 timeout=timeout,
@@ -342,10 +347,23 @@ class AIGateway:
     def __init__(self, provider: AIProvider | None = None):
         self.provider = provider or get_provider()
 
-    def generate(self, *, purpose: str, system_prompt: str, user_prompt: str, schema: dict,
-                 model_kind: str = "tutor", temperature: float = 0.0, timeout: int | None = None) -> AIResult:
+    def generate(self, *, task: str, system_prompt: str, user_prompt: str, schema: dict,
+                 model_kind: str | None = None, temperature: float | None = None, timeout: int | None = None,
+                 source_chars: int = 0, retrieved_chunks: int = 0) -> AIResult:
+        """Run one model call for a named task.
+
+        The task decides the token ceiling, the context window and the sampling
+        temperature, all read from ai.config, so no caller carries a literal
+        number. `source_chars` and `retrieved_chunks` are recorded for the log
+        and the benchmark: they say how much text the caller decided to send,
+        which is the number that matters when a call is slow.
+        """
+        from ai.config import task_config
+
         cfg = settings.AI
-        model = model_for(model_kind)
+        budget = task_config(task)
+        model = model_for(model_kind or ("outline" if task == "outline" else "tutor"))
+        temperature = budget.temperature if temperature is None else temperature
         timeout = timeout or cfg["TIMEOUT_SECONDS"]
         max_attempts = 1 + max(0, int(_ai_setting("MAX_RETRIES", 1)))
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
@@ -361,7 +379,8 @@ class AIGateway:
                        "Reply with one JSON value that exactly matches the required schema and nothing else."
                 attempt_messages = messages + [{"role": "user", "content": hint}]
             result = self.provider.generate_structured(
-                model=model, messages=attempt_messages, schema=schema, temperature=attempt_temperature, timeout=timeout)
+                model=model, messages=attempt_messages, schema=schema, temperature=attempt_temperature,
+                timeout=timeout, budget=budget)
             result.attempts = attempt
             if result.ok:
                 problems = validate_against_schema(result.data, schema)
@@ -370,13 +389,14 @@ class AIGateway:
                                       provider=result.provider, model=result.model, raw=result.raw,
                                       attempts=attempt, latency_ms=result.latency_ms)
             if result.ok:
-                logger.info("AI %s ok model=%s attempt=%d latency_ms=%d", purpose, model, attempt, result.latency_ms)
+                logger.info("AI %s ok model=%s attempt=%d latency_ms=%d source_chars=%d chunks=%d max_tokens=%d",
+                            task, model, attempt, result.latency_ms, source_chars, retrieved_chunks, budget.max_tokens)
                 return result
             if result.error_code not in RETRYABLE:
                 break
-            logger.warning("AI %s attempt %d/%d rejected: %s (%s)", purpose, attempt, max_attempts, result.error_code, result.error)
+            logger.warning("AI %s attempt %d/%d rejected: %s (%s)", task, attempt, max_attempts, result.error_code, result.error)
 
-        logger.warning("AI call for %s failed after %d attempt(s): %s (%s)", purpose, result.attempts, result.error_code, result.error)
+        logger.warning("AI call for %s failed after %d attempt(s): %s (%s)", task, result.attempts, result.error_code, result.error)
         return result
 
 

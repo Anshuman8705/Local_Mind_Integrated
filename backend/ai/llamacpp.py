@@ -292,7 +292,7 @@ class LlamaCppProvider:
 
     # ---- AIProvider --------------------------------------------------------
 
-    def generate_structured(self, *, model, messages, schema, temperature, timeout):
+    def generate_structured(self, *, model, messages, schema, temperature, timeout, budget=None):
         started = time.monotonic()
         if not self._lock.acquire(timeout=timeout):
             return AIResult(ok=False, error_code="timeout", error=f"Embedded model was busy for more than {timeout}s.",
@@ -309,9 +309,11 @@ class LlamaCppProvider:
                     messages=prompt_messages,
                     response_format={"type": "json_object", "schema": schema},
                     temperature=temperature,
-                    top_p=0.1 if temperature == 0 else 0.9,
+                    top_p=(budget.top_p if budget else (0.1 if temperature == 0 else 0.9)),
                     repeat_penalty=1.1,
-                    max_tokens=int(_cfg("NUM_PREDICT", 4096)),
+                    # Per-task ceiling: a short answer no longer reserves the
+                    # same output budget as a ten-question quiz.
+                    max_tokens=int(budget.max_tokens if budget else _cfg("NUM_PREDICT", 4096)),
                 )
             except Exception as exc:
                 logger.exception("Embedded generation failed")

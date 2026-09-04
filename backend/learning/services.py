@@ -1,4 +1,7 @@
 """Student-side content access and progress."""
+import logging
+
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -7,6 +10,8 @@ from core.exceptions import Forbidden, NotFound
 from documents.models import Document, DocumentStatus
 
 from .models import Module, ModuleAvailability, ModuleProgress, ProgressStatus
+
+logger = logging.getLogger("localmind.learning")
 
 
 def student_documents(student, subject=None):
@@ -111,6 +116,16 @@ def open_modules_for_publish(actor, modules, reason, target=None, request=None):
         target = modules[0].chapter.document
     audit.record(actor, "module.opened_on_publish", target,
                  {"reason": reason, "count": opened, "modules": [str(i) for i in module_ids]}, request)
+    # Opening a module is the moment its lesson becomes worth having ready: the
+    # first student to press Lesson would otherwise wait for the model. One
+    # background worker walks the queue, so publishing a whole book does not
+    # start forty generations at once.
+    if not settings.TESTING:
+        try:
+            from tutor.services import enqueue_prewarm
+            enqueue_prewarm(module_ids)
+        except Exception:  # prewarming is an optimisation, never a blocker
+            logger.warning("Could not queue lesson prewarming for %s modules", len(module_ids))
     return opened
 
 

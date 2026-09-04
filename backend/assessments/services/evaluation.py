@@ -22,7 +22,7 @@ def evaluate_subjective(source_text, question, expected_rubric, student_answer):
     )
     user = (f"SOURCE TEXT:\n\"\"\"{trim_source(source_text)}\"\"\"\n\nQUESTION:\n{question}\n\nEXPECTED RUBRIC:\n{expected_rubric}\n\n"
             f"STUDENT ANSWER:\n\"\"\"{(student_answer or '')[:4000]}\"\"\"")
-    result = gateway().generate(purpose="evaluate", system_prompt=system, user_prompt=user, schema=SCHEMA, temperature=0.0)
+    result = gateway().generate(task="evaluate", system_prompt=system, user_prompt=user, schema=SCHEMA)
     if result.failed:
         return {"error": f"{result.error_code}: {result.error}"}, False
     is_correct = bool(result.data["is_correct"])

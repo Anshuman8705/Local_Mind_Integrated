@@ -122,7 +122,7 @@ class Command(BaseCommand):
     def _smoke(self, purpose):
         self.stdout.write(f"Running {purpose} generation...")
         result = AIGateway().generate(
-            purpose=purpose, system_prompt="Reply with JSON only.",
+            task="tutor", system_prompt="Reply with JSON only.",
             user_prompt='Return {"greeting": "hello", "number": 7}.', schema=SMOKE_SCHEMA, temperature=0.0)
         if result.failed:
             raise CommandError(f"{purpose} generation failed: {result.error_code}: {result.error}")

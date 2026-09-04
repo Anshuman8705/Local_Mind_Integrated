@@ -261,7 +261,7 @@ AI = {
     # Ollama's default context is 4096 tokens, which silently drops the tail
     # of a 12-14k character source prompt. qwen3:1.7b supports 32k; 16k
     # comfortably fits the largest prompt this app sends plus its output.
-    "NUM_CTX": env_int("OLLAMA_NUM_CTX", 16384),
+    "NUM_CTX": env_int("OLLAMA_NUM_CTX", 0),
     # Hard cap on generated tokens so a runaway completion cannot hold a
     # worker for the full timeout. Lessons and 10-question quizzes fit.
     "NUM_PREDICT": env_int("OLLAMA_NUM_PREDICT", 4096),
@@ -271,9 +271,26 @@ AI = {
     # at temperature 0 recovers most of those without doubling latency on
     # genuine outages (timeouts and connection errors are never retried).
     "MAX_RETRIES": env_int("OLLAMA_MAX_RETRIES", 1),
-    # Character budget for source text embedded in prompts. Roughly 3.5
-    # chars per token for English prose, so 14000 chars is ~4000 tokens.
-    "MAX_SOURCE_CHARS": env_int("AI_MAX_SOURCE_CHARS", 14000),
+    # fast / balanced / quality. The mode sets the context window, the source
+    # budget, how much conversation the tutor sees and the per-task token
+    # ceilings; ai/config.py holds the table. Every value below overrides its
+    # slot in the profile when set, and 0 means "use the profile".
+    "PERFORMANCE_MODE": env_str("AI_PERFORMANCE_MODE", "fast"),
+    # Character budget for source text embedded in prompts. Roughly 3.5 chars
+    # per token for English prose. Unset by default so the mode decides.
+    "MAX_SOURCE_CHARS": env_int("AI_MAX_SOURCE_CHARS", 0),
+    # How many recent conversation messages the tutor is shown.
+    "MAX_CONVERSATION_MESSAGES": env_int("AI_MAX_CONVERSATION_MESSAGES", 0),
+    # How many retrieved chunks a tutor answer is built from.
+    "RETRIEVAL_CHUNKS": env_int("AI_RETRIEVAL_CHUNKS", 0),
+    # Per-task output ceilings; 0 uses the profile.
+    "MAX_TOKENS_TUTOR": env_int("AI_TUTOR_MAX_TOKENS", 0),
+    "MAX_TOKENS_QUIZ": env_int("AI_QUIZ_MAX_TOKENS", 0),
+    "MAX_TOKENS_LESSON": env_int("AI_LESSON_MAX_TOKENS", 0),
+    "MAX_TOKENS_REMEDIATION": env_int("AI_REMEDIATION_MAX_TOKENS", 0),
+    "MAX_TOKENS_OUTLINE": env_int("AI_OUTLINE_MAX_TOKENS", 0),
+    "MAX_TOKENS_EVALUATE": env_int("AI_EVALUATE_MAX_TOKENS", 0),
+    "MAX_TOKENS_ASSIGNMENT": env_int("AI_ASSIGNMENT_MAX_TOKENS", 0),
     # Seconds to cache the provider readiness probe used by /api/health/.
     "HEALTH_CACHE_SECONDS": env_int("AI_HEALTH_CACHE_SECONDS", 30),
 }

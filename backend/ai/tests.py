@@ -70,7 +70,7 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_valid_output_passes_through(self, post):
         post.return_value = chat('{"answer": "ok", "points": ["p"]}')
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertTrue(result.ok)
         self.assertEqual(result.data["answer"], "ok")
         self.assertEqual(result.attempts, 1)
@@ -78,11 +78,14 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_request_carries_context_window_and_output_cap(self, post):
         post.return_value = chat('{"answer": "ok", "points": ["p"]}')
-        self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA, temperature=0.3)
+        self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA, temperature=0.3)
         body = post.call_args.kwargs["json"]
         self.assertEqual(body["model"], "qwen3:1.7b")
-        self.assertEqual(body["options"]["num_ctx"], 16384)
-        self.assertEqual(body["options"]["num_predict"], 4096)
+        # The window and the output ceiling come from the performance mode and
+        # the task, not from one number shared by every call.
+        from ai.config import num_ctx, max_tokens_for
+        self.assertEqual(body["options"]["num_ctx"], num_ctx())
+        self.assertEqual(body["options"]["num_predict"], max_tokens_for("tutor"))
         self.assertEqual(body["options"]["temperature"], 0.3)
         self.assertIs(body["think"], False)
         self.assertEqual(body["format"], SCHEMA)
@@ -92,13 +95,13 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_think_wrapped_json_is_accepted(self, post):
         post.return_value = chat('<think>hmm</think>{"answer": "ok", "points": ["p"]}')
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertTrue(result.ok)
 
     @patch("requests.post")
     def test_malformed_then_valid_is_retried_once_at_temperature_zero(self, post):
         post.side_effect = [chat("not json"), chat('{"answer": "ok", "points": ["p"]}')]
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA, temperature=0.7)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA, temperature=0.7)
         self.assertTrue(result.ok)
         self.assertEqual(result.attempts, 2)
         second = post.call_args_list[1].kwargs["json"]
@@ -109,7 +112,7 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_schema_violation_twice_is_rejected(self, post):
         post.side_effect = [chat('{"answer": "ok"}'), chat('{"answer": "ok"}')]
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertFalse(result.ok)
         self.assertEqual(result.error_code, "invalid_schema")
         self.assertEqual(result.attempts, 2)
@@ -117,28 +120,28 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_truncated_output_is_flagged_and_retried(self, post):
         post.side_effect = [chat('{"answer": "ok", "poi', done_reason="length"), chat('{"answer": "ok", "points": ["p"]}')]
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertTrue(result.ok)
         self.assertEqual(result.attempts, 2)
 
     @patch("requests.post")
     def test_empty_content_is_reported(self, post):
         post.side_effect = [chat(""), chat("")]
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertEqual(result.error_code, "empty")
 
     @patch("requests.post")
     def test_connection_error_is_unavailable_and_not_retried(self, post):
         import requests
         post.side_effect = requests.ConnectionError("refused")
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertEqual(result.error_code, "unavailable")
         self.assertEqual(post.call_count, 1)
 
     @patch("requests.post")
     def test_missing_model_gives_pull_hint(self, post):
         post.return_value = FakeResponse(404, {"error": "model not found"})
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertEqual(result.error_code, "unavailable")
         self.assertIn("ollama pull qwen3:1.7b", result.error)
 
@@ -146,7 +149,7 @@ class GatewayTests(TestCase):
     def test_timeout_is_not_retried(self, post):
         import requests
         post.side_effect = requests.Timeout()
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertEqual(result.error_code, "timeout")
         self.assertEqual(post.call_count, 1)
 
@@ -154,13 +157,13 @@ class GatewayTests(TestCase):
     @patch("requests.post")
     def test_retries_can_be_disabled(self, post):
         post.return_value = chat("not json")
-        result = self._gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+        result = self._gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
         self.assertEqual(result.error_code, "malformed")
         self.assertEqual(post.call_count, 1)
 
     def test_disabled_provider_when_ai_off(self):
         with override_settings(AI=AI_OFF):
-            result = gw.gateway().generate(purpose="t", system_prompt="s", user_prompt="u", schema=SCHEMA)
+            result = gw.gateway().generate(task="tutor", system_prompt="s", user_prompt="u", schema=SCHEMA)
             self.assertEqual(result.error_code, "disabled")
 
 

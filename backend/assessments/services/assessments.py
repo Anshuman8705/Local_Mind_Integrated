@@ -97,7 +97,9 @@ def generate(actor, *, module_id=None, chapter_id=None, num_mcqs=6, num_subjecti
     if num_mcqs + num_subjective <= 0 or num_mcqs > 30 or num_subjective > 10:
         raise ValidationFailed("Ask for 1-30 MCQs and 0-10 subjective questions.", code="INVALID_COUNTS")
     previous = [q["question"] for a in Assessment.objects.filter(module=module, chapter=chapter).order_by("-created_at")[:5] for q in a.questions]
-    questions, generator, error = generate_questions(source_text, default_title, num_mcqs, num_subjective, previous)
+    # Passing the module lets generation sample evenly across the whole of it
+    # rather than truncating at the front, so questions cover the end too.
+    questions, generator, error = generate_questions(source_text, default_title, num_mcqs, num_subjective, previous, module=module)
     with transaction.atomic():
         assessment = Assessment.objects.create(
             subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],

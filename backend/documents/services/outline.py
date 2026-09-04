@@ -125,7 +125,7 @@ Rules:
 4. Chapters are the top-level divisions; modules are the sections a student studies in one sitting.
 5. Titles may be tidied but must keep the heading's meaning.
 """
-    result = gateway().generate(purpose="outline", system_prompt=system, user_prompt=user,
+    result = gateway().generate(task="outline", system_prompt=system, user_prompt=user,
                                 schema=OUTLINE_SCHEMA, model_kind="outline", temperature=0.0, timeout=180)
     if result.failed:
         return None

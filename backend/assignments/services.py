@@ -107,7 +107,7 @@ def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, 
         "4. Output JSON only."
     )
     user = f"TOPIC: {name}\nTOTAL POINTS: {max_score}\nFOCUS: {focus or 'general understanding'}\n\nSOURCE TEXT:\n\"\"\"{trim_source(source)}\"\"\""
-    result = gateway().generate(purpose="assignment", system_prompt=system, user_prompt=user, schema=GEN_SCHEMA, temperature=0.5)
+    result = gateway().generate(task="assignment", system_prompt=system, user_prompt=user, schema=GEN_SCHEMA)
     generator, warning = "ai", ""
     if result.ok and sum(r["points"] for r in result.data["rubric"]) == max_score:
         data = result.data

@@ -3,7 +3,9 @@ import hashlib
 import logging
 import random
 
+from ai.config import task_config
 from ai.gateway import gateway, trim_source
+from documents.services import retrieval
 from core.exceptions import ValidationFailed
 
 logger = logging.getLogger("localmind.assessments")
@@ -126,7 +128,7 @@ def _dedupe(questions, previous_questions):
     return kept, hit_earlier, hit_within
 
 
-def generate_questions(source_text, title, num_mcqs=6, num_subjective=0, previous_questions=None):
+def generate_questions(source_text, title, num_mcqs=6, num_subjective=0, previous_questions=None, module=None):
     """Returns (questions, generator, ai_error_or_empty).
 
     generator is "ai" when qwen3 produced a valid set (possibly fewer than
@@ -157,10 +159,21 @@ def generate_questions(source_text, title, num_mcqs=6, num_subjective=0, previou
         "5. source_reference is a short phrase copied from the SOURCE TEXT that the question is based on.\n"
         "6. Open-ended questions need an expected_rubric: the two to four points a full answer must contain.\n"
         "7. Cover different parts of the source; do not ask two questions about the same sentence.\n"
-        "8. Output JSON only."
+        "8. Output only the JSON."
     )
-    user = f"TITLE: {title}\n\nSOURCE TEXT:\n\"\"\"{trim_source(source_text)}\"\"\"\n{exclusion}\nTASK: Write {' and '.join(tasks)} about the source text above."
-    result = gateway().generate(purpose="quiz", system_prompt=system, user_prompt=user, schema=schema, temperature=0.7)
+    # A quiz should cover the whole module, so when the caller names one the
+    # source is sampled evenly across its chunks instead of being truncated at
+    # the front, which used to mean every question came from the first pages.
+    budget = task_config("quiz")
+    chunk_count = 0
+    source = ""
+    if module is not None:
+        source, chunk_count = retrieval.coverage_sample(module, budget.source_chars)
+    if not source:
+        source = trim_source(source_text, budget.source_chars)
+    user = f"TITLE: {title}\n\nSOURCE TEXT:\n\"\"\"{source}\"\"\"\n{exclusion}\nTASK: Write {' and '.join(tasks)} about the source text above.\nOutput only the JSON."
+    result = gateway().generate(task="quiz", system_prompt=system, user_prompt=user, schema=schema,
+                                source_chars=len(source), retrieved_chunks=chunk_count)
     if result.ok:
         raw = [dict(q, type="mcq") for q in result.data.get("mcq_questions", [])] + \
               [dict(q, type="subjective") for q in result.data.get("subjective_questions", [])]

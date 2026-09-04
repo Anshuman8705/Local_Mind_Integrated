@@ -103,7 +103,7 @@ class Command(BaseCommand):
             task_name, schema, prompt = TASKS[task]()
             runs = []
             for _ in range(max(1, options["repeat"])):
-                result = gateway.generate(purpose=f"benchmark:{task}", task=task_name, system_prompt=SYSTEM_PROMPT, user_prompt=prompt,
+                result = gateway.generate(task=task_name, system_prompt=SYSTEM_PROMPT, user_prompt=prompt,
                                           schema=schema, temperature=0.0, source_chars=len(prompt))
                 runs.append({"ok": result.ok, "error": result.error_code, "latency_ms": result.latency_ms,
                              "prompt_tokens": result.prompt_tokens, "generated_tokens": result.completion_tokens,
