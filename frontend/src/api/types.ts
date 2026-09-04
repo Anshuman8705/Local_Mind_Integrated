@@ -96,7 +96,7 @@ export interface AskResponse { conversation_id: string; message: Message; follow
 export interface Conversation { id: string; module_id: string; title: string; last_message_at: string | null; messages?: Message[] }
 
 export interface AuditLog { id: string; actor_email: string; actor_role: string; action: string; target_type: string; target_id: string; target_label: string; summary: Record<string, unknown>; created_at: string }
-export interface ImportReport { total_rows: number; created: number; already_existing: number; invalid: number; errors: { row: number; email?: string; error: string }[] }
+export interface ImportReport { total_rows: number; created: number; already_existing: number; invalid: number; errors: { row: number; email?: string | null; errors: string[] }[] }
 
 export interface AIModelStatus { name: string; present: boolean }
 export type ComponentStatus = "READY" | "ERROR" | "MISSING";
