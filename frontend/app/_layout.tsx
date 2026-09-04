@@ -17,8 +17,8 @@ function Gate({ children }: { children: React.ReactNode }) {
     const onChange = first === "change-password";
     if (!user) { if (!onLogin) router.replace("/login"); return; }
     if (mustChangePassword) { if (!onChange) router.replace("/change-password"); return; }
-    const home = user.role === "student" ? "/(student)" : user.role === "faculty" ? "/(manage)" : "/(admin)";
-    const allowed = user.role === "student" ? ["(student)"] : user.role === "faculty" ? ["(manage)"] : ["(admin)", "(manage)"];
+    const home = user.role === "student" ? "/student" : user.role === "faculty" ? "/manage" : "/admin";
+    const allowed = user.role === "student" ? ["student"] : user.role === "faculty" ? ["manage"] : ["admin", "manage"];
     if (onLogin || onChange || !first || !allowed.includes(first)) router.replace(home as any);
   }, [ready, user, mustChangePassword, segments, router]);
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center" }}><Loading /></View>;
@@ -37,9 +37,9 @@ export default function RootLayout() {
             <Stack.Screen name="login/faculty" options={{ headerShown: false }} />
             <Stack.Screen name="login/admin" options={{ headerShown: false }} />
             <Stack.Screen name="change-password" options={{ title: "Set a new password", headerBackVisible: false }} />
-            <Stack.Screen name="(student)" options={{ headerShown: false }} />
-            <Stack.Screen name="(manage)" options={{ headerShown: false }} />
-            <Stack.Screen name="(admin)" options={{ headerShown: false }} />
+            <Stack.Screen name="student" options={{ headerShown: false }} />
+            <Stack.Screen name="manage" options={{ headerShown: false }} />
+            <Stack.Screen name="admin" options={{ headerShown: false }} />
           </Stack>
           {/* One dialog host for the whole app: every confirmation and warning
               renders here, centred, instead of in a browser popup. */}
