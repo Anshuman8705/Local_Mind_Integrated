@@ -29,7 +29,7 @@ export interface ModuleBrief {
 }
 export interface ModuleFull extends ModuleBrief {
   chapter_id: string; source_text: string; source_heading_index?: number | null; is_user_edited?: boolean;
-  document_title?: string; chapter_title?: string;
+  document_id?: string; document_title?: string; chapter_title?: string;
 }
 export interface Chapter { id: string; title: string; order: number; modules: ModuleBrief[]; status?: string }
 export type DocumentStatus = "uploaded" | "processing" | "under_review" | "ready" | "published" | "unpublished" | "archived" | "error";

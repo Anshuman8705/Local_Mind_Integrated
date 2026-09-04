@@ -42,7 +42,7 @@ export function Screen({ children, scroll = true, refreshing, onRefresh, padded 
     // When the screen does not scroll (chat layouts) the inner box must take
     // the full height and be allowed to shrink, otherwise a child ScrollView
     // grows with its content on web and pushes the input bar off screen.
-    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.lg, gap: space.md }, { maxWidth: contentWidth(reading, wide), width: "100%", alignSelf: "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
+    <View style={[padded && { paddingHorizontal: gutter, paddingTop: space.lg, gap: space.md }, { maxWidth: contentWidth(reading, wide), width: "100%", alignSelf: reading ? "flex-start" : "center" }, !scroll && { flex: 1, minHeight: 0 }]}>
       {bar}
       {children}
     </View>

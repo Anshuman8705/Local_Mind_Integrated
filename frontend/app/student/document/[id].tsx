@@ -4,7 +4,7 @@ import React from "react";
 import { View, Text } from "react-native";
 import { student } from "@/api/endpoints";
 import { useAsync } from "@/hooks/useAsync";
-import { Badge, Card, ErrorBanner, H1, H2, Loading, P, Screen, colors, pct } from "@/ui";
+import { Badge, Card, CardGrid, ErrorBanner, H1, H2, Loading, P, Screen, colors, pct } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -18,6 +18,7 @@ export default function DocumentScreen() {
       {q.data?.chapters.map((ch) => (
         <View key={ch.id} style={{ gap: 8 }}>
           <H2>{ch.order}. {ch.title}</H2>
+          <CardGrid min={380}>
           {ch.modules.map((m) => {
             const locked = m.availability === "locked";
             const st = m.progress?.status ?? "not_started";
@@ -32,6 +33,7 @@ export default function DocumentScreen() {
               </Card>
             );
           })}
+          </CardGrid>
         </View>
       ))}
     </Screen>

@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { AppState, Platform, ScrollView, Text, View } from "react-native";
 import { student } from "@/api/endpoints";
@@ -14,6 +14,13 @@ export default function ModuleScreen() {
   const [tab, setTab] = useState<Tab>("read");
   const mod = useAsync(() => student.module(id), [id]);
   const quizzes = useAsync(() => student.quizzes({ module: id }), [id]);
+  // The back arrow belongs to the book this module sits in. It cannot be set
+  // in the layout because the book is only known once the module has loaded.
+  const navigation = useNavigation();
+  const documentId = mod.data?.document_id;
+  useEffect(() => {
+    navigation.setOptions({ backTo: documentId ? `/student/document/${documentId}` : "/student" });
+  }, [navigation, documentId]);
 
   // Reading time: accumulate foreground seconds, flush every 60s and on unmount.
   const acc = useRef(0);
@@ -32,6 +39,9 @@ export default function ModuleScreen() {
       {mod.data ? (
         <>
           <View style={{ padding: tab === "ask" ? space.lg : 0, paddingBottom: tab === "ask" ? 0 : undefined, gap: 8 }}>
+            {mod.data.document_title ? (
+              <P muted small>{mod.data.document_title}{mod.data.chapter_title ? ` · ${mod.data.chapter_title}` : ""}</P>
+            ) : null}
             <H1>{mod.data.title}</H1>
             <Row>
               <Chip label="Read" selected={tab === "read"} onPress={() => setTab("read")} />
