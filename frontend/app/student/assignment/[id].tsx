@@ -2,7 +2,7 @@ import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { student } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Screen, colors, fmtDate } from "@/ui";
+import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Panel, Screen, colors, fmtDate } from "@/ui";
 
 export default function AssignmentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -18,6 +18,7 @@ export default function AssignmentScreen() {
   const canSubmit = a && a.status === "published" && (!sub || a.allow_resubmission) && (a.allow_late || !a.due_at || new Date(a.due_at) > new Date());
   return (
     <Screen refreshing={q.loading} onRefresh={q.reload}>
+      <Panel width={860}>
       <ErrorBanner message={q.error} onRetry={q.reload} />
       {q.loading && !a ? <Loading /> : null}
       {a ? (
@@ -46,6 +47,7 @@ export default function AssignmentScreen() {
           ) : null}
         </>
       ) : null}
+      </Panel>
     </Screen>
   );
 }

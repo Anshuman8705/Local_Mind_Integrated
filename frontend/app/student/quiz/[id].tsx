@@ -4,7 +4,7 @@ import { Pressable, Text } from "react-native";
 import { student } from "@/api/endpoints";
 import type { StartAttempt } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Button, Card, ErrorBanner, H1, Input, Loading, Notice, P, Screen, colors, confirmAsync } from "@/ui";
+import { Button, Card, ErrorBanner, H1, Input, Loading, Notice, P, Panel, Screen, colors, confirmAsync } from "@/ui";
 
 export default function QuizScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,6 +48,7 @@ export default function QuizScreen() {
   if (!attempt) {
     return (
       <Screen>
+        <Panel width={640}>
         <ErrorBanner message={info.error} onRetry={info.reload} />
         {info.loading ? <Loading /> : null}
         {info.data ? (
@@ -60,11 +61,13 @@ export default function QuizScreen() {
             <Button title="Start Quiz" onPress={() => start.run()} busy={start.busy} />
           </Card>
         ) : null}
+        </Panel>
       </Screen>
     );
   }
   return (
     <Screen>
+      <Panel width={860}>
       {attempt.resumed ? <Notice message="Resuming your open attempt." /> : null}
       {remaining !== null ? <Notice tone={remaining < 60 ? "warning" : "info"} message={`Time remaining: ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`} /> : null}
       {attempt.questions.map((q, i) => (
@@ -82,6 +85,7 @@ export default function QuizScreen() {
       ))}
       <ErrorBanner message={submit.error} />
       <Button title="Submit Answers" onPress={() => submit.run()} busy={submit.busy} />
+      </Panel>
     </Screen>
   );
 }

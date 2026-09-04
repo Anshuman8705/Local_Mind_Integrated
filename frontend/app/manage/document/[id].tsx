@@ -6,7 +6,7 @@ import type { Document, Outline, OutlineChapter, OutlineModule } from "@/api/typ
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
 import { HeadingPicker } from "@/ui/HeadingPicker";
-import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmAsync, confirmDeleteAsync, fmtSeconds } from "@/ui";
+import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, Panel, ProgressBar, Row, Screen, colors, confirmAsync, confirmDeleteAsync, fmtSeconds } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -50,6 +50,7 @@ export default function DocumentScreen() {
   });
   return (
     <Screen refreshing={doc.loading} onRefresh={doc.reload}>
+      <Panel width={1100}>
       <ErrorBanner message={doc.error} onRetry={doc.reload} />
       {doc.loading && !d ? <Loading /> : null}
       {d ? (
@@ -73,6 +74,7 @@ export default function DocumentScreen() {
             : null}
         </>
       ) : null}
+      </Panel>
     </Screen>
   );
 }

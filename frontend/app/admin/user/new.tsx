@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
 import { admin } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Button, Card, Chip, ErrorBanner, H1, Input, Label, Notice, Row, Screen } from "@/ui";
+import { Button, Card, Chip, ErrorBanner, H1, Input, Label, Notice, Panel, Row, Screen } from "@/ui";
 
 export default function NewUser() {
   const router = useRouter();
@@ -21,6 +21,7 @@ export default function NewUser() {
   });
   return (
     <Screen>
+      <Panel width={760}>
       <H1>New {kind === "faculty" ? "faculty member" : "student"}</H1>
       <Row><Chip label="Student" selected={kind === "students"} onPress={() => setKind("students")} /><Chip label="Faculty" selected={kind === "faculty"} onPress={() => setKind("faculty")} /></Row>
       <Card>
@@ -42,6 +43,7 @@ export default function NewUser() {
         <ErrorBanner message={create.error} />
         <Button title="Create Account" onPress={() => create.run()} busy={create.busy} disabled={!f.email || !f.full_name} />
       </Card>
+      </Panel>
     </Screen>
   );
 }

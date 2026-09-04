@@ -2,7 +2,7 @@ import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { manage } from "@/api/endpoints";
 import { useAction } from "@/hooks/useAsync";
-import { Button, Card, ErrorBanner, Input, Notice, P, Row, Screen } from "@/ui";
+import { Button, Card, ErrorBanner, Input, Notice, P, Panel, Row, Screen } from "@/ui";
 import { Target, TargetPicker } from "@/ui/TargetPicker";
 
 export default function NewQuiz() {
@@ -22,6 +22,7 @@ export default function NewQuiz() {
   const ready = !!(target.module_id || target.chapter_id);
   return (
     <Screen>
+      <Panel width={700}>
       <Card>
         <TargetPicker value={target} onChange={setTarget} />
         <Input label="Title (optional)" value={title} onChangeText={setTitle} />
@@ -38,6 +39,7 @@ export default function NewQuiz() {
         <ErrorBanner message={manual.error} />
         <Button title="Create Blank Draft" variant="secondary" onPress={() => manual.run()} busy={manual.busy} disabled={!ready} />
       </Card>
+      </Panel>
     </Screen>
   );
 }

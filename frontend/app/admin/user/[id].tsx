@@ -1,8 +1,9 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
+import { View } from "react-native";
 import { admin, manage } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, Stat, confirmDeleteAsync, fmtSeconds, pct } from "@/ui";
+import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, Stat, confirmDeleteAsync, fmtSeconds, pct, space } from "@/ui";
 
 export default function UserScreen() {
   const { id, kind: k } = useLocalSearchParams<{ id: string; kind?: string }>();
@@ -40,13 +41,14 @@ export default function UserScreen() {
           <Row style={{ justifyContent: "space-between" }}><H1>{u.full_name}</H1><Badge value={u.status} /></Row>
           <P muted>{u.email} · {u.role}{u.must_change_password ? " · still on initial password" : ""}</P>
           {analytics.data ? <Row><Stat label="modules done" value={`${analytics.data.modules.completed}/${analytics.data.modules.total}`} /><Stat label="quiz average" value={pct(analytics.data.quizzes.average_percentage)} /><Stat label="app time" value={fmtSeconds(analytics.data.time.session_seconds)} /></Row> : null}
-          <Card>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
+          <Card style={{ flex: 1, minWidth: 320, maxWidth: 620 }}>
             <H2>Details</H2>
             {Object.keys(f).map((key) => <Input key={key} label={key.replace(/_/g, " ")} value={f[key] ?? ""} onChangeText={(v) => setF((x) => ({ ...x, [key]: v }))} />)}
             <ErrorBanner message={save.error} />
             <Button title="Save" small onPress={() => save.run()} busy={save.busy} />
           </Card>
-          <Card>
+          <Card style={{ flex: 1, minWidth: 320, maxWidth: 620 }}>
             <H2>Account</H2>
             <ErrorBanner message={act.error ?? remove.error} />
             {u.status === "discontinued" ? <Button title="Reactivate Account" small onPress={() => act.run("reactivate")} busy={act.busy} /> : null}
@@ -56,6 +58,7 @@ export default function UserScreen() {
             <Notice tone="warning" message="Deleting removes the account and all of its records from the database. The audit log keeps a note of who deleted it and when." />
             <Button title="Delete Account" icon="trash-outline" variant="danger" small onPress={() => remove.run()} busy={remove.busy} />
           </Card>
+          </View>
         </>
       ) : null}
     </Screen>

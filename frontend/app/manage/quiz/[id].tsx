@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Question, Quiz } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmDeleteAsync, fmtDate, fmtSeconds, pct } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, Input, Label, Loading, Notice, P, Panel, Row, Screen, colors, confirmDeleteAsync, fmtDate, fmtSeconds, pct } from "@/ui";
 
 export default function QuizScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -42,6 +42,7 @@ export default function QuizScreen() {
   const editable = d?.status !== "superseded";
   return (
     <Screen refreshing={q.loading} onRefresh={q.reload}>
+      <Panel width={980}>
       <ErrorBanner message={q.error ?? remove.error} onRetry={q.reload} />
       {q.loading && !d ? <Loading /> : null}
       {d ? (
@@ -104,6 +105,7 @@ export default function QuizScreen() {
           ) : <AttemptsTab quizId={id} />}
         </>
       ) : null}
+      </Panel>
     </Screen>
   );
 }

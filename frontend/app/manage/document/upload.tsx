@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import type { ApiError } from "@/api/client";
 import { manage } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Button, Card, Chip, ErrorBanner, Input, Label, Notice, P, Row, Screen } from "@/ui";
+import { Button, Card, Chip, ErrorBanner, Input, Label, Notice, P, Panel, Row, Screen } from "@/ui";
 
 export default function Upload() {
   const router = useRouter();
@@ -41,6 +41,7 @@ export default function Upload() {
   });
   return (
     <Screen>
+      <Panel width={700}>
       <Card>
         <Label>Subject</Label>
         <Row>{subjects.data?.filter((s) => s.status === "active").map((s) => <Chip key={s.id} label={s.code} selected={subjectId === s.id} onPress={() => setSubjectId(s.id)} />)}</Row>
@@ -52,6 +53,7 @@ export default function Upload() {
         {duplicate ? <Button title="Open the Existing Book" icon="open-outline" variant="secondary" small onPress={() => router.replace(`/manage/document/${duplicate}`)} /> : null}
         <Button title="Upload and Process" onPress={() => upload.run()} busy={upload.busy} disabled={!file || !subjectId} />
       </Card>
+      </Panel>
     </Screen>
   );
 }

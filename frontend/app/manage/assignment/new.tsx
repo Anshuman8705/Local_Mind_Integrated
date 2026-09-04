@@ -2,7 +2,7 @@ import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { manage } from "@/api/endpoints";
 import { useAction } from "@/hooks/useAsync";
-import { Button, Card, ErrorBanner, Input, Notice, P, Screen } from "@/ui";
+import { Button, Card, ErrorBanner, Input, Notice, P, Panel, Screen } from "@/ui";
 import { Target, TargetPicker } from "@/ui/TargetPicker";
 
 export default function NewAssignment() {
@@ -18,6 +18,7 @@ export default function NewAssignment() {
   const ready = !!(target.module_id || target.chapter_id || target.subject_id);
   return (
     <Screen>
+      <Panel width={700}>
       <Card>
         <TargetPicker value={target} onChange={setTarget} allowSubject />
         <Input label="Title (optional)" value={title} onChangeText={setTitle} />
@@ -30,6 +31,7 @@ export default function NewAssignment() {
         <P muted small>Generation needs a module or chapter; a subject-level assignment starts blank.</P>
         <Button title="Create Blank Draft" variant="secondary" onPress={() => blank.run()} busy={blank.busy} disabled={!ready} />
       </Card>
+      </Panel>
     </Screen>
   );
 }

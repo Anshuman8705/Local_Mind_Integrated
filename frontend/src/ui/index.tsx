@@ -98,6 +98,19 @@ export function CardGrid({ children, min = 440, gap = space.md }: { children: Re
   );
 }
 
+/**
+ * A centred column for content that should not stretch.
+ *
+ * Screens run to the width of the window, which suits lists and dashboards.
+ * Forms, a quiz being taken and a conversation do not: a text field or an
+ * answer option 1600px wide is hard to use, and chat bubbles at 88% of that
+ * are unreadable. Those wrap themselves in a Panel, centred so the space falls
+ * evenly on both sides rather than piling up on one.
+ */
+export function Panel({ children, width = 720, style }: { children: React.ReactNode; width?: number; style?: StyleProp<ViewStyle> }) {
+  return <View style={[{ width: "100%", maxWidth: width, alignSelf: "center", gap: space.md }, style]}>{children}</View>;
+}
+
 export function Row({ children, style }: { children: React.ReactNode; style?: ViewStyle }) {
   return <View style={[{ flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap" }, style]}>{children}</View>;
 }

@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import { admin } from "@/api/endpoints";
 import type { ImportReport } from "@/api/types";
 import { useAction } from "@/hooks/useAsync";
-import { Button, Card, Chip, ErrorBanner, H2, Notice, P, Row, Screen, Stat } from "@/ui";
+import { Button, Card, Chip, ErrorBanner, H2, Notice, P, Panel, Row, Screen, Stat } from "@/ui";
 
 export default function ImportUsers() {
   const router = useRouter();
@@ -30,6 +30,7 @@ export default function ImportUsers() {
   });
   return (
     <Screen>
+      <Panel width={640}>
       <Row><Chip label="Students" selected={kind === "students"} onPress={() => setKind("students")} /><Chip label="Faculty" selected={kind === "faculty"} onPress={() => setKind("faculty")} /></Row>
       <Card>
         <Notice message={kind === "students" ? "Columns: name, email (required); roll_number, program, batch, phone (optional)." : "Columns: name, email (required); employee_id, department, designation, phone, subject_codes (comma-separated, optional)."} />
@@ -45,6 +46,7 @@ export default function ImportUsers() {
           <Button title="Back to People" small onPress={() => router.replace({ pathname: "/admin/users", params: { kind, notice: `Imported ${report.created} ${kind === "faculty" ? "faculty" : "students"}; ${report.invalid} row(s) skipped.` } })} />
         </Card>
       ) : null}
+      </Panel>
     </Screen>
   );
 }

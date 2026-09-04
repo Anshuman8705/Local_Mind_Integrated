@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "@/auth/AuthContext";
 import { useAction } from "@/hooks/useAsync";
-import { Button, Card, ErrorBanner, Input, Notice, P, Screen } from "@/ui";
+import { Button, Card, ErrorBanner, Input, Notice, P, Panel, Screen } from "@/ui";
 
 export default function ChangePassword() {
   const { completePasswordChange, logout, mustChangePassword } = useAuth();
@@ -14,6 +14,7 @@ export default function ChangePassword() {
   });
   return (
     <Screen>
+      <Panel width={520}>
       {mustChangePassword ? <Notice tone="warning" message="Your account uses the initial password. Choose a new one before continuing." /> : null}
       <Card>
         <Input label="Current password" value={current} onChangeText={setCurrent} secureTextEntry />
@@ -24,6 +25,7 @@ export default function ChangePassword() {
         <Button title="Save New Password" onPress={() => action.run()} busy={action.busy} disabled={!current || !next || !confirm} />
         <Button title="Sign Out Instead" variant="ghost" onPress={() => logout()} />
       </Card>
+      </Panel>
     </Screen>
   );
 }

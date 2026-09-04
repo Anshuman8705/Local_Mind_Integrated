@@ -167,7 +167,7 @@ function AskTab({ moduleId }: { moduleId: string }) {
       <ScrollView
         ref={scroll}
         style={[{ flex: 1, minHeight: 0 }, Platform.OS === "web" && ({ overflowY: "auto" } as any)]}
-        contentContainerStyle={{ padding: space.lg, gap: 10 }}
+        contentContainerStyle={{ padding: space.lg, gap: 10, width: "100%", maxWidth: 900, alignSelf: "center" }}
         showsVerticalScrollIndicator
         persistentScrollbar
         keyboardShouldPersistTaps="handled"
@@ -176,7 +176,7 @@ function AskTab({ moduleId }: { moduleId: string }) {
         {restoring ? <Loading /> : null}
         {!restoring && messages.length === 0 ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
         {messages.map((m) => (
-          <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "88%", backgroundColor: m.role === "user" ? colors.primary : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : colors.border }}>
+          <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "80%", backgroundColor: m.role === "user" ? colors.primary : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : colors.border }}>
             <Text style={{ color: m.role === "user" ? colors.primaryText : colors.text, fontSize: 15, lineHeight: 21 }}>{m.content}</Text>
             {m.role === "assistant" && m.source_reference ? <Text style={{ color: colors.muted, fontSize: 12, marginTop: 6 }}>Source: {m.source_reference}</Text> : null}
           </View>
@@ -185,9 +185,11 @@ function AskTab({ moduleId }: { moduleId: string }) {
         {ask.error ? <Notice tone="warning" message={ask.error} /> : null}
         {suggestions.length ? <Row>{suggestions.map((s) => <Chip key={s} label={s} onPress={() => ask.run(s)} />)}</Row> : null}
       </ScrollView>
-      <View style={{ flexDirection: "row", gap: 8, padding: space.md, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
+      <View style={{ borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
+        <View style={{ flexDirection: "row", gap: 8, padding: space.md, width: "100%", maxWidth: 900, alignSelf: "center" }}>
         <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder="Type your question" onSubmitEditing={() => question.trim() && ask.run(question.trim())} blurOnSubmit={false} editable={!ask.busy} /></View>
         <Button title="Ask" onPress={() => ask.run(question.trim())} disabled={!question.trim()} busy={ask.busy} />
+        </View>
       </View>
     </View>
   );

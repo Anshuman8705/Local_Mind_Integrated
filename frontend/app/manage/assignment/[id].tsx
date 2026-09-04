@@ -4,7 +4,7 @@ import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Assignment } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Row, Screen, colors, confirmDeleteAsync, fmtDate } from "@/ui";
+import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, Panel, Row, Screen, colors, confirmDeleteAsync, fmtDate } from "@/ui";
 
 export default function AssignmentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,6 +35,7 @@ export default function AssignmentScreen() {
   const rubricTotal = d?.rubric.reduce((t, r) => t + (Number(r.points) || 0), 0) ?? 0;
   return (
     <Screen refreshing={q.loading} onRefresh={q.reload}>
+      <Panel width={980}>
       <ErrorBanner message={q.error} onRetry={q.reload} />
       {q.loading && !d ? <Loading /> : null}
       {d ? (
@@ -70,6 +71,7 @@ export default function AssignmentScreen() {
           ) : <SubmissionsTab assignment={d} />}
         </>
       ) : null}
+      </Panel>
     </Screen>
   );
 }
