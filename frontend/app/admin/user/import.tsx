@@ -47,13 +47,15 @@ export default function ImportUsers() {
     const form = new FormData();
     if (Platform.OS === "web" && file.file) form.append("file", file.file, file.name); else form.append("file", { uri: file.uri, name: file.name, type: file.mimeType ?? "application/octet-stream" } as any);
     const r = await admin.importUsers(kind, form);
-    const summary = `Imported ${r.created} ${who} (${r.already_existing} already existed, ${r.invalid} invalid of ${r.total_rows} rows).`;
-    if (r.errors.length === 0) {
-      // Clean import: go straight back to People with the counts.
+    const skipped = r.already_existing ? `, ${r.already_existing} already existed` : "";
+    const summary = `Imported ${r.created} ${who} of ${r.total_rows} row${r.total_rows === 1 ? "" : "s"}${skipped}.`;
+    // An email that is already on the platform is a normal outcome, not a
+    // problem with the sheet: re-importing a class list should not be
+    // presented as a failure. Only genuinely invalid rows keep us here.
+    if (r.invalid === 0) {
       router.replace({ pathname: "/admin/users", params: { kind, notice: summary } });
       return;
     }
-    // Some rows failed: keep the report on screen so the admin can fix the sheet.
     setReport(r);
   });
   return (
@@ -98,11 +100,11 @@ export default function ImportUsers() {
         </View>
         {report ? (
           <Card accent={colors.warning}>
-            <H2 icon="alert-circle-outline">Some rows were skipped</H2>
+            <H2 icon="alert-circle-outline">{report.invalid} row{report.invalid === 1 ? "" : "s"} could not be imported</H2>
             <Row><Stat label="rows" value={report.total_rows} /><Stat label="created" value={report.created} /><Stat label="already existed" value={report.already_existing} /><Stat label="invalid" value={report.invalid} /></Row>
             <P muted small>Fix these rows in the sheet and import it again. Rows that were created are not created twice.</P>
             <View style={{ gap: 2 }}>
-              {report.errors.map((e, i) => (
+              {report.errors.filter((e) => !(e.errors ?? []).every((x) => x === "User already exists.")).map((e, i) => (
                 <Row key={i} style={{ gap: space.sm, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border }}>
                   <P small style={{ fontWeight: "700", width: 64 }}>Row {e.row}</P>
                   <P muted small style={{ flex: 1 }}>{e.email || "no email"}</P>
