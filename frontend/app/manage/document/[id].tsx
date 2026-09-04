@@ -4,7 +4,8 @@ import { View } from "react-native";
 import { manage } from "@/api/endpoints";
 import type { Document, Outline, OutlineChapter, OutlineModule } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Label, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
+import { HeadingPicker } from "@/ui/HeadingPicker";
+import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, ProgressBar, Row, Screen, colors, confirmDeleteAsync, fmtSeconds } from "@/ui";
 
 export default function DocumentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -155,7 +156,6 @@ function OutlineEditor({ documentId, locked, onSaved }: { documentId: string; lo
 
 function ModuleRow({ m, locked, headings, onChange, onRemove, onMove, onToggle }: { m: OutlineModule; locked: boolean; headings: Outline["headings"]; onChange: (m: OutlineModule) => void; onRemove: () => void; onMove: (d: -1 | 1) => void; onToggle: () => void }) {
   const [open, setOpen] = useState(false);
-  const heading = headings.find((h) => h.index === m.source_heading_index);
   return (
     <View style={{ borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, gap: 6 }}>
       <Row>
@@ -166,11 +166,14 @@ function ModuleRow({ m, locked, headings, onChange, onRemove, onMove, onToggle }
       </Row>
       {open ? (
         <>
-          <Label>Source heading{heading ? `: ${heading.title}` : m.source_heading_index === null ? ": none (uses pasted text)" : ""}</Label>
-          {!locked ? <Row>
-            <Chip label="none" selected={m.source_heading_index === null} onPress={() => onChange({ ...m, source_heading_index: null })} />
-            {headings.map((h) => <Chip key={h.index} label={`${"·".repeat(Math.max(0, h.level - 1))}${h.title}`.slice(0, 40)} selected={m.source_heading_index === h.index} onPress={() => onChange({ ...m, source_heading_index: h.index, source_text: undefined })} />)}
-          </Row> : null}
+          <HeadingPicker
+            headings={headings}
+            value={m.source_heading_index}
+            disabled={locked}
+            onChange={(index) => onChange(index === null
+              ? { ...m, source_heading_index: null }
+              : { ...m, source_heading_index: index, source_text: undefined })}
+          />
           <Input label="Source text (edit to override the mapped section)" multiline value={m.source_text ?? ""} onChangeText={(t) => onChange({ ...m, source_text: t })} />
           <Row>
             {!locked ? <><Button title="↑" small variant="ghost" onPress={() => onMove(-1)} /><Button title="↓" small variant="ghost" onPress={() => onMove(1)} /><Button title="Remove Module" small variant="ghost" onPress={onRemove} /></> : null}
