@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { admin } from "@/api/endpoints";
 import { useAsync } from "@/hooks/useAsync";
+import { useDebounced } from "@/hooks/useDebounced";
 import { Button, CardGrid, Chip, Empty, ErrorBanner, Input, ListRow, Loading, Notice, Screen } from "@/ui";
 
 export default function Users() {
@@ -18,7 +19,8 @@ export default function Users() {
   // No status filter: accounts are deleted rather than discontinued, so every
   // row in this list is active and an All / Active / Discontinued switch would
   // only ever return the same people three times over.
-  const list = useAsync(() => admin.users(kind, { q }), [kind, q]);
+  const query = useDebounced(q);
+  const list = useAsync(() => admin.users(kind, { q: query }), [kind, query]);
   return (
     <Screen
       refreshing={list.loading}

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { View } from "react-native";
 import { admin } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
+import { useDebounced } from "@/hooks/useDebounced";
 import { useFilterChoices } from "@/hooks/useChoices";
 import { Button, Card, CardGrid, Chip, Empty, ErrorBanner, H2, Input, ListRow, Loading, Notice, Row, Screen } from "@/ui";
 
@@ -21,7 +22,10 @@ export default function Subjects() {
   useEffect(() => {
     if (p.notice) { setNotice(String(p.notice)); router.setParams({ notice: "" } as never); }
   }, [p.notice, router]);
-  const list = useAsync(() => admin.subjects({ status, q }), [status, q]);
+  // Searching happens as the person types; the debounce keeps that to one
+  // request per pause rather than one per keystroke.
+  const query = useDebounced(q);
+  const list = useAsync(() => admin.subjects({ status, q: query }), [status, query]);
   const [name, setName] = useState(""); const [code, setCode] = useState("");
   const create = useAction(async () => {
     await admin.createSubject({ name, code });

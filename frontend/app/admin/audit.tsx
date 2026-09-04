@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { admin } from "@/api/endpoints";
 import type { AuditLog } from "@/api/types";
 import { useAsync } from "@/hooks/useAsync";
+import { useDebounced } from "@/hooks/useDebounced";
 import { Button, Card, Chip, Empty, ErrorBanner, Input, Loading, P, Row, Screen, colors, space } from "@/ui";
 
 /**
@@ -116,7 +117,8 @@ export default function Audit() {
   const [action, setAction] = useState("");
   const [actor, setActor] = useState("");
   const [page, setPage] = useState(1);
-  const q = useAsync(() => admin.auditLogs({ action, actor_email: actor, page }), [action, actor, page]);
+  const who = useDebounced(actor);
+  const q = useAsync(() => admin.auditLogs({ action, actor_email: who, page }), [action, who, page]);
   // The filter offers the actions actually present in the log, so nobody has
   // to know that publishing a book records "document.published".
   const known = useAsync(() => admin.auditActions(), []);

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 import { errorMessage } from "@/api/client";
+import { useDebounced } from "@/hooks/useDebounced";
 import { Button, Card, Empty, ErrorBanner, H2, Input, Loading, P, Row, colors, space } from "@/ui";
 
 export interface Enrollable { id: string; email: string; full_name: string; roll_number: string }
@@ -51,13 +52,11 @@ export function StudentPicker({
     }
   }, [search, subjectId]);
 
-  // Debounced: one request after typing stops, not one per keystroke. An empty
-  // box is a valid query here — it asks for the first page of candidates — so
-  // clearing the field refreshes the list instead of leaving stale matches.
-  useEffect(() => {
-    const timer = setTimeout(() => { void run(q.trim()); }, q.trim() ? 300 : 0);
-    return () => clearTimeout(timer);
-  }, [q, run]);
+  // One request after typing stops, not one per keystroke. An empty box is a
+  // valid query here — it asks for the first page of candidates — so clearing
+  // the field refreshes the list instead of leaving stale matches.
+  const query = useDebounced(q);
+  useEffect(() => { void run(query.trim()); }, [query, run]);
 
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const visibleIds = useMemo(() => results.map((r) => r.id), [results]);
