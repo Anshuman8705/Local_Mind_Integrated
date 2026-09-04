@@ -1,4 +1,5 @@
 """Tutor: teach, ask, remediate — all grounded in server-resolved module text."""
+import re
 import time
 
 from django.db import transaction
@@ -42,6 +43,15 @@ GROUNDING = (
     "4. Write in plain, simple English for a first-time learner.\n"
     "5. Output JSON only.\n"
 )
+
+
+# Small models sometimes write the schema field into the prose they return.
+# Nothing downstream should ever show a student "grounded=false".
+_LEAKED_FLAG = re.compile(r"\s*\b(grounded|source_reference)\s*[=:]\s*[\"']?(true|false)[\"']?\.?", re.IGNORECASE)
+
+
+def _clean_answer(text) -> str:
+    return _LEAKED_FLAG.sub("", str(text or "")).strip()
 
 
 def _module(student, module_id):
@@ -125,8 +135,9 @@ def ask(student, module_id, question, conversation_id=None, request=None):
     started = time.monotonic()
     result = gateway().generate(
         purpose="ask",
-        system_prompt=GROUNDING + "TASK: Answer the STUDENT QUESTION in a few sentences. Set grounded=true only when the answer comes "
-                                  "from the source; if the source does not cover it, answer that it is not covered and set grounded=false. "
+        system_prompt=GROUNDING + "TASK: Answer the STUDENT QUESTION in a few sentences using only the source. Set the grounded field "
+                                  "to true when the answer comes from the source and false when the source does not cover the question. "
+                                  "Never mention the grounded field in the answer text itself. "
                                   "Offer up to three short follow_up_suggestions the student could ask next about this source.",
         user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{trim_source(module.source_text)}\"\"\"\n\nRECENT CONVERSATION:\n{history_text}\n\nSTUDENT QUESTION:\n{question}",
         schema=ANSWER_SCHEMA, temperature=0.2)
@@ -137,8 +148,19 @@ def ask(student, module_id, question, conversation_id=None, request=None):
         audit.record(student, "tutor.ask_failed", module, {"error": result.error_code, "conversation": str(conv.id)}, request)
         raise AIUnavailable(details={"conversation_id": str(conv.id), "reason": result.error_code,
                                      "fallback": "The module text is available for reading while the tutor is offline."})
-    msg = Message.objects.create(conversation=conv, role="assistant", content=result.data["answer"], grounded=bool(result.data["grounded"]),
-                                 source_reference=result.data.get("source_reference", ""), model_name=result.model, latency_ms=latency)
+    grounded = bool(result.data["grounded"])
+    answer = _clean_answer(result.data.get("answer", ""))
+    if not grounded:
+        # The model's own wording for an off-topic question is unhelpful to a
+        # student ("The source text does not cover physics"), and a small model
+        # tends to spill the schema field into it as well. Replace it with a
+        # sentence that says what to do next.
+        answer = (f'This module is about "{module.title}", and its text does not cover that. '
+                  "Ask about something in this module, or open the Read tab to see what it covers. "
+                  "For anything else, your faculty is the right place to go.")
+    msg = Message.objects.create(conversation=conv, role="assistant", content=answer, grounded=grounded,
+                                 source_reference=result.data.get("source_reference", "") if grounded else "",
+                                 model_name=result.model, latency_ms=latency)
     audit.record(student, "tutor.ask", module, {"conversation": str(conv.id), "grounded": msg.grounded, "latency_ms": latency}, request)
     return conv, msg, result.data.get("follow_up_suggestions", [])
 

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { AppState, Platform, ScrollView, Text, View } from "react-native";
@@ -175,12 +176,23 @@ function AskTab({ moduleId }: { moduleId: string }) {
       >
         {restoring ? <Loading /> : null}
         {!restoring && messages.length === 0 ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
-        {messages.map((m) => (
-          <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "80%", backgroundColor: m.role === "user" ? colors.primary : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : colors.border }}>
-            <Text style={{ color: m.role === "user" ? colors.primaryText : colors.text, fontSize: 15, lineHeight: 21 }}>{m.content}</Text>
-            {m.role === "assistant" && m.source_reference ? <Text style={{ color: colors.muted, fontSize: 12, marginTop: 6 }}>Source: {m.source_reference}</Text> : null}
-          </View>
-        ))}
+        {messages.map((m) => {
+          // An answer the module could not support is guidance, not a reply,
+          // so it is styled as a note rather than dressed up as an answer.
+          const offTopic = m.role === "assistant" && m.grounded === false;
+          return (
+            <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "80%", backgroundColor: m.role === "user" ? colors.primary : offTopic ? colors.yellowTint : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : offTopic ? `${colors.warning}66` : colors.border }}>
+              {offTopic ? (
+                <Row style={{ gap: 6, marginBottom: 4 }}>
+                  <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
+                  <Text style={{ color: colors.warning, fontSize: 12, fontWeight: "700" }}>Outside this module</Text>
+                </Row>
+              ) : null}
+              <Text style={{ color: m.role === "user" ? colors.primaryText : colors.text, fontSize: 15, lineHeight: 21 }}>{m.content}</Text>
+              {m.role === "assistant" && m.source_reference ? <Text style={{ color: colors.muted, fontSize: 12, marginTop: 6 }}>Source: {m.source_reference}</Text> : null}
+            </View>
+          );
+        })}
         {ask.busy ? <Loading /> : null}
         {ask.error ? <Notice tone="warning" message={ask.error} /> : null}
         {suggestions.length ? <Row>{suggestions.map((s) => <Chip key={s} label={s} onPress={() => ask.run(s)} />)}</Row> : null}

@@ -83,3 +83,49 @@ class TutorTests(TestCase):
         self.assertEqual(len(res.data["items"]), 1)
         self.assertEqual(res.data["items"][0]["question"], MCQ2["question"])
         self.assertEqual(client_for(self.other).post(f"/api/student/quiz-attempts/{attempt}/remediation/").status_code, 404)
+
+
+class OffTopicAnswerTests(TestCase):
+    """A student asking about something the module does not cover should be
+    told what to do next, not handed the model's raw wording."""
+
+    def setUp(self):
+        self.faculty = make_faculty()
+        self.student = make_student()
+        self.subject = make_subject(code="OFFT")
+        assign(self.faculty, self.subject)
+        enroll(self.student, self.subject)
+        make_published_document(self.subject)
+        self.module = Module.objects.get(title="Process Management")
+
+    @patch("tutor.services.gateway")
+    def test_an_ungrounded_answer_is_replaced_with_guidance(self, gw):
+        gw.return_value.generate.return_value = AIResult(ok=True, model="m", data={
+            "answer": "The source text does not cover physics. grounded=false",
+            "grounded": False, "source_reference": "nothing", "follow_up_suggestions": [],
+        })
+        res = client_for(self.student).post(
+            f"/api/student/modules/{self.module.id}/ask/", {"question": "Explain gravity"}, format="json")
+
+        self.assertEqual(res.status_code, 201, res.content)
+        answer = res.data["message"]["content"]
+        self.assertNotIn("grounded", answer.lower())
+        self.assertIn("Process Management", answer)
+        self.assertIn("Read tab", answer)
+        self.assertFalse(res.data["message"]["grounded"])
+        # A reference to source the answer did not use would be misleading.
+        self.assertEqual(res.data["message"]["source_reference"], "")
+
+    @patch("tutor.services.gateway")
+    def test_a_grounded_answer_is_kept_but_stripped_of_leaked_fields(self, gw):
+        gw.return_value.generate.return_value = AIResult(ok=True, model="m", data={
+            "answer": "A process is a program in execution. grounded=true",
+            "grounded": True, "source_reference": "Processes are programs in execution.",
+            "follow_up_suggestions": [],
+        })
+        res = client_for(self.student).post(
+            f"/api/student/modules/{self.module.id}/ask/", {"question": "What is a process?"}, format="json")
+
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(res.data["message"]["content"], "A process is a program in execution.")
+        self.assertTrue(res.data["message"]["grounded"])
