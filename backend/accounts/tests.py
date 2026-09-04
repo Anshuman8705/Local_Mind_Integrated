@@ -343,3 +343,67 @@ class ImportTemplateTests(TestCase):
         self.assertIn("subject_codes", [c["name"] for c in res.data["columns"]])
         aliases = {c["name"]: c["aliases"] for c in res.data["columns"]}
         self.assertIn("full_name", aliases["name"])
+
+
+class ImportIgnoresUnknownColumnsTests(TestCase):
+    """A real institutional sheet carries columns this platform knows nothing
+    about. Those must be read past, not rejected."""
+
+    def setUp(self):
+        self.client = client_for(make_admin())
+
+    def _sheet(self, headers, rows):
+        from io import BytesIO
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
+        for r in rows:
+            ws.append(r)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        buf.name = "people.xlsx"
+        return buf
+
+    def test_columns_the_system_does_not_know_are_ignored(self):
+        from accounts.models import User
+
+        sheet = self._sheet(
+            ["Sr No", "name", "Guardian Name", "email", "Fees Paid", "roll_no", "Remarks"],
+            [[1, "Priya Kulkarni", "R Kulkarni", "priya@example.edu", "12000", "CS4750", "hostel"]],
+        )
+        res = self.client.post("/api/admin/students/import/", {"file": sheet}, format="multipart")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.data["created"], 1, res.data["errors"])
+        self.assertEqual(res.data["invalid"], 0)
+        user = User.objects.get(email="priya@example.edu")
+        self.assertEqual(user.full_name, "Priya Kulkarni")
+        # The alias was honoured and nothing from the unknown columns leaked in.
+        self.assertEqual(user.student_profile.roll_number, "CS4750")
+        self.assertNotIn("guardian_name", user.student_profile.__dict__)
+
+    def test_a_column_belonging_to_the_other_role_is_ignored_too(self):
+        from accounts.models import User
+
+        sheet = self._sheet(
+            ["name", "email", "department", "batch"],
+            [["Nisha Rao", "nisha@example.edu", "Physics", "2027"]],
+        )
+        res = self.client.post("/api/admin/students/import/", {"file": sheet}, format="multipart")
+
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.data["created"], 1, res.data["errors"])
+        # department belongs to faculty; batch is the student column that counts.
+        self.assertEqual(User.objects.get(email="nisha@example.edu").student_profile.batch, "2027")
+
+    def test_a_sheet_without_the_required_columns_is_refused_clearly(self):
+        sheet = self._sheet(["Sr No", "Guardian Name"], [[1, "R Kulkarni"]])
+        res = self.client.post("/api/admin/students/import/", {"file": sheet}, format="multipart")
+
+        self.assertEqual(res.status_code, 400, res.content)
+        self.assertEqual(res.data["error"]["code"], "MISSING_HEADERS")
+        self.assertEqual(sorted(res.data["error"]["details"]["missing"]), ["email", "name"])

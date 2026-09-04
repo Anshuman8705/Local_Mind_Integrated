@@ -56,6 +56,9 @@ export default function ImportUsers() {
   });
 
   const failures = (report?.errors ?? []).filter((e) => !(e.errors ?? []).every((x) => x === "User already exists."));
+  const required = (spec.data?.columns ?? []).filter((c) => c.required).map((c) => c.name);
+  const optional = (spec.data?.columns ?? []).filter((c) => !c.required).map((c) => c.name);
+  const aliasHint = (spec.data?.columns ?? []).flatMap((c) => c.aliases).slice(0, 3).join(", ");
 
   return (
     <Screen>
@@ -70,11 +73,10 @@ export default function ImportUsers() {
           ) : null}
         </Row>
 
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
-          <Card style={{ flex: 1, minWidth: 320 }}>
-            <H2 icon="cloud-upload-outline">Choose a file</H2>
-            <Pressable
-              onPress={pick}
+        <Card>
+          <H2 icon="cloud-upload-outline">Choose a file</H2>
+          <Pressable
+            onPress={pick}
               style={({ pressed }) => [{
                 borderWidth: 1, borderStyle: "dashed", borderColor: file ? colors.primary : colors.borderStrong,
                 borderRadius: radiusSm, padding: space.xl, alignItems: "center", gap: 6,
@@ -85,30 +87,22 @@ export default function ImportUsers() {
               <P small style={{ fontWeight: "600" }}>{file ? file.name : "Choose an .xlsx file"}</P>
               <P muted small>{file ? `${kb(file.size)} \u00b7 tap to change` : "Only .xlsx is accepted"}</P>
             </Pressable>
-            <ErrorBanner message={upload.error ?? download.error} />
-            <Button title={`Import ${who}`} icon="arrow-forward-outline" onPress={() => upload.run()} busy={upload.busy} disabled={!file} />
-            <Notice message="Every account is created with the platform's initial password and must change it at first login. A row whose email already exists is skipped, not overwritten." />
-          </Card>
+          <ErrorBanner message={upload.error ?? download.error} />
+          <Button title={`Import ${who}`} icon="arrow-forward-outline" onPress={() => upload.run()} busy={upload.busy} disabled={!file} />
+          <Notice message="Every account is created with the platform's initial password and must change it at first login. A row whose email already exists is skipped, not overwritten." />
+        </Card>
 
-          <Card style={{ flex: 1, minWidth: 340 }}>
-            <H2 icon="grid-outline">Columns the sheet needs</H2>
-            <P muted small>The first row is the header. Column order does not matter, and any column not listed here is ignored.</P>
-            {spec.loading && !spec.data ? <Loading /> : null}
-            <ErrorBanner message={spec.error} onRetry={spec.reload} />
-            <View style={{ gap: 2 }}>
-              {spec.data?.columns.map((c) => (
-                <View key={c.name} style={{ paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 2 }}>
-                  <Row style={{ justifyContent: "space-between" }}>
-                    <P small style={{ fontWeight: "700", flex: 1 }}>{c.name}</P>
-                    <P muted small style={{ width: 70 }}>{c.required ? "required" : "optional"}</P>
-                    <P muted small style={{ flex: 1, textAlign: "right" }}>{c.example}</P>
-                  </Row>
-                  {c.aliases.length ? <P muted small>also accepted: {c.aliases.join(", ")}</P> : null}
-                </View>
-              ))}
-            </View>
-          </Card>
-        </View>
+        {/* One line rather than a table: the template carries the exact
+            headers, so the page only has to say which are required. */}
+        <ErrorBanner message={spec.error} onRetry={spec.reload} />
+        {spec.loading && !spec.data ? <Loading /> : null}
+        {spec.data ? (
+          <P muted small>
+            <P small style={{ color: colors.text }}>Required:</P> {required.join(", ")}
+            {optional.length ? <> · <P small style={{ color: colors.text }}>Optional:</P> {optional.join(", ")}</> : null}
+            . Common variations such as {aliasHint} are understood, and any column the platform does not use is ignored.
+          </P>
+        ) : null}
 
         {report ? (
           <Card accent={colors.warning}>
