@@ -13,9 +13,14 @@ from documents.models import DocumentStatus
 from learning import services as learning
 from learning.models import Chapter, Module
 
-from ..models import Assessment, AssessmentAttempt, AssessmentKind, AssessmentStatus, AttemptStatus, Generator
+from ..models import Assessment, AssessmentAttempt, AssessmentKind, AssessmentStatus, AttemptStatus, Generator, ResultsRelease
 from .evaluation import evaluate_subjective
 from .generation import generate_questions, normalize_questions
+
+
+# Fields a caller may set directly on create, generate or update.
+RELEASE_FIELDS = ("instructions", "max_attempts", "time_limit_minutes", "available_from", "due_at",
+                  "results_release", "results_release_at")
 
 
 # ---------- scoping ----------
@@ -33,12 +38,22 @@ def student_visible(student):
     qs = Assessment.objects.filter(status=AssessmentStatus.PUBLISHED).filter(
         models_q_module_or_chapter(open_modules)
     ).exclude(available_from__gt=now)
+    # A selection quiz asks about every module it was written from, so one
+    # locked module hides the whole quiz. Expressed as: drop any selection
+    # that has a source module the student cannot open.
+    incomplete = Assessment.objects.filter(
+        kind=AssessmentKind.SELECTION,
+        source_modules__in=Module.objects.exclude(pk__in=open_modules.values("pk")),
+    ).values("pk")
+    qs = qs.exclude(pk__in=incomplete)
     return qs.select_related("module", "chapter", "subject").distinct()
 
 
 def models_q_module_or_chapter(open_modules):
     from django.db.models import Q
-    return Q(module__in=open_modules) | Q(module__isnull=True, chapter__modules__in=open_modules)
+    return (Q(module__in=open_modules)
+            | Q(module__isnull=True, chapter__modules__in=open_modules)
+            | Q(kind=AssessmentKind.SELECTION, source_modules__in=open_modules))
 
 
 def _require_manage(actor, subject):
@@ -46,57 +61,101 @@ def _require_manage(actor, subject):
         raise Forbidden("You do not manage this subject.", code="SUBJECT_NOT_ASSIGNED")
 
 
-def _target(actor, module_id=None, chapter_id=None):
+def _target(actor, module_id=None, chapter_id=None, module_ids=None):
+    """Resolve what a quiz is written from.
+
+    Three shapes, in the order they are checked: a set of chosen modules
+    (`module_ids`), one module, or one chapter. A selection keeps `chapter`
+    set when every chosen module shares one, so existing chapter-scoped
+    queries and analytics still find it, and null when it spans chapters.
+
+    Returns (subject, chapter, module, source_text, title, kind, modules).
+    """
     from academics.models import Subject
     subjects = Subject.objects.visible_to(actor)
+    if module_ids:
+        ids = list(dict.fromkeys(module_ids))
+        modules = list(Module.objects.select_related("chapter__document__subject")
+                       .filter(pk__in=ids, chapter__document__subject__in=subjects))
+        if len(modules) != len(ids):
+            raise NotFound("Module not found.")
+        if len({m.chapter.document.subject_id for m in modules}) != 1:
+            raise ValidationFailed("Every module must belong to the same subject.", code="INVALID_SELECTION")
+        modules.sort(key=lambda m: (m.chapter.order, m.order))
+        if len(modules) == 1:
+            m = modules[0]
+            return m.chapter.document.subject, m.chapter, m, m.source_text, m.title, AssessmentKind.MODULE, [m]
+        chapters = {m.chapter_id for m in modules}
+        chapter = modules[0].chapter if len(chapters) == 1 else None
+        text = "\n\n".join(m.source_text for m in modules if m.source_text)
+        if not text.strip():
+            raise ValidationFailed("None of the chosen modules has source text.", code="NO_SOURCE")
+        title = chapter.title if chapter else f"{len(modules)} modules"
+        return modules[0].chapter.document.subject, chapter, None, text, title, AssessmentKind.SELECTION, modules
     if module_id:
         try:
             module = Module.objects.select_related("chapter__document__subject").get(pk=module_id, chapter__document__subject__in=subjects)
         except (Module.DoesNotExist, ValueError):
             raise NotFound("Module not found.")
-        return module.chapter.document.subject, module.chapter, module, module.source_text, module.title, AssessmentKind.MODULE
+        return module.chapter.document.subject, module.chapter, module, module.source_text, module.title, AssessmentKind.MODULE, [module]
     if chapter_id:
         try:
             chapter = Chapter.objects.select_related("document__subject").prefetch_related("modules").get(pk=chapter_id, document__subject__in=subjects)
         except (Chapter.DoesNotExist, ValueError):
             raise NotFound("Chapter not found.")
         text = "\n\n".join(m.source_text for m in chapter.modules.all() if m.source_text) or chapter.source_text
-        return chapter.document.subject, chapter, None, text, chapter.title, AssessmentKind.CHAPTER
-    raise ValidationFailed("module_id or chapter_id is required.", code="TARGET_REQUIRED")
+        return chapter.document.subject, chapter, None, text, chapter.title, AssessmentKind.CHAPTER, list(chapter.modules.all())
+    raise ValidationFailed("module_ids, module_id or chapter_id is required.", code="TARGET_REQUIRED")
 
 
 def _source_text(assessment):
+    if assessment.kind == AssessmentKind.SELECTION:
+        chosen = assessment.source_modules.all().order_by("chapter__order", "order")
+        text = "\n\n".join(m.source_text for m in chosen if m.source_text)
+        if text.strip():
+            return text
     if assessment.module:
         return assessment.module.source_text
     chapter = assessment.chapter
+    if chapter is None:
+        return ""
     return "\n\n".join(m.source_text for m in chapter.modules.all() if m.source_text) or chapter.source_text
 
 
 # ---------- authoring ----------
 
 @transaction.atomic
-def create_manual(actor, *, module_id=None, chapter_id=None, title=None, questions, pass_percentage=None, request=None, **options):
-    subject, chapter, module, _, default_title, kind = _target(actor, module_id, chapter_id)
+def create_manual(actor, *, module_id=None, chapter_id=None, module_ids=None, title=None, questions, pass_percentage=None, request=None, **options):
+    subject, chapter, module, _, default_title, kind, modules = _target(actor, module_id, chapter_id, module_ids)
     _require_manage(actor, subject)
     assessment = Assessment.objects.create(
         subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],
         questions=normalize_questions(questions), generator=Generator.MANUAL, created_by=actor,
         pass_percentage=pass_percentage or settings.LOCALMIND["DEFAULT_PASS_PERCENTAGE"],
-        content_version_at_creation=chapter.document.content_version,
-        **{k: v for k, v in options.items() if k in ("instructions", "max_attempts", "time_limit_minutes", "available_from", "due_at")},
+        content_version_at_creation=(chapter or modules[0].chapter).document.content_version,
+        **{k: v for k, v in options.items() if k in RELEASE_FIELDS},
     )
-    audit.record(actor, "quiz.created", assessment, {"kind": kind, "questions": len(assessment.questions)}, request)
+    if kind == AssessmentKind.SELECTION:
+        assessment.source_modules.set(modules)
+    audit.record(actor, "quiz.created", assessment, {"kind": kind, "questions": len(assessment.questions), "modules": len(modules)}, request)
     return assessment
 
 
-def generate(actor, *, module_id=None, chapter_id=None, num_mcqs=6, num_subjective=0, title=None, pass_percentage=None, request=None, **options):
+def generate(actor, *, module_id=None, chapter_id=None, module_ids=None, num_mcqs=6, num_subjective=0, title=None, pass_percentage=None, request=None, **options):
     """The question-generation model call runs outside any transaction so the
     SQLite write lock is not held for the length of the call."""
-    subject, chapter, module, source_text, default_title, kind = _target(actor, module_id, chapter_id)
+    subject, chapter, module, source_text, default_title, kind, modules = _target(actor, module_id, chapter_id, module_ids)
     _require_manage(actor, subject)
     if num_mcqs + num_subjective <= 0 or num_mcqs > 30 or num_subjective > 10:
         raise ValidationFailed("Ask for 1-30 MCQs and 0-10 subjective questions.", code="INVALID_COUNTS")
-    previous = [q["question"] for a in Assessment.objects.filter(module=module, chapter=chapter).order_by("-created_at")[:5] for q in a.questions]
+    # Exclude what the last few quizzes on the same material already asked. A
+    # selection is matched on its modules, so regenerating over the same set
+    # does not repeat itself.
+    if kind == AssessmentKind.SELECTION:
+        recent = Assessment.objects.filter(source_modules__in=modules).distinct().order_by("-created_at")[:5]
+    else:
+        recent = Assessment.objects.filter(module=module, chapter=chapter).order_by("-created_at")[:5]
+    previous = [q["question"] for a in recent for q in a.questions]
     # Passing the module lets generation sample evenly across the whole of it
     # rather than truncating at the front, so questions cover the end too.
     questions, generator, error = generate_questions(source_text, default_title, num_mcqs, num_subjective, previous, module=module)
@@ -105,9 +164,11 @@ def generate(actor, *, module_id=None, chapter_id=None, num_mcqs=6, num_subjecti
             subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],
             questions=questions, generator=generator, created_by=actor,
             pass_percentage=pass_percentage or settings.LOCALMIND["DEFAULT_PASS_PERCENTAGE"],
-            content_version_at_creation=chapter.document.content_version,
-            **{k: v for k, v in options.items() if k in ("instructions", "max_attempts", "time_limit_minutes", "available_from", "due_at")},
+            content_version_at_creation=(chapter or modules[0].chapter).document.content_version,
+            **{k: v for k, v in options.items() if k in RELEASE_FIELDS},
         )
+        if kind == AssessmentKind.SELECTION:
+            assessment.source_modules.set(modules)
         audit.record(actor, "quiz.generated", assessment, {"generator": generator, "ai_error": error[:200], "questions": len(questions)}, request)
     return assessment, error
 
@@ -118,7 +179,8 @@ def update(actor, assessment, *, questions=None, request=None, **fields):
     if assessment.status in (AssessmentStatus.SUPERSEDED,):
         raise Conflict("This version has been superseded.", code="SUPERSEDED")
     changes = {}
-    for key in ("title", "instructions", "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at"):
+    for key in ("title", "instructions", "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at",
+                "results_release", "results_release_at"):
         if key in fields and fields[key] is not None and fields[key] != getattr(assessment, key):
             changes[key] = True
             setattr(assessment, key, fields[key])
@@ -319,6 +381,63 @@ def submit_attempt(student, attempt_id, submitted_answers, request=None):
         audit.record(student, "quiz.attempt_submitted", attempt, {"percentage": attempt.percentage, "status": attempt.status,
                                                                    "time_taken_seconds": attempt.time_taken_seconds}, request)
     return attempt
+
+
+def withhold(attempt):
+    """The student's view of their own attempt when results are not released.
+
+    Grading is unchanged and the row keeps everything; this only decides what
+    leaves the server. The student still learns the attempt was received and
+    when, which is what stops them wondering whether it saved.
+    """
+    return {
+        "id": str(attempt.id),
+        "assessment_id": str(attempt.assessment_id),
+        "attempt_number": attempt.attempt_number,
+        "status": "submitted",
+        "results_released": False,
+        "submitted_at": attempt.submitted_at,
+        "time_taken_seconds": attempt.time_taken_seconds,
+        "score": None, "percentage": None, "passed": None, "detailed_results": [],
+        "results_release": attempt.assessment.results_release,
+        "results_release_at": attempt.assessment.results_release_at,
+    }
+
+
+@transaction.atomic
+def release_results(actor, assessment, attempt_id=None, request=None):
+    """Release held results, for the whole quiz or one attempt.
+
+    Releasing is one-way. There is no un-release, because a student who has
+    seen their score cannot unsee it, and a control that pretends otherwise
+    would be a lie.
+    """
+    _require_manage(actor, assessment.subject)
+    now = timezone.now()
+    if attempt_id:
+        try:
+            attempt = assessment.attempts.get(pk=attempt_id)
+        except (AssessmentAttempt.DoesNotExist, ValueError):
+            raise NotFound("Attempt not found.")
+        attempt.results_released_at = now
+        attempt.save(update_fields=["results_released_at", "updated_at"])
+        audit.record(actor, "quiz.results_released", assessment, {"attempt": str(attempt.id)}, request)
+        return 1
+    count = assessment.attempts.filter(results_released_at__isnull=True).update(results_released_at=now)
+    assessment.results_released_at = now
+    assessment.results_released_by = actor
+    assessment.save(update_fields=["results_released_at", "results_released_by", "updated_at"])
+    audit.record(actor, "quiz.results_released", assessment, {"attempts": count, "scope": "all"}, request)
+    return count
+
+
+def pending_release_count(assessment):
+    """Submitted attempts whose owner cannot yet see the outcome."""
+    if assessment.results_release == ResultsRelease.IMMEDIATE or assessment.results_released_at:
+        return 0
+    if assessment.results_release == ResultsRelease.SCHEDULED and assessment.results_release_at and timezone.now() >= assessment.results_release_at:
+        return 0
+    return assessment.attempts.filter(results_released_at__isnull=True).exclude(status=AttemptStatus.IN_PROGRESS).count()
 
 
 def re_evaluate(actor, attempt, overrides=None, request=None):

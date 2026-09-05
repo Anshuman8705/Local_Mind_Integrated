@@ -324,3 +324,138 @@ class QuizDeleteTests(TestCase):
         res = client_for(other).delete(f"/api/faculty/quizzes/{quiz.id}/")
         self.assertIn(res.status_code, (403, 404))
         self.assertTrue(Assessment.objects.filter(pk=quiz.pk).exists())
+
+
+class ModuleSelectionQuizTests(Base):
+    """A quiz written from several chosen modules rather than one target."""
+
+    def setUp(self):
+        super().setUp()
+        self.other = Module.objects.get(title="Memory Management")
+
+    def test_manual_quiz_from_two_modules(self):
+        res = self.fc.post("/api/faculty/quizzes/", {
+            "module_ids": [str(self.module.id), str(self.other.id)],
+            "questions": [MCQ, MCQ2],
+        }, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        quiz = Assessment.objects.get(pk=res.data["id"])
+        self.assertEqual(quiz.kind, "selection")
+        self.assertEqual(quiz.source_modules.count(), 2)
+        # Both share a chapter, so the chapter stays set for scoped queries.
+        self.assertEqual(quiz.chapter_id, self.module.chapter_id)
+        self.assertIsNone(quiz.module_id)
+        self.assertCountEqual(res.data["source_module_ids"], [str(self.module.id), str(self.other.id)])
+
+    def test_one_module_id_in_the_list_is_still_a_module_quiz(self):
+        res = self.fc.post("/api/faculty/quizzes/", {"module_ids": [str(self.module.id)], "questions": [MCQ]}, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        quiz = Assessment.objects.get(pk=res.data["id"])
+        self.assertEqual(quiz.kind, "module")
+        self.assertEqual(quiz.module_id, self.module.id)
+
+    def test_selection_source_text_covers_every_chosen_module(self):
+        from .services.assessments import _source_text
+        res = self.fc.post("/api/faculty/quizzes/", {
+            "module_ids": [str(self.module.id), str(self.other.id)], "questions": [MCQ]}, format="json")
+        quiz = Assessment.objects.get(pk=res.data["id"])
+        text = _source_text(quiz)
+        self.assertIn("scheduler", text)
+        self.assertIn("Paging", text)
+
+    def test_unknown_module_is_not_found(self):
+        import uuid
+        res = self.fc.post("/api/faculty/quizzes/", {"module_ids": [str(uuid.uuid4())], "questions": [MCQ]}, format="json")
+        self.assertEqual(res.status_code, 404)
+
+    def test_selection_hidden_until_every_module_is_open(self):
+        res = self.fc.post("/api/faculty/quizzes/", {
+            "module_ids": [str(self.module.id), str(self.other.id)], "questions": [MCQ]}, format="json")
+        quiz = Assessment.objects.get(pk=res.data["id"])
+        self.fc.post(f"/api/faculty/quizzes/{quiz.id}/status/", {"status": "published"}, format="json")
+        listed = self.sc.get("/api/student/quizzes/")
+        self.assertEqual(listed.status_code, 200)
+        ids = [q["id"] for q in listed.data]
+        self.assertIn(str(quiz.id), ids)
+        # Lock one of the two: the quiz asks about material the student no longer has.
+        self.fc.post(f"/api/faculty/modules/{self.other.id}/availability/", {"availability": "locked"}, format="json")
+        listed = self.sc.get("/api/student/quizzes/")
+        self.assertNotIn(str(quiz.id), [q["id"] for q in listed.data])
+
+
+class ResultsReleaseTests(Base):
+    """Whether a student may see the outcome of their own attempt."""
+
+    def _attempt(self, quiz, answers=None):
+        start = self.sc.post(f"/api/student/quizzes/{quiz.id}/attempts/", {}, format="json")
+        self.assertIn(start.status_code, (200, 201), start.content)
+        attempt_id = start.data["attempt_id"]
+        qs = start.data["questions"]
+        answers = answers or {q["id"]: "A" for q in qs}
+        return attempt_id, self.sc.post(f"/api/student/quiz-attempts/{attempt_id}/submit/", {"submitted_answers": answers}, format="json")
+
+    def test_immediate_is_the_default_and_shows_the_score(self):
+        quiz = self.manual_quiz()
+        _, res = self._attempt(quiz)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertIsNotNone(res.data["score"])
+        self.assertTrue(res.data["detailed_results"])
+
+    def test_held_results_are_withheld_on_submit_and_on_read(self):
+        quiz = self.manual_quiz(results_release="held")
+        attempt_id, res = self._attempt(quiz)
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertIsNone(res.data["score"])
+        self.assertEqual(res.data["detailed_results"], [])
+        self.assertFalse(res.data["results_released"])
+        # Reading it back later says the same.
+        again = self.sc.get(f"/api/student/quiz-attempts/{attempt_id}/")
+        self.assertIsNone(again.data["score"])
+        # The grading itself happened; only the response withholds it.
+        self.assertIsNotNone(AssessmentAttempt.objects.get(pk=attempt_id).score)
+
+    def test_faculty_release_makes_the_result_visible(self):
+        quiz = self.manual_quiz(results_release="held")
+        attempt_id, _ = self._attempt(quiz)
+        detail = self.fc.get(f"/api/faculty/quizzes/{quiz.id}/")
+        self.assertEqual(detail.data["pending_release_count"], 1)
+        rel = self.fc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {}, format="json")
+        self.assertEqual(rel.status_code, 200, rel.content)
+        self.assertEqual(rel.data["released"], 1)
+        self.assertEqual(rel.data["pending"], 0)
+        after = self.sc.get(f"/api/student/quiz-attempts/{attempt_id}/")
+        self.assertIsNotNone(after.data["score"])
+
+    def test_one_attempt_can_be_released_on_its_own(self):
+        quiz = self.manual_quiz(results_release="held")
+        attempt_id, _ = self._attempt(quiz)
+        rel = self.fc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {"attempt_id": attempt_id}, format="json")
+        self.assertEqual(rel.data["released"], 1)
+        self.assertIsNotNone(self.sc.get(f"/api/student/quiz-attempts/{attempt_id}/").data["score"])
+
+    def test_scheduled_release_opens_by_itself_once_the_time_passes(self):
+        later = timezone.now() + timedelta(hours=2)
+        quiz = self.manual_quiz(results_release="scheduled", results_release_at=later.isoformat())
+        attempt_id, res = self._attempt(quiz)
+        self.assertIsNone(res.data["score"])
+        # No scheduler runs: moving the time into the past is enough.
+        Assessment.objects.filter(pk=quiz.id).update(results_release_at=timezone.now() - timedelta(minutes=1))
+        self.assertIsNotNone(self.sc.get(f"/api/student/quiz-attempts/{attempt_id}/").data["score"])
+
+    def test_scheduled_without_a_time_is_refused(self):
+        res = self.fc.post("/api/faculty/quizzes/", {
+            "module_id": str(self.module.id), "questions": [MCQ], "results_release": "scheduled"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+    def test_scores_list_hides_held_results(self):
+        quiz = self.manual_quiz(results_release="held")
+        self._attempt(quiz)
+        scores = self.sc.get("/api/student/scores/")
+        self.assertEqual(scores.status_code, 200)
+        self.assertIsNone(scores.data["results"][0]["score"])
+
+    def test_a_student_cannot_release_their_own_results(self):
+        quiz = self.manual_quiz(results_release="held")
+        self._attempt(quiz)
+        res = self.sc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {}, format="json")
+        self.assertIn(res.status_code, (403, 404))

@@ -7,6 +7,22 @@ from core.models import TimeStampedUUIDModel
 class AssessmentKind(models.TextChoices):
     MODULE = "module", "Module quiz"
     CHAPTER = "chapter", "Chapter quiz"
+    SELECTION = "selection", "Several chosen modules"
+
+
+class ResultsRelease(models.TextChoices):
+    """When a student may see the outcome of their own attempt.
+
+    IMMEDIATE keeps the original behaviour: the result is part of the submit
+    response. HELD shows the student only that the attempt was received until
+    faculty release it. SCHEDULED releases without anyone pressing anything,
+    the first time the student loads the page after the chosen moment, which
+    needs no scheduler in a deployment that may have none.
+    """
+
+    IMMEDIATE = "immediate", "Shown on submission"
+    HELD = "held", "Held until released"
+    SCHEDULED = "scheduled", "Released at a set time"
 
 
 class AssessmentStatus(models.TextChoices):
@@ -29,7 +45,11 @@ class Assessment(TimeStampedUUIDModel):
     subject = models.ForeignKey("academics.Subject", on_delete=models.PROTECT, related_name="assessments")
     chapter = models.ForeignKey("learning.Chapter", null=True, blank=True, on_delete=models.PROTECT, related_name="assessments")
     module = models.ForeignKey("learning.Module", null=True, blank=True, on_delete=models.PROTECT, related_name="assessments")
-    kind = models.CharField(max_length=10, choices=AssessmentKind.choices)
+    # A quiz drawn from several chosen modules keeps `chapter` set to the
+    # chapter they share (null when they span chapters) and lists every module
+    # it was written from here. Module and chapter quizzes leave it empty.
+    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assessments")
+    kind = models.CharField(max_length=12, choices=AssessmentKind.choices)
     title = models.CharField(max_length=300)
     instructions = models.TextField(blank=True)
     questions = models.JSONField(default=list)  # private: includes correct answers and rubrics
@@ -46,6 +66,10 @@ class Assessment(TimeStampedUUIDModel):
     published_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     content_version_at_creation = models.PositiveIntegerField(default=1)
+    results_release = models.CharField(max_length=12, choices=ResultsRelease.choices, default=ResultsRelease.IMMEDIATE)
+    results_release_at = models.DateTimeField(null=True, blank=True)   # used by SCHEDULED
+    results_released_at = models.DateTimeField(null=True, blank=True)  # set when faculty release the whole quiz
+    results_released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
         ordering = ["-created_at"]
@@ -85,6 +109,8 @@ class AssessmentAttempt(TimeStampedUUIDModel):
     evaluation_notes = models.JSONField(default=dict, blank=True)
     evaluated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     evaluated_at = models.DateTimeField(null=True, blank=True)
+    # Set when this one attempt is released ahead of the rest.
+    results_released_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-started_at"]
@@ -93,3 +119,17 @@ class AssessmentAttempt(TimeStampedUUIDModel):
 
     def __str__(self):
         return f"{self.student.email} attempt {self.attempt_number} on {self.assessment.title}"
+
+    @property
+    def results_visible(self):
+        """Whether the student who owns this attempt may see its outcome."""
+        from django.utils import timezone
+
+        mode = self.assessment.results_release
+        if mode == ResultsRelease.IMMEDIATE:
+            return True
+        if self.results_released_at or self.assessment.results_released_at:
+            return True
+        if mode == ResultsRelease.SCHEDULED and self.assessment.results_release_at:
+            return timezone.now() >= self.assessment.results_release_at
+        return False

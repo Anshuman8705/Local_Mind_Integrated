@@ -7,15 +7,25 @@ class AssignmentSerializer(serializers.ModelSerializer):
     chapter_id = serializers.UUIDField(read_only=True)
     module_id = serializers.UUIDField(read_only=True)
     submission_count = serializers.SerializerMethodField()
+    source_module_ids = serializers.SerializerMethodField()
+    pending_release_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Assignment
         fields = ["id", "subject_id", "chapter_id", "module_id", "title", "description", "instructions", "rubric", "max_score",
                   "generator", "status", "available_from", "due_at", "allow_late", "allow_resubmission", "published_at",
-                  "closed_at", "submission_count", "created_at", "updated_at"]
+                  "closed_at", "submission_count", "created_at", "updated_at",
+                  "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count"]
 
     def get_submission_count(self, a) -> int:
         return a.submissions.count()
+
+    def get_source_module_ids(self, a) -> list:
+        return [str(m.id) for m in a.source_modules.all()]
+
+    def get_pending_release_count(self, a) -> int:
+        from . import services as svc
+        return svc.pending_release_count(a)
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -46,6 +56,14 @@ class _Fields(serializers.Serializer):
     due_at = serializers.DateTimeField(required=False, allow_null=True)
     allow_late = serializers.BooleanField(required=False)
     allow_resubmission = serializers.BooleanField(required=False)
+    results_release = serializers.ChoiceField(choices=["immediate", "held", "scheduled"], required=False)
+    results_release_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate(self, data):
+        data = super().validate(data)
+        if data.get("results_release") == "scheduled" and not data.get("results_release_at"):
+            raise serializers.ValidationError({"results_release_at": "A release time is required when results are scheduled."})
+        return data
 
 
 class CreateSerializer(_Fields):
@@ -53,11 +71,13 @@ class CreateSerializer(_Fields):
     subject_id = serializers.UUIDField(required=False)
     chapter_id = serializers.UUIDField(required=False)
     module_id = serializers.UUIDField(required=False)
+    module_ids = serializers.ListField(child=serializers.UUIDField(), required=False, min_length=1, max_length=40)
 
 
 class GenerateSerializer(_Fields):
     chapter_id = serializers.UUIDField(required=False)
     module_id = serializers.UUIDField(required=False)
+    module_ids = serializers.ListField(child=serializers.UUIDField(), required=False, min_length=1, max_length=40)
     focus = serializers.CharField(required=False, allow_blank=True, max_length=300)
 
 
@@ -75,3 +95,9 @@ class EvaluateSerializer(serializers.Serializer):
     feedback = serializers.CharField(required=False, allow_blank=True)
     rubric_scores = serializers.ListField(child=serializers.DictField(), required=False)
     status = serializers.ChoiceField(choices=["evaluated", "returned"], default="evaluated")
+
+
+class ReleaseResultsSerializer(serializers.Serializer):
+    """Release every held submission, or one named submission."""
+
+    submission_id = serializers.UUIDField(required=False)

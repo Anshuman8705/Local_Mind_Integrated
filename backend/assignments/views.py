@@ -9,8 +9,8 @@ from core.utils import get_or_404
 from . import services as svc
 from .models import AssignmentSubmission
 from .serializers import (
-    AssignmentSerializer, CreateSerializer, EvaluateSerializer, GenerateSerializer, StatusSerializer, SubmissionSerializer,
-    SubmitSerializer, _Fields,
+    AssignmentSerializer, CreateSerializer, EvaluateSerializer, GenerateSerializer, ReleaseResultsSerializer,
+    StatusSerializer, SubmissionSerializer, SubmitSerializer, _Fields,
 )
 
 
@@ -97,6 +97,19 @@ class SubmissionEvaluateView(APIView):
         return Response(SubmissionSerializer(svc.evaluate(request.user, sub, request=request, **s.validated_data)).data)
 
 
+class AssignmentReleaseResultsView(APIView):
+    """Release held marks: the whole assignment, or one submission."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def post(self, request, assignment_id):
+        a = get_or_404(svc.manageable(request.user), pk=assignment_id)
+        s = ReleaseResultsSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        released = svc.release_results(request.user, a, s.validated_data.get("submission_id"), request)
+        return Response({"released": released, "pending": svc.pending_release_count(a)})
+
+
 class StudentAssignmentListView(APIView):
     permission_classes = [IsStudent]
 
@@ -112,7 +125,10 @@ class StudentAssignmentListView(APIView):
         for a in qs:
             row = {k: v for k, v in AssignmentSerializer(a).data.items() if k != "submission_count"}
             latest = subs.get(a.id)
-            row["my_submission"] = SubmissionSerializer(latest).data if latest else None
+            row["my_submission"] = (
+                (SubmissionSerializer(latest).data if latest.results_visible else svc.withhold_submission(latest))
+                if latest else None
+            )
             out.append(row)
         return Response(out)
 
@@ -124,12 +140,20 @@ class StudentSubmitView(APIView):
         s = SubmitSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         sub = svc.submit(request.user, assignment_id, request=request, **s.validated_data)
-        return Response(SubmissionSerializer(sub).data, status=status.HTTP_201_CREATED)
+        data = SubmissionSerializer(sub).data if sub.results_visible else svc.withhold_submission(sub)
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class StudentSubmissionsView(ListAPIView):
+    """Own submissions, with score and feedback withheld until released."""
+
     permission_classes = [IsStudent]
     serializer_class = SubmissionSerializer
+
+    def list(self, request, *args, **kwargs):
+        page = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
+        rows = [SubmissionSerializer(x).data if x.results_visible else svc.withhold_submission(x) for x in page]
+        return self.get_paginated_response(rows)
 
     def get_queryset(self):
         return AssignmentSubmission.objects.filter(student=self.request.user).select_related("assignment", "student")

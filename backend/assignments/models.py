@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+from assessments.models import ResultsRelease
 from core.models import TimeStampedUUIDModel
 
 
@@ -14,6 +15,9 @@ class Assignment(TimeStampedUUIDModel):
     subject = models.ForeignKey("academics.Subject", on_delete=models.PROTECT, related_name="assignments")
     chapter = models.ForeignKey("learning.Chapter", null=True, blank=True, on_delete=models.PROTECT, related_name="assignments")
     module = models.ForeignKey("learning.Module", null=True, blank=True, on_delete=models.PROTECT, related_name="assignments")
+    # Every module the brief and rubric were drafted from, when the faculty
+    # member chose a set rather than one module or a whole chapter.
+    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assignments")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
@@ -28,6 +32,10 @@ class Assignment(TimeStampedUUIDModel):
     allow_resubmission = models.BooleanField(default=False)
     published_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    results_release = models.CharField(max_length=12, choices=ResultsRelease.choices, default=ResultsRelease.IMMEDIATE)
+    results_release_at = models.DateTimeField(null=True, blank=True)
+    results_released_at = models.DateTimeField(null=True, blank=True)
+    results_released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
         ordering = ["-created_at"]
@@ -57,6 +65,7 @@ class AssignmentSubmission(TimeStampedUUIDModel):
     rubric_scores = models.JSONField(default=list, blank=True)
     evaluated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     evaluated_at = models.DateTimeField(null=True, blank=True)
+    results_released_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-submitted_at"]
@@ -64,3 +73,17 @@ class AssignmentSubmission(TimeStampedUUIDModel):
 
     def __str__(self):
         return f"{self.student.email} -> {self.assignment.title} #{self.attempt_number}"
+
+    @property
+    def results_visible(self):
+        """Whether the student may see the score and feedback on this one."""
+        from django.utils import timezone
+
+        mode = self.assignment.results_release
+        if mode == ResultsRelease.IMMEDIATE:
+            return True
+        if self.results_released_at or self.assignment.results_released_at:
+            return True
+        if mode == ResultsRelease.SCHEDULED and self.assignment.results_release_at:
+            return timezone.now() >= self.assignment.results_release_at
+        return False

@@ -36,7 +36,9 @@ export type DocumentStatus = "uploaded" | "processing" | "under_review" | "ready
 export interface Document {
   id: string; title: string; original_name: string; subject_id: string; subject_code?: string; status: DocumentStatus;
   file_type: string; file_size?: number; error_message?: string; content_version: number;
-  chapter_count?: number; module_count?: number; missing_source_modules?: number; outline_source?: string;
+  chapter_count?: number; module_count?: number; outline_source?: string;
+  /** Ids of the modules with no source text. The detail endpoint returns a list, not a count. */
+  missing_source_modules?: string[];
   uploaded_by_name?: string; created_at: string; published_at?: string | null;
   processing_started_at?: string | null;
   /** Present only while a processing run is in flight. */
@@ -61,6 +63,12 @@ export interface Quiz {
   chapter_id: string | null; status: "draft" | "published" | "closed" | "superseded"; generator: "ai" | "fallback" | "manual";
   pass_percentage: number; max_attempts: number; time_limit_minutes: number | null; available_from: string | null; due_at: string | null;
   version: number; question_count?: number; attempt_count?: number; questions?: Question[];
+  /** Modules the questions were written from, when the quiz targets a chosen set. */
+  source_module_ids?: string[];
+  results_release?: "immediate" | "held" | "scheduled";
+  results_release_at?: string | null;
+  results_released_at?: string | null;
+  pending_release_count?: number;
   attempts_used?: number; best_percentage?: number | null; passed?: boolean | null; created_by_name?: string; created_at: string;
 }
 export interface DetailedResult {
@@ -72,6 +80,8 @@ export interface Attempt {
   status: "in_progress" | "submitted" | "pending_evaluation" | "evaluated"; started_at: string; submitted_at: string | null;
   time_taken_seconds: number; score: number | null; total_questions: number; percentage: number | null; passed: boolean | null;
   detailed_results: DetailedResult[];
+  /** Set once this attempt's result has been released to the student. */
+  results_released_at?: string | null;
 }
 export interface StartAttempt { attempt_id: string; attempt_number: number; started_at: string; resumed: boolean; time_limit_minutes: number | null; questions: Question[] }
 
@@ -81,6 +91,12 @@ export interface Assignment {
   rubric: RubricItem[]; max_score: number; generator: string; status: "draft" | "published" | "closed";
   available_from: string | null; due_at: string | null; allow_late: boolean; allow_resubmission: boolean;
   submission_count?: number; my_submission?: Submission | null; created_at: string;
+  /** Modules the brief and rubric were drafted from, when a set was chosen. */
+  source_module_ids?: string[];
+  results_release?: "immediate" | "held" | "scheduled";
+  results_release_at?: string | null;
+  results_released_at?: string | null;
+  pending_release_count?: number;
 }
 export interface Submission {
   id: string; assignment_id: string; assignment_title?: string; student_id?: string; student_email?: string; attempt_number: number;

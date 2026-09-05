@@ -32,7 +32,7 @@ export default function Books() {
       {/* A book in flight shows the stage it has reached instead of counts it
           does not have yet. */}
       <CardGrid>
-      {q.data?.map((d) => <ListRow key={d.id} title={d.title} subtitle={d.status === "processing" && d.progress ? `${d.progress.detail} · step ${d.progress.step} of ${d.progress.total_steps}` : `${d.subject_code ?? ""} · ${d.chapter_count ?? 0} chapters · ${d.module_count ?? 0} modules${d.missing_source_modules ? ` · ${d.missing_source_modules} missing source` : ""}`} badge={d.status} onPress={() => router.push(`/manage/document/${d.id}`)} />)}
+      {q.data?.map((d) => <ListRow key={d.id} title={d.title} subtitle={d.status === "processing" && d.progress ? `${d.progress.detail} · step ${d.progress.step} of ${d.progress.total_steps}` : `${d.subject_code ?? ""} · ${d.chapter_count ?? 0} chapters · ${d.module_count ?? 0} modules${d.missing_source_modules?.length ? ` · ${d.missing_source_modules.length} missing source` : ""}`} badge={d.status} onPress={() => router.push(`/manage/document/${d.id}`)} />)}
       </CardGrid>
     </Screen>
   );

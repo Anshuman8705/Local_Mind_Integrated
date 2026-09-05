@@ -28,8 +28,12 @@ def student_visible(student):
     open_modules = learning.student_module_queryset(student).filter(availability="open")
     return (Assignment.objects.filter(status=AssignmentStatus.PUBLISHED)
             .filter(Q(module__in=open_modules) | Q(module__isnull=True, chapter__modules__in=open_modules)
+                    | Q(source_modules__in=open_modules)
                     | Q(module__isnull=True, chapter__isnull=True, subject__in=Subject.objects.visible_to(student)))
             .exclude(available_from__gt=now).select_related("subject", "module", "chapter").distinct())
+
+
+OPTION_FIELDS = ("available_from", "due_at", "allow_late", "allow_resubmission", "results_release", "results_release_at")
 
 
 def _require_manage(actor, subject):
@@ -37,27 +41,50 @@ def _require_manage(actor, subject):
         raise Forbidden("You do not manage this subject.", code="SUBJECT_NOT_ASSIGNED")
 
 
-def _target(actor, subject_id=None, module_id=None, chapter_id=None):
+def _target(actor, subject_id=None, module_id=None, chapter_id=None, module_ids=None):
+    """Resolve what an assignment is drafted from.
+
+    Mirrors the quiz resolver: a chosen set of modules first, then one module,
+    one chapter, or a whole subject. Returns
+    (subject, chapter, module, source_text, title, modules).
+    """
     subjects = Subject.objects.visible_to(actor)
+    if module_ids:
+        ids = list(dict.fromkeys(module_ids))
+        modules = list(Module.objects.select_related("chapter__document__subject")
+                       .filter(pk__in=ids, chapter__document__subject__in=subjects))
+        if len(modules) != len(ids):
+            raise NotFound("Module not found.")
+        if len({m.chapter.document.subject_id for m in modules}) != 1:
+            raise ValidationFailed("Every module must belong to the same subject.", code="INVALID_SELECTION")
+        modules.sort(key=lambda m: (m.chapter.order, m.order))
+        if len(modules) == 1:
+            m = modules[0]
+            return m.chapter.document.subject, m.chapter, m, m.source_text, m.title, [m]
+        chapters = {m.chapter_id for m in modules}
+        chapter = modules[0].chapter if len(chapters) == 1 else None
+        text = "\n\n".join(m.source_text for m in modules if m.source_text)
+        title = chapter.title if chapter else f"{len(modules)} modules"
+        return modules[0].chapter.document.subject, chapter, None, text, title, modules
     if module_id:
         try:
             m = Module.objects.select_related("chapter__document__subject").get(pk=module_id, chapter__document__subject__in=subjects)
         except (Module.DoesNotExist, ValueError):
             raise NotFound("Module not found.")
-        return m.chapter.document.subject, m.chapter, m, m.source_text, m.title
+        return m.chapter.document.subject, m.chapter, m, m.source_text, m.title, [m]
     if chapter_id:
         try:
             c = Chapter.objects.select_related("document__subject").prefetch_related("modules").get(pk=chapter_id, document__subject__in=subjects)
         except (Chapter.DoesNotExist, ValueError):
             raise NotFound("Chapter not found.")
-        return c.document.subject, c, None, "\n\n".join(m.source_text for m in c.modules.all()), c.title
+        return c.document.subject, c, None, "\n\n".join(m.source_text for m in c.modules.all()), c.title, list(c.modules.all())
     if subject_id:
         try:
             s = subjects.get(pk=subject_id)
         except (Subject.DoesNotExist, ValueError):
             raise NotFound("Subject not found.")
-        return s, None, None, "", s.name
-    raise ValidationFailed("subject_id, chapter_id or module_id is required.", code="TARGET_REQUIRED")
+        return s, None, None, "", s.name, []
+    raise ValidationFailed("module_ids, subject_id, chapter_id or module_id is required.", code="TARGET_REQUIRED")
 
 
 def _normalize_rubric(rubric, max_score):
@@ -78,23 +105,25 @@ def _normalize_rubric(rubric, max_score):
 
 
 @transaction.atomic
-def create(actor, *, subject_id=None, module_id=None, chapter_id=None, request=None, **fields):
-    subject, chapter, module, _, _ = _target(actor, subject_id, module_id, chapter_id)
+def create(actor, *, subject_id=None, module_id=None, chapter_id=None, module_ids=None, request=None, **fields):
+    subject, chapter, module, _, _, modules = _target(actor, subject_id, module_id, chapter_id, module_ids)
     _require_manage(actor, subject)
     max_score = fields.get("max_score") or 100
     a = Assignment.objects.create(subject=subject, chapter=chapter, module=module, created_by=actor,
                                   title=fields["title"][:300], description=fields.get("description", ""),
                                   instructions=fields.get("instructions", ""), max_score=max_score,
                                   rubric=_normalize_rubric(fields.get("rubric"), max_score),
-                                  **{k: v for k, v in fields.items() if k in ("available_from", "due_at", "allow_late", "allow_resubmission")})
-    audit.record(actor, "assignment.created", a, {}, request)
+                                  **{k: v for k, v in fields.items() if k in OPTION_FIELDS})
+    if module_ids and len(modules) > 1:
+        a.source_modules.set(modules)
+    audit.record(actor, "assignment.created", a, {"modules": len(modules)}, request)
     return a
 
 
-def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, **fields):
+def generate(actor, *, module_id=None, chapter_id=None, module_ids=None, focus="", request=None, **fields):
     """The model call runs outside any transaction (see tutor.teach); only the
     final insert is atomic."""
-    subject, chapter, module, source, name = _target(actor, None, module_id, chapter_id)
+    subject, chapter, module, source, name, modules = _target(actor, None, module_id, chapter_id, module_ids)
     _require_manage(actor, subject)
     if not source.strip():
         raise ValidationFailed("Cannot generate an assignment without source text.", code="NO_SOURCE")
@@ -123,7 +152,9 @@ def generate(actor, *, module_id=None, chapter_id=None, focus="", request=None, 
         a = Assignment.objects.create(subject=subject, chapter=chapter, module=module, created_by=actor, generator=generator,
                                       title=data["title"][:300], description=data["description"], instructions=data["instructions"],
                                       rubric=_normalize_rubric(data["rubric"], max_score), max_score=max_score,
-                                      **{k: v for k, v in fields.items() if k in ("available_from", "due_at", "allow_late", "allow_resubmission")})
+                                      **{k: v for k, v in fields.items() if k in OPTION_FIELDS})
+        if module_ids and len(modules) > 1:
+            a.source_modules.set(modules)
         audit.record(actor, "assignment.generated", a, {"generator": generator, "warning": warning[:200]}, request)
     return a, warning
 
@@ -133,7 +164,8 @@ def update(actor, a, request=None, **fields):
     _require_manage(actor, a.subject)
     changes = {}
     max_score = fields.get("max_score", a.max_score)
-    for key in ("title", "description", "instructions", "max_score", "available_from", "due_at", "allow_late", "allow_resubmission"):
+    for key in ("title", "description", "instructions", "max_score", "available_from", "due_at", "allow_late",
+                "allow_resubmission", "results_release", "results_release_at"):
         if key in fields and fields[key] is not None and fields[key] != getattr(a, key):
             setattr(a, key, fields[key]); changes[key] = True
     if "rubric" in fields and fields["rubric"] is not None:
@@ -226,3 +258,54 @@ def evaluate(actor, sub, score=None, feedback="", rubric_scores=None, status=Sub
     sub.save()
     audit.record(actor, "assignment.evaluated", sub, {"score": sub.score, "status": status}, request)
     return sub
+
+
+def withhold_submission(sub):
+    """What the student sees while results on their submission are held."""
+    return {
+        "id": str(sub.id),
+        "assignment_id": str(sub.assignment_id),
+        "attempt_number": sub.attempt_number,
+        "status": "submitted",
+        "results_released": False,
+        "submitted_at": sub.submitted_at,
+        "is_late": sub.is_late,
+        "content": sub.content,
+        "score": None, "feedback": "", "rubric_scores": [],
+        "results_release": sub.assignment.results_release,
+        "results_release_at": sub.assignment.results_release_at,
+    }
+
+
+@transaction.atomic
+def release_results(actor, assignment, submission_id=None, request=None):
+    """Release held marks, for the whole assignment or one submission."""
+    _require_manage(actor, assignment.subject)
+    now = timezone.now()
+    if submission_id:
+        try:
+            sub = assignment.submissions.get(pk=submission_id)
+        except (AssignmentSubmission.DoesNotExist, ValueError):
+            raise NotFound("Submission not found.")
+        sub.results_released_at = now
+        sub.save(update_fields=["results_released_at", "updated_at"])
+        audit.record(actor, "assignment.results_released", assignment, {"submission": str(sub.id)}, request)
+        return 1
+    count = assignment.submissions.filter(results_released_at__isnull=True).update(results_released_at=now)
+    assignment.results_released_at = now
+    assignment.results_released_by = actor
+    assignment.save(update_fields=["results_released_at", "results_released_by", "updated_at"])
+    audit.record(actor, "assignment.results_released", assignment, {"submissions": count, "scope": "all"}, request)
+    return count
+
+
+def pending_release_count(assignment):
+    """Marked submissions whose owner cannot yet see the score."""
+    from assessments.models import ResultsRelease
+
+    if assignment.results_release == ResultsRelease.IMMEDIATE or assignment.results_released_at:
+        return 0
+    if (assignment.results_release == ResultsRelease.SCHEDULED and assignment.results_release_at
+            and timezone.now() >= assignment.results_release_at):
+        return 0
+    return assignment.submissions.filter(results_released_at__isnull=True).count()

@@ -74,6 +74,8 @@ export const manage = {
   quizStatus: (id: string, status: string) => api<T.Quiz>(`/faculty/quizzes/${id}/status/`, { method: "POST", body: { status } }),
   deleteQuiz: (id: string) => api<{ detail: string }>(`/faculty/quizzes/${id}/`, { method: "DELETE" }),
   quizAttempts: (id: string) => api<T.Paginated<T.Attempt>>(`/faculty/quizzes/${id}/attempts/`).then(list),
+  releaseQuizResults: (id: string, attemptId?: string) =>
+    api<{ released: number; pending: number }>(`/faculty/quizzes/${id}/release-results/`, { method: "POST", body: attemptId ? { attempt_id: attemptId } : {} }),
   reEvaluate: (attemptId: string, overrides?: Record<string, { score_awarded: number; feedback?: string }>) =>
     api<T.Attempt>(`/faculty/quiz-attempts/${attemptId}/re-evaluate/`, { method: "POST", body: overrides ? { overrides } : {} }),
 
@@ -85,6 +87,8 @@ export const manage = {
   assignmentStatus: (id: string, status: string) => api<T.Assignment>(`/faculty/assignments/${id}/status/`, { method: "POST", body: { status } }),
   deleteAssignment: (id: string) => api<{ detail: string }>(`/faculty/assignments/${id}/`, { method: "DELETE" }),
   submissions: (id: string) => api<T.Paginated<T.Submission>>(`/faculty/assignments/${id}/submissions/`).then(list),
+  releaseAssignmentResults: (id: string, submissionId?: string) =>
+    api<{ released: number; pending: number }>(`/faculty/assignments/${id}/release-results/`, { method: "POST", body: submissionId ? { submission_id: submissionId } : {} }),
   evaluate: (submissionId: string, body: { score: number; feedback: string }) => api<T.Submission>(`/faculty/assignment-submissions/${submissionId}/evaluate/`, { method: "POST", body }),
 
   overview: () => api<any>("/faculty/analytics/overview/"),

@@ -9,7 +9,7 @@ from core.utils import get_or_404
 from .models import AssessmentAttempt, AttemptStatus
 from .serializers import (
     AssessmentSerializer, AssessmentStudentSerializer, AttemptSerializer, CreateManualSerializer, GenerateSerializer,
-    ReEvaluateSerializer, StatusSerializer, SubmitSerializer, UpdateSerializer,
+    ReEvaluateSerializer, ReleaseResultsSerializer, StatusSerializer, SubmitSerializer, UpdateSerializer,
 )
 from .services import assessments as svc
 
@@ -46,6 +46,19 @@ class QuizGenerateView(APIView):
         data = AssessmentSerializer(a).data
         data["generation_warning"] = error or None
         return Response(data, status=status.HTTP_201_CREATED)
+
+
+class QuizReleaseResultsView(APIView):
+    """Release held results: the whole quiz, or one attempt with attempt_id."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def post(self, request, quiz_id):
+        quiz = get_or_404(svc.manageable(request.user), pk=quiz_id)
+        s = ReleaseResultsSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        released = svc.release_results(request.user, quiz, s.validated_data.get("attempt_id"), request)
+        return Response({"released": released, "pending": svc.pending_release_count(quiz)})
 
 
 class QuizDetailView(APIView):
@@ -144,6 +157,8 @@ class StudentSubmitAttemptView(APIView):
         s = SubmitSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         attempt = svc.submit_attempt(request.user, attempt_id, s.validated_data["submitted_answers"], request)
+        if not attempt.results_visible:
+            return Response(svc.withhold(attempt))
         return Response(AttemptSerializer(attempt).data)
 
 
@@ -152,12 +167,22 @@ class StudentAttemptView(APIView):
 
     def get(self, request, attempt_id):
         attempt = get_or_404(AssessmentAttempt.objects.filter(student=request.user).select_related("assessment", "student"), pk=attempt_id)
+        if not attempt.results_visible:
+            return Response(svc.withhold(attempt))
         return Response(AttemptSerializer(attempt).data)
 
 
 class StudentScoresView(ListAPIView):
+    """Own scores. Attempts whose results are held are listed as submitted
+    with no score, so the student knows the work is in and nothing more."""
+
     permission_classes = [IsStudent]
     serializer_class = AttemptSerializer
+
+    def list(self, request, *args, **kwargs):
+        page = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
+        rows = [AttemptSerializer(a).data if a.results_visible else svc.withhold(a) for a in page]
+        return self.get_paginated_response(rows)
 
     def get_queryset(self):
         qs = AssessmentAttempt.objects.filter(student=self.request.user).exclude(status=AttemptStatus.IN_PROGRESS).select_related("assessment", "student")

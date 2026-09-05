@@ -5,7 +5,7 @@ import type {
   BottomTabNavigationOptions,
 } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Modal,
   Platform,
@@ -23,6 +23,36 @@ import { Gradient } from "./Gradient";
 import { bp, colors, space } from "./theme";
 
 export type IconName = keyof typeof Ionicons.glyphMap;
+
+/* ------------------------------------------------------------------ */
+/* Navigation drawer state                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The workspace screens want the full width of the window: an outline tree
+ * beside an editor, or a list beside a quiz, does not fit next to a permanent
+ * 264px rail on a laptop. The rail is therefore a drawer the hamburger opens,
+ * and choosing a destination closes it again.
+ *
+ * It is a module-level store rather than a context because the header and the
+ * tab bar are rendered by React Navigation as separate trees, so there is no
+ * common ancestor to hold the state.
+ */
+let navOpen = false;
+const navListeners = new Set<() => void>();
+const emitNav = () => navListeners.forEach((fn) => fn());
+export const openNav = () => { navOpen = true; emitNav(); };
+export const closeNav = () => { navOpen = false; emitNav(); };
+
+export function useNavDrawer() {
+  const [open, setOpen] = useState(navOpen);
+  useEffect(() => {
+    const listener = () => setOpen(navOpen);
+    navListeners.add(listener);
+    return () => { navListeners.delete(listener); };
+  }, []);
+  return open;
+}
 
 /**
  * Options the LocalMind shell reads but React Navigation does not declare.
@@ -123,9 +153,28 @@ function renderIcon(
 export function ShellTabBar(props: BottomTabBarProps & { meta: PortalMeta }) {
   const { width } = useWindowDimensions();
   return width >= bp.desktop ? (
-    <Sidebar {...props} />
+    <SidebarDrawer {...props} />
   ) : (
     <BottomBar {...props} />
+  );
+}
+
+/**
+ * The rail, shown over the page when the hamburger is pressed. It occupies no
+ * layout space when closed, so the workspace runs edge to edge.
+ */
+function SidebarDrawer(props: BottomTabBarProps & { meta: PortalMeta }) {
+  const open = useNavDrawer();
+  if (!open) return <View style={{ width: 0 }} />;
+  return (
+    <Modal transparent animationType="fade" visible onRequestClose={closeNav}>
+      <TouchableWithoutFeedback onPress={closeNav}>
+        <View style={s.drawerScrim} />
+      </TouchableWithoutFeedback>
+      <View style={s.drawerPanel}>
+        <Sidebar {...props} onNavigate={closeNav} />
+      </View>
+    </Modal>
   );
 }
 
@@ -134,7 +183,8 @@ function Sidebar({
   descriptors,
   navigation,
   meta,
-}: BottomTabBarProps & { meta: PortalMeta }) {
+  onNavigate,
+}: BottomTabBarProps & { meta: PortalMeta; onNavigate?: () => void }) {
   const routes = visibleRoutes({
     state,
     descriptors,
@@ -161,6 +211,7 @@ function Sidebar({
             });
             if (!focused && !e.defaultPrevented)
               navigation.navigate(route.name, route.params);
+            onNavigate?.();
           };
           return (
             <Pressable
@@ -190,7 +241,7 @@ function Sidebar({
       <View style={{ flex: 1 }} />
       {meta.crossLink ? (
         <Pressable
-          onPress={meta.crossLink.onPress}
+          onPress={() => { meta.crossLink!.onPress(); onNavigate?.(); }}
           style={({ pressed }) => [s.crossLink, pressed && { opacity: 0.8 }]}
         >
           <Ionicons
@@ -331,6 +382,17 @@ export function ShellHeader({
       ]}
     >
       <View style={s.topLeft}>
+        {desktop ? (
+          <Pressable
+            onPress={openNav}
+            accessibilityRole="button"
+            accessibilityLabel="Open navigation"
+            hitSlop={8}
+            style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.65 }]}
+          >
+            <Ionicons name="menu" size={22} color={colors.muted} />
+          </Pressable>
+        ) : null}
         {canBack ? (
           <Pressable
             onPress={goBack}
@@ -550,8 +612,17 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
 
+  drawerScrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "#00000088" },
+  drawerPanel: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 264,
+  },
   sidebar: {
     width: 264,
+    flex: 1,
     borderRightWidth: 1,
     borderRightColor: colors.border,
     paddingHorizontal: 18,
