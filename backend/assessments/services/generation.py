@@ -144,14 +144,9 @@ def normalize_questions(raw_questions):
 
 # ----------------------------------------------------------------- wording --
 
-_DOC_WORDS = r"(?:source\s+text|source\s+material|textbook\s+section|source|text|passage|excerpt|paragraph|module)"
-_DOC_REF = rf"(?:the|this|that|given|above|provided|following)\s+(?:(?:given|above|provided|following|study)\s+)?{_DOC_WORDS}"
-# "According to the source text, ..." and friends at the start.
-_LEAD_IN = re.compile(rf"^\s*(?:according\s+to|based\s+on|as\s+(?:stated|described|mentioned|explained|given|shown)\s+in|in|from|per)\s+{_DOC_REF}\s*[,:-]?\s*", re.I)
-# "... mentioned in the passage", "... as per the text" anywhere.
-_INLINE = re.compile(rf"\s*,?\s*(?:(?:as\s+)?(?:stated|described|mentioned|explained|given|shown|discussed|defined|listed)\s+)?(?:in|by|from|within|according\s+to|as\s+per|based\s+on)\s+{_DOC_REF}\b", re.I)
-# Anything still pointing at the material after repair.
-_META = re.compile(rf"\b(?:source\s+text|source\s+material|{_DOC_REF}|the\s+author|the\s+writer)\b", re.I)
+from ai.wording import META as _META
+from ai.wording import repair as _repair
+from ai.wording import tidy as _tidy
 
 _OPTION_PREFIX = re.compile(r"^\s*(?:\(?[A-Da-d1-4][).:\-]\s+|option\s+[A-Da-d1-4]\s*[:.\-)]\s*)")
 _BAD_OPTION = re.compile(
@@ -161,23 +156,6 @@ _BAD_OPTION = re.compile(
     re.I,
 )
 _LETTER_REF = re.compile(r"\b(?i:option|choice|answer)\s*\(?([A-D])\)?(?![A-Za-z])")
-
-
-def _tidy(text: str) -> str:
-    text = " ".join(str(text or "").split())
-    text = re.sub(r"\s+([?.!,;:])", r"\1", text)
-    text = re.sub(r"^[,;:\-\s]+", "", text)
-    return text[:1].upper() + text[1:] if text else text
-
-
-_SAYS = re.compile(rf"\b{_DOC_REF}\s+(?:says|states|mentions|explains|describes|notes|tells\s+us|shows)(?:\s+that)?\s*", re.I)
-
-
-def _repair(text: str) -> str:
-    text = _LEAD_IN.sub("", str(text or ""))
-    text = _SAYS.sub("", text)
-    text = _INLINE.sub("", text)
-    return _tidy(text)
 
 
 def clean_question_text(text: str) -> str | None:
@@ -353,7 +331,7 @@ class _Collector:
         return True
 
 
-def _ask(module, title, source, n_mcq, n_subjective, avoid, collector, seed, depth=0):
+def _ask(module, title, source, n_mcq, n_subjective, avoid, collector, seed, depth=0, background=False):
     """One model call for n questions about one module slice. Splits itself
     when the reply is cut off. Returns (mcqs added, subjective added)."""
     if n_mcq + n_subjective <= 0 or collector.fatal:
@@ -379,16 +357,16 @@ def _ask(module, title, source, n_mcq, n_subjective, avoid, collector, seed, dep
     result = gateway().generate(task="quiz", system_prompt=SYSTEM_PROMPT, user_prompt=user,
                                 schema={"type": "object", "properties": props, "required": required},
                                 source_chars=len(source), retrieved_chunks=1, max_tokens=min(max_tokens, budget.max_tokens),
-                                retry_codes=RETRY_ON)
+                                retry_codes=RETRY_ON, background=background)
     if result.failed:
         if result.error_code == "truncated" and depth < 2:
             if n_mcq + n_subjective > 1:
                 # Half the questions per call, instead of the identical request again.
                 m1, s1 = (n_mcq + 1) // 2, (n_subjective + 1) // 2 if not n_mcq else 0
-                a = _ask(module, title, source, m1, s1, avoid, collector, seed + "a", depth + 1)
-                b = _ask(module, title, source, n_mcq - m1, n_subjective - s1, avoid, collector, seed + "b", depth + 1)
+                a = _ask(module, title, source, m1, s1, avoid, collector, seed + "a", depth + 1, background)
+                b = _ask(module, title, source, n_mcq - m1, n_subjective - s1, avoid, collector, seed + "b", depth + 1, background)
                 return a[0] + b[0], a[1] + b[1]
-            return _ask(module, title, source, n_mcq, n_subjective, avoid, collector, seed + "t", depth + 2)
+            return _ask(module, title, source, n_mcq, n_subjective, avoid, collector, seed + "t", depth + 2, background)
         collector.errors.append(result.error_code or "error")
         if result.error_code in FATAL:
             collector.fatal = True
@@ -418,7 +396,7 @@ def _avoid_for(module, previous_questions_full):
     return out[:12]
 
 
-def generate_questions(modules, num_mcqs=6, num_subjective=0, previous_questions=None):
+def generate_questions(modules, num_mcqs=6, num_subjective=0, previous_questions=None, background=False):
     """Write questions from exactly these modules. Returns (questions, note).
 
     `previous_questions` are full question dicts from recent quizzes on the
@@ -448,7 +426,7 @@ def generate_questions(modules, num_mcqs=6, num_subjective=0, previous_questions
                 n_m = min(MCQ_BATCH, math.ceil(left_m / (batches - b))) if left_m else 0
                 n_s = min(SUBJECTIVE_BATCH, math.ceil(left_s / (batches - b))) if left_s else 0
                 avoid = _avoid_for(module, previous_questions) + [q["question"] for q in collector.questions if q.get("source_module_id") == str(module.pk)]
-                got_m, got_s = _ask(module, module.title, slices[b], n_m, n_s, avoid, collector, f"{module.pk}:{b}")
+                got_m, got_s = _ask(module, module.title, slices[b], n_m, n_s, avoid, collector, f"{module.pk}:{b}", background=background)
                 done = per_module.setdefault(module.pk, [0, 0])
                 done[0] += got_m
                 done[1] += got_s

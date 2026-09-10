@@ -233,6 +233,8 @@ def set_status(actor, assessment, status, request=None):
         if assessment.generator == Generator.FALLBACK and any("Placeholder distractor" in o["text"] for q in assessment.questions if q["type"] == "mcq" for o in q["options"]):
             raise Conflict("Fallback-generated questions contain placeholders; edit them before publishing.", code="PLACEHOLDER_QUESTIONS")
         assessment.status, assessment.published_at = status, timezone.now()
+        # Publishing by hand is the review a held automatic quiz was waiting for.
+        assessment.held_for_review, assessment.hold_reason = False, ""
         learning.open_target_modules(actor, assessment, "quiz.published", request)
     elif status == AssessmentStatus.CLOSED:
         if assessment.status != AssessmentStatus.PUBLISHED:
@@ -258,6 +260,8 @@ def delete(actor, assessment, request=None):
     attempts = AssessmentAttempt.objects.filter(assessment=assessment).count()
     AssessmentAttempt.objects.filter(assessment=assessment).delete()
     audit.record(actor, "quiz.deleted", assessment, {"title": label, "subject": assessment.subject.code, "attempts": attempts}, request)
+    from .auto_quiz import dismiss_for
+    dismiss_for(assessment)
     assessment.delete()
     return label
 

@@ -1,5 +1,7 @@
 import Constants from "expo-constants";
 import { Platform } from "react-native";
+import { configurePing, reportOffline, reportOnline } from "@/offline/connectivity";
+import { readEntry, writeEntry } from "@/offline/store";
 import { getItem, migrateLegacy, setItem } from "./storage";
 
 export class ApiError extends Error {
@@ -63,10 +65,27 @@ async function refreshTokens(): Promise<boolean> {
   return refreshing;
 }
 
-interface Options { method?: string; body?: unknown; form?: FormData; query?: Record<string, string | number | undefined | null>; auth?: boolean; retry?: boolean }
+interface Options {
+  method?: string; body?: unknown; form?: FormData; query?: Record<string, string | number | undefined | null>; auth?: boolean; retry?: boolean;
+  /** Store a successful GET and answer it from the device when offline. Defaults to on for student reads. */
+  cacheOffline?: boolean;
+}
+
+// Student reads that work offline: answered from the device store when the
+// server cannot be reached (see src/offline). Writes never are.
+const OFFLINE_READABLE = /^\/(student\/|auth\/me\/$)/;
+configurePing(`${BASE_URL}/api/health/`);
+
+/** The key the server's offline bundle uses: path plus sorted, non-empty query. */
+export function offlineKey(path: string, query?: Options["query"]): string {
+  const items = Object.entries(query ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => [k, String(v)] as const).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return items.length ? `${path}?${items.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}` : path;
+}
 
 export async function api<T = unknown>(path: string, opts: Options = {}): Promise<T> {
   const { method = "GET", body, form, query, auth = true, retry = true } = opts;
+  const cacheable = method === "GET" && (opts.cacheOffline ?? OFFLINE_READABLE.test(path));
   let url = `${BASE_URL}/api${path}`;
   if (query) {
     const qs = Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
@@ -77,7 +96,17 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
   if (auth && tokens?.access) headers.Authorization = `Bearer ${tokens.access}`;
   let res: Response;
   try { res = await fetch(url, { method, headers, body: form ?? (body !== undefined ? JSON.stringify(body) : undefined) }); }
-  catch { throw new ApiError(0, "NETWORK", "Cannot reach the server. Check your connection and the API address."); }
+  catch {
+    reportOffline();
+    if (cacheable) {
+      const saved = await readEntry<T>(offlineKey(path, query));
+      if (saved !== undefined) return saved;
+    }
+    throw new ApiError(0, "NETWORK", method === "GET"
+      ? "You are offline and this page has not been saved on this device yet. It will load once the server can be reached."
+      : "You are offline. This needs a connection to the LocalMind server; try again when you are back online.");
+  }
+  reportOnline();
   if (res.status === 401 && auth && retry && tokens) {
     if (await refreshTokens()) return api<T>(path, { ...opts, retry: false });
     await tokenStore.set(null); onSessionLost?.();
@@ -90,6 +119,7 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
     const err = data?.error ?? {};
     throw new ApiError(res.status, err.code ?? "HTTP_ERROR", err.message ?? `Request failed (${res.status})`, err.details);
   }
+  if (cacheable) void writeEntry(offlineKey(path, query), data);
   return data as T;
 }
 

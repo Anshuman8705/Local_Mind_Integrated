@@ -74,7 +74,7 @@ export default function QuizWorkspace({ initialId, startNew }: { initialId?: str
           key={z.id}
           title={z.title}
           meta={`${z.status} · ${z.question_count ?? 0} questions · ${z.attempt_count ?? 0} attempts`}
-          warn={releaseSummary(z.results_release ?? "immediate", z.results_release_at, z.pending_release_count)}
+          warn={z.held_for_review ? "held for review" : releaseSummary(z.results_release ?? "immediate", z.results_release_at, z.pending_release_count)}
           selected={selected === z.id}
           onPress={() => setSelected(z.id)}
         />
@@ -223,6 +223,9 @@ function QuizDetail({ id, onChanged, onDeleted, onBack, note }: { id: string; on
         ) : null}
         {d.generator === "fallback" ? <Notice tone="warning" message="This older draft was produced without the AI. Placeholder options are marked; rewrite them before publishing." /> : null}
         {note ? <Notice tone="warning" message={`Generated with notes: ${note}. Review the questions, add any that are missing by hand, or generate again.`} /> : null}
+        {d.held_for_review ? (
+          <Notice tone="warning" message={`Held for review: ${d.hold_reason || "the AI monitor flagged this automatic quiz"}. Students do not see it. Check the questions against the module (the incident is under AI Monitor), fix anything wrong, then publish it; or mark the incident a false positive to release it as it is.`} />
+        ) : null}
 
         {tab === "questions" ? <QuestionsTab quiz={d} editable={editable} edit={edit} editQ={editQ} /> : null}
         {tab === "sources" ? <SourcesTab quiz={d} /> : null}

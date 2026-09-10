@@ -116,7 +116,10 @@ def wait_for_lessons(document_id, tok, timeout=None):
     while time.time() < deadline:
         _, detail = call("GET", f"/faculty/documents/{document_id}/", tok=tok)
         summary = detail.get("lessons") or {}
-        if summary and summary.get("pending", 0) + summary.get("generating", 0) == 0:
+        quizzes = detail.get("auto_quizzes") or {}
+        busy = lambda s: s.get("pending", 0) + s.get("generating", 0)
+        if summary and busy(summary) == 0 and busy(quizzes) == 0:
+            summary = dict(summary, quizzes=quizzes)
             return summary
         time.sleep(1)
     return summary
@@ -442,6 +445,8 @@ locked_mod = chapter2["modules"][0]
 # their own calls.
 lesson_counts = wait_for_lessons(doc, ftok)
 check("every lesson generated in the background", lesson_counts.get("total", 0) > 0 and lesson_counts.get("ready") == lesson_counts.get("total"), lesson_counts)
+quiz_counts = lesson_counts.get("quizzes") or {}
+check("an automatic quiz generated for every module", quiz_counts.get("total", 0) > 0 and quiz_counts.get("ready") == quiz_counts.get("total"), quiz_counts)
 s, d = call("GET", f"/faculty/modules/{open_mod['id']}/lesson/", tok=ftok)
 check("faculty can preview a module's lesson", s == 200 and d.get("status") == "ready" and (d.get("lesson") or {}).get("sections"), d)
 
@@ -532,6 +537,17 @@ s, d = call("POST", "/auth/heartbeat/", {"session_id": ssess}, tok=stok)
 check("student heartbeat", s == 200, d)
 
 section("Student: tutor")
+s, d = call("GET", f"/student/quizzes/?module={open_mod['id']}", tok=stok)
+auto = [q for q in rows(d) if q.get("auto_generated")]
+check("the open module's automatic quiz is live for its students", s == 200 and len(auto) == 1 and auto[0]["title"].startswith("Quiz: "), rows(d))
+s, d = call("GET", f"/student/quizzes/?module={locked_mod['id']}", tok=stok)
+check("a locked module's quiz is not shown", s in (200, 403, 404) and not [q for q in rows(d) if isinstance(d, (list, dict)) and q.get("auto_generated")], d)
+s, d = call("GET", "/student/offline/", tok=stok)
+entries = d.get("entries", {}) if s == 200 else {}
+check("offline bundle holds the open module, its lesson and its quizzes",
+      s == 200 and f"/student/modules/{open_mod['id']}/" in entries and (entries.get(f"/student/modules/{open_mod['id']}/teach/") or {}).get("status") == "ready"
+      and f"/student/quizzes/?module={open_mod['id']}" in entries, sorted(entries)[:8])
+check("offline bundle leaves out locked modules", f"/student/modules/{locked_mod['id']}/" not in entries, sorted(entries)[:8])
 calls_before = fake_calls()
 s, d = call("GET", f"/student/modules/{open_mod['id']}/teach/", tok=stok)
 check("lesson is served from storage", s == 200 and d.get("status") == "ready" and d.get("generator") == "ai" and (d.get("lesson") or {}).get("sections"), d)

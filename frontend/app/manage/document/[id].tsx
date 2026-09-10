@@ -22,7 +22,8 @@ export default function DocumentScreen() {
   // Lessons are generated in the background after processing and after edits.
   // While any are queued the counts and the tree's lesson marks refresh; this
   // reloads the book's details only, never the outline being edited.
-  const lessonsBusy = !!d?.lessons && d.lessons.pending + d.lessons.generating > 0;
+  const lessonsBusy = (!!d?.lessons && d.lessons.pending + d.lessons.generating > 0)
+    || (!!d?.auto_quizzes && d.auto_quizzes.pending + d.auto_quizzes.generating > 0);
   const { setData: setDoc } = doc;
   useEffect(() => {
     if (!lessonsBusy) return;
@@ -34,7 +35,13 @@ export default function DocumentScreen() {
     for (const c of d?.chapters ?? []) for (const m of c.modules) if (m.id && m.lesson_status) map[m.id] = m.lesson_status;
     return map;
   }, [d?.chapters]);
+  const quizStatus = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of d?.chapters ?? []) for (const m of c.modules) if (m.id && m.quiz_status) map[m.id] = m.quiz_status;
+    return map;
+  }, [d?.chapters]);
   const queueLessons = useAction(async () => { await manage.generateLessons(id); setDoc(await manage.document(id)); });
+  const queueQuizzes = useAction(async () => { await manage.generateAutoQuizzes(id); setDoc(await manage.document(id)); });
   // The outline editor holds its edits in local state until Save. Marking a
   // book ready or publishing it used to reload from the server, which threw
   // those edits away silently: modules deleted a moment earlier reappeared.
@@ -127,8 +134,31 @@ export default function DocumentScreen() {
         <ErrorBanner message={doc.error ?? act.error ?? remove.error} onRetry={doc.error ? doc.reload : undefined} />
         {missingSource ? <View style={ws.band}><Notice tone="warning" message={`${missingSource} module${missingSource === 1 ? " has" : "s have"} no source text but ${missingSource === 1 ? "is" : "are"} kept because a quiz, an assignment or student work refers to ${missingSource === 1 ? "it" : "them"}. Students do not see ${missingSource === 1 ? "it" : "them"}. Paste text to bring ${missingSource === 1 ? "it" : "them"} back.`} /></View> : null}
         {d!.lessons && d!.lessons.total > 0 ? <View style={ws.band}><LessonsBand summary={d!.lessons} onQueue={() => queueLessons.run()} busy={queueLessons.busy} error={queueLessons.error} /></View> : null}
+        {d!.auto_quizzes?.enabled && d!.auto_quizzes.total > 0 ? (
+          <View style={ws.band}>
+            <Row style={{ gap: space.md }}>
+              <Ionicons name="help-circle-outline" size={16} color={colors.primary} />
+              <Text style={{ flex: 1, color: colors.text, fontSize: 13.5 }}>
+                {(() => {
+                  const a = d!.auto_quizzes!;
+                  const parts = [
+                    a.checking ? `${a.checking} being checked` : "", a.held ? `${a.held} held for your review` : "",
+                    a.generating ? `${a.generating} being written` : "", a.pending ? `${a.pending} queued` : "", a.failed ? `${a.failed} failed` : "",
+                  ].filter(Boolean);
+                  const short = a.short ? ` ${a.short} short module${a.short === 1 ? " has" : "s have"} no quiz (under ${a.min_chars ?? 500} characters).` : "";
+                  return a.ready === a.total
+                    ? `An automatic quiz is ready for all ${a.total} modules. Each goes live when its module is open to students.${short}`
+                    : `Automatic quizzes: ${a.ready} of ${a.total} ready${parts.length ? ` · ${parts.join(" · ")}` : ""}. Each is checked by the AI monitor and goes live when its module is open.${short}`;
+                })()}
+              </Text>
+              {d!.auto_quizzes.failed && !d!.auto_quizzes.pending && !d!.auto_quizzes.generating ? (
+                <Button title="Try Failed Again" icon="refresh-outline" small variant="secondary" onPress={() => queueQuizzes.run()} busy={queueQuizzes.busy} />
+              ) : null}
+            </Row>
+          </View>
+        ) : null}
         {d!.status === "published" ? <View style={ws.band}><Notice tone="warning" message="This book is live. Saved changes reach enrolled students immediately, and a module a student has already worked through cannot be removed." /></View> : null}
-        <OutlineWorkspace documentId={id} published={d!.status === "published"} onSaved={doc.reload} onState={setPending} lessonStatus={lessonStatus} />
+        <OutlineWorkspace documentId={id} published={d!.status === "published"} onSaved={doc.reload} onState={setPending} lessonStatus={lessonStatus} quizStatus={quizStatus} />
       </View>
     </Screen>
   );
@@ -190,7 +220,7 @@ function ProcessingCard({ doc }: { doc: Document }) {
  * PUT replaces the outline, so a rename here and a text edit three chapters
  * away are still one save.
  */
-function OutlineWorkspace({ documentId, published, onSaved, onState, lessonStatus }: { documentId: string; published: boolean; onSaved: () => void; onState: (s: { dirty: boolean; save: () => Promise<void> }) => void; lessonStatus: Record<string, LessonStatus> }) {
+function OutlineWorkspace({ documentId, published, onSaved, onState, lessonStatus, quizStatus }: { documentId: string; published: boolean; onSaved: () => void; onState: (s: { dirty: boolean; save: () => Promise<void> }) => void; lessonStatus: Record<string, LessonStatus>; quizStatus: Record<string, string> }) {
   const q = useAsync(() => manage.outline(documentId), [documentId]);
   const [report, setReport] = useState<OutlineReport | null>(null);
   const [chapters, setChapters] = useState<OutlineChapter[] | null>(null);
@@ -382,6 +412,7 @@ function OutlineWorkspace({ documentId, published, onSaved, onState, lessonStatu
           toggleBusy={avail.busy}
           onBack={split ? undefined : () => setSel(null)}
           lessonStatus={mod.id ? lessonStatus[mod.id] ?? mod.lesson_status : undefined}
+          quizStatus={mod.id ? quizStatus[mod.id] ?? mod.quiz_status : undefined}
           textEdited={!!mod.id && (mod.source_text ?? "") !== ((q.data?.chapters ?? []).flatMap((c) => c.modules).find((x) => x.id === mod.id)?.source_text ?? "")}
         />
       ) : chapter && sel ? (
@@ -509,8 +540,9 @@ function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse,
 }
 
 /** One module, with room to actually read its source text. */
-function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, onRemove, onToggle, toggleBusy, onBack, lessonStatus, textEdited }: {
+function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, onRemove, onToggle, toggleBusy, onBack, lessonStatus, quizStatus, textEdited }: {
   lessonStatus?: LessonStatus;
+  quizStatus?: string;
   textEdited?: boolean;
   chapterTitle: string;
   module: OutlineModule;
@@ -539,7 +571,12 @@ function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, o
         {m.id ? <Badge value={m.availability ?? "locked"} /> : <Badge value="new" color={colors.accent} />}
         {m.source_missing ? <Badge value="no source" color={colors.danger} /> : null}
         {lessonStatus && lessonStatus !== "none" ? <Badge value={LESSON_BADGE[lessonStatus]} color={LESSON_COLOR[lessonStatus]} /> : null}
+        {quizStatus && !["none", "off"].includes(quizStatus) ? (
+          <Badge value={QUIZ_BADGE[quizStatus] ?? `quiz ${quizStatus}`}
+            color={quizStatus === "ready" ? colors.success : quizStatus === "failed" || quizStatus === "held" ? colors.warning : colors.faint} />
+        ) : null}
       </Row>
+      {m.id && quizStatus && quizStatus !== "off" ? <AutoQuizControls moduleId={m.id} status={quizStatus} quizId={m.auto_quiz_id ?? null} /> : null}
       <Row>
         <Text style={ws.fieldLabel}>Position</Text>
         <Button title="Move up" small variant="secondary" onPress={() => onMove(-1)} disabled={index === 0} />
@@ -663,6 +700,39 @@ function ModuleLessonPanel({ moduleId, textEdited }: { moduleId: string; textEdi
       ) : null}
       {d?.lesson ? <LessonView lesson={d.lesson} /> : null}
     </ScrollView>
+  );
+}
+
+const QUIZ_BADGE: Record<string, string> = {
+  ready: "quiz ready", pending: "quiz queued", generating: "quiz being written", checking: "quiz being checked",
+  held: "quiz held for review", failed: "quiz failed", dismissed: "quiz deleted", short: "no quiz: short module",
+};
+
+/** The module's automatic quiz: open it, or have it written again. */
+function AutoQuizControls({ moduleId, status, quizId }: { moduleId: string; status: string; quizId: string | null }) {
+  const router = useRouter();
+  const [local, setLocal] = useState<string | null>(null);
+  const shown = local ?? status;
+  const again = useAction(async () => { const r = await manage.regenerateAutoQuiz(moduleId); setLocal(r.quiz_status); });
+  const busy = shown === "pending" || shown === "generating" || shown === "checking";
+  if (shown === "short") return <Text style={ws.hint}>This module is too short for an automatic quiz. Add one by hand in Quizzes if it needs one.</Text>;
+  const label = shown === "dismissed" ? "Write the Quiz Again" : shown === "none" ? "Write a Quiz" : shown === "failed" ? "Try Again" : "Write It Again";
+  return (
+    <View style={{ gap: 4 }}>
+      <Row>
+        {quizId && (shown === "ready" || shown === "held") ? <Button title={shown === "held" ? "Review Quiz" : "Open Quiz"} icon="open-outline" small variant="secondary" onPress={() => router.push(`/manage/quiz/${quizId}`)} /> : null}
+        {!busy ? <Button title={label} icon="refresh-outline" small variant="ghost" onPress={() => again.run()} busy={again.busy} /> : null}
+        <Text style={[ws.hint, { flex: 1 }]}>
+          {shown === "checking" ? "Written; the AI monitor is checking it before students can see it." :
+            busy ? "The automatic quiz for this module is queued; quizzes are written in turn with lessons." :
+            shown === "held" ? "The AI monitor flagged this quiz, so students do not see it. Review the questions, then publish it, or mark the incident a false positive." :
+            shown === "ready" ? "Goes live for students when this module is open. Once students have attempted it, writing it again keeps it as it is; edit it in Quizzes instead." :
+            shown === "dismissed" ? "You deleted this module's automatic quiz, so it is not written again unless you ask." :
+            shown === "failed" ? "The automatic quiz could not be written; it is retried later, or try now." : ""}
+        </Text>
+      </Row>
+      <ErrorBanner message={again.error} />
+    </View>
   );
 }
 

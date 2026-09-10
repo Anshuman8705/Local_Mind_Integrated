@@ -51,6 +51,20 @@ class Assessment(TimeStampedUUIDModel):
     # chapter they share (null when they span chapters) and lists every module
     # it was written from here. Module and chapter quizzes leave it empty.
     source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assessments")
+    # Written automatically for its module when the book was processed (see
+    # assessments/services/auto_quiz.py), and published automatically when the
+    # module is open to students. Faculty can edit, close or delete it like any
+    # other quiz; deleting it stops it being generated again for that module.
+    auto_generated = models.BooleanField(default=False, db_index=True)
+    # Automatic quizzes are published without anyone reading them first, so
+    # the AI monitor checks them before they go live. ``checked_at`` is when
+    # the monitor last finished checking these questions (null: not yet).
+    # ``held_for_review`` is set when that check raised a high-severity
+    # incident; a held quiz stays a draft until faculty publish it themselves
+    # or mark the incident a false positive.
+    checked_at = models.DateTimeField(null=True, blank=True)
+    held_for_review = models.BooleanField(default=False, db_index=True)
+    hold_reason = models.CharField(max_length=300, blank=True)
     kind = models.CharField(max_length=12, choices=AssessmentKind.choices)
     title = models.CharField(max_length=300)
     instructions = models.TextField(blank=True)
@@ -156,3 +170,36 @@ class AssessmentAttempt(TimeStampedUUIDModel):
         if mode == ResultsRelease.SCHEDULED and self.assessment.results_release_at:
             return timezone.now() >= self.assessment.results_release_at
         return False
+
+
+class AutoQuizStatus(models.TextChoices):
+    PENDING = "pending", "Waiting to be generated"
+    GENERATING = "generating", "Being generated"
+    READY = "ready", "Ready"
+    FAILED = "failed", "Generation failed"
+    DISMISSED = "dismissed", "Deleted by faculty; not generated again"
+
+
+class AutoQuizJob(TimeStampedUUIDModel):
+    """One per module: the background job that writes the module's automatic
+    quiz. Same contract as tutor.ModuleLesson: ``source_hash`` is the text the
+    quiz belongs to, ``version`` is bumped on every state change and claims and
+    completions are conditional on it, so edits during generation win and two
+    processes never write the same quiz."""
+
+    module = models.OneToOneField("learning.Module", on_delete=models.CASCADE, related_name="auto_quiz_job")
+    assessment = models.ForeignKey(Assessment, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    status = models.CharField(max_length=12, choices=AutoQuizStatus.choices, default=AutoQuizStatus.PENDING, db_index=True)
+    source_hash = models.CharField(max_length=64, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    last_error = models.CharField(max_length=300, blank=True)
+    note = models.CharField(max_length=300, blank=True)
+    requested_at = models.DateTimeField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "next_attempt_at"], name="assess_autoquiz_queue_idx")]
+

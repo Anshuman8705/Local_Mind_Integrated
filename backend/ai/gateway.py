@@ -386,7 +386,7 @@ class AIGateway:
         AI monitor uses it to run its judge on a different model than the
         tutor. `background=True` marks work nobody is waiting on; everything
         else counts as interactive for `foreground_busy()`. `max_tokens` sets
-        this call's output ceiling (still capped by the task's profile value);
+        this call's output ceiling (capped by NUM_PREDICT);
         `retry_codes` narrows which failures are retried (a caller that splits
         a truncated request itself does not want the same request repeated).
         """
@@ -416,7 +416,10 @@ class AIGateway:
         cfg = settings.AI
         budget = task_config(task)
         if max_tokens:
-            budget = replace(budget, max_tokens=max(32, min(int(max_tokens), budget.max_tokens)))
+            # A caller may ask for more than the task's profile (a tutor answer
+            # that was cut off gets one longer try), never beyond NUM_PREDICT.
+            ceiling = int(_ai_setting("NUM_PREDICT", 4096) or 4096)
+            budget = replace(budget, max_tokens=max(32, min(int(max_tokens), ceiling)))
         retryable = RETRYABLE if retry_codes is None else set(retry_codes)
         model = model or model_for(model_kind or ("outline" if task == "outline" else "tutor"))
         temperature = budget.temperature if temperature is None else temperature

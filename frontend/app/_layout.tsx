@@ -1,7 +1,7 @@
 import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { DialogHost, Loading, colors } from "@/ui";
@@ -27,6 +27,12 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
       </View>
     </ScrollView>
   );
+}
+
+// Web only: keep the app's own files so it can open without the server
+// (https or localhost; browsers do not allow this on plain-http LAN addresses).
+if (Platform.OS === "web" && typeof window !== "undefined" && window.isSecureContext && "serviceWorker" in navigator && !__DEV__) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
 }
 
 function Gate({ children }: { children: React.ReactNode }) {

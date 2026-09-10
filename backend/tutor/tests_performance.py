@@ -112,7 +112,7 @@ class TutorPromptTests(TestCase):
             conv_id = res.data["conversation_id"]
         prompt = gw.return_value.generate.call_args.kwargs["user_prompt"]
         history = prompt.split("RECENT CONVERSATION:")[1].split("STUDENT QUESTION:")[0]
-        self.assertEqual(history.count("USER:") + history.count("ASSISTANT:"), 2)
+        self.assertEqual(history.count("STUDENT:") + history.count("TEACHER:"), 2)
         self.assertEqual(Conversation.objects.get(pk=conv_id).messages.count(), 10)
 
     @patch("tutor.services.gateway")

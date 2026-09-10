@@ -2,11 +2,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Platform, ScrollView, Text, View } from "react-native";
+import { ApiError } from "@/api/client";
 import { student } from "@/api/endpoints";
 import type { Message, TeachResponse } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, colors, pct, space } from "@/ui";
 import { LessonView } from "@/ui/LessonView";
+import { useOnline } from "@/offline/connectivity";
 
 type Tab = "read" | "lesson" | "ask";
 
@@ -159,6 +161,7 @@ function LessonTab({ moduleId, onRead }: { moduleId: string; onRead: () => void 
 }
 
 function AskTab({ moduleId }: { moduleId: string }) {
+  const online = useOnline();
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [question, setQuestion] = useState("");
@@ -184,12 +187,37 @@ function AskTab({ moduleId }: { moduleId: string }) {
     })();
     return () => { alive = false; };
   }, [moduleId]);
+  // The question whose answer failed, so the student can ask it again with
+  // one tap. The server keeps the question and does not store it twice.
+  const [failed, setFailed] = useState<string | null>(null);
   const ask = useAction(async (text: string) => {
-    const mine: Message = { id: `local-${Date.now()}`, role: "user", content: text, grounded: true, source_reference: "", created_at: new Date().toISOString() };
-    setMessages((m) => [...m, mine]); setQuestion(""); setSuggestions([]);
-    const res = await student.ask(moduleId, text, conversationId);
-    setConversationId(res.conversation_id); setMessages((m) => [...m, res.message]); setSuggestions(res.follow_up_suggestions ?? []);
+    setFailed(null); setQuestion(""); setSuggestions([]);
+    setMessages((m) => {
+      const last = m[m.length - 1];
+      if (last && last.role === "user" && last.content === text) return m; // asking again: already on screen
+      const mine: Message = { id: `local-${Date.now()}`, role: "user", content: text, grounded: true, source_reference: "", created_at: new Date().toISOString() };
+      return [...m, mine];
+    });
+    try {
+      const res = await student.ask(moduleId, text, conversationId);
+      setConversationId(res.conversation_id); setMessages((m) => [...m, res.message]); setSuggestions(res.follow_up_suggestions ?? []);
+    } catch (e) {
+      // The server opened (or continued) the conversation before the model
+      // failed; stay in it so asking again continues the same thread.
+      const conv = e instanceof ApiError ? (e.details?.conversation_id as string | undefined) : undefined;
+      if (conv) setConversationId(conv);
+      setFailed(text);
+      throw e;
+    }
   });
+  // A tutor answer on a laptop CPU can take a minute or more, longer when the
+  // model is finishing another task first. Say so instead of spinning silently.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!ask.busy) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 15000);
+    return () => clearTimeout(t);
+  }, [ask.busy]);
   const scrollToEnd = () => scroll.current?.scrollToEnd({ animated: true });
   useEffect(() => { const t = setTimeout(scrollToEnd, 60); return () => clearTimeout(t); }, [messages.length, ask.busy, suggestions.length]);
   return (
@@ -204,7 +232,8 @@ function AskTab({ moduleId }: { moduleId: string }) {
         onContentSizeChange={scrollToEnd}
       >
         {restoring ? <Loading /> : null}
-        {!restoring && messages.length === 0 ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
+        {!online ? <Notice tone="warning" message="You are offline. Earlier questions and answers are shown; asking something new needs a connection to the LocalMind server." /> : null}
+        {!restoring && messages.length === 0 && online ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
         {messages.map((m) => {
           // An answer the module could not support is guidance, not a reply,
           // so it is styled as a note rather than dressed up as an answer.
@@ -223,13 +252,15 @@ function AskTab({ moduleId }: { moduleId: string }) {
           );
         })}
         {ask.busy ? <Loading /> : null}
+        {ask.busy && slow ? <P muted small>The tutor is still working on this. Answers can take a minute or two on this computer; you can keep reading meanwhile.</P> : null}
         {ask.error ? <Notice tone="warning" message={ask.error} /> : null}
+        {failed && !ask.busy ? <Row><Button title="Ask Again" icon="refresh-outline" small variant="secondary" onPress={() => ask.run(failed)} /></Row> : null}
         {suggestions.length ? <Row>{suggestions.map((s) => <Chip key={s} label={s} onPress={() => ask.run(s)} />)}</Row> : null}
       </ScrollView>
       <View style={{ borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
         <View style={{ flexDirection: "row", gap: 8, padding: space.md, width: "100%", maxWidth: 900, alignSelf: "center" }}>
-        <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder="Type your question" onSubmitEditing={() => question.trim() && ask.run(question.trim())} blurOnSubmit={false} editable={!ask.busy} /></View>
-        <Button title="Ask" onPress={() => ask.run(question.trim())} disabled={!question.trim()} busy={ask.busy} />
+        <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder={online ? "Type your question" : "Offline: asking needs a connection"} onSubmitEditing={() => online && question.trim() && ask.run(question.trim())} blurOnSubmit={false} editable={!ask.busy && online} /></View>
+        <Button title="Ask" onPress={() => ask.run(question.trim())} disabled={!question.trim() || !online} busy={ask.busy} />
         </View>
       </View>
     </View>

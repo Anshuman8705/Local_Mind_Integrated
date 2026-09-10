@@ -62,6 +62,8 @@ export const manage = {
     api<T.Document & { outline_report?: T.OutlineReport }>(`/faculty/documents/${id}/outline/`, { method: "PUT", body: { chapters, document_title } }),
   moduleLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`),
   regenerateLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`, { method: "POST", body: {} }),
+  regenerateAutoQuiz: (moduleId: string) => api<{ module_id: string; quiz_status: string }>(`/faculty/modules/${moduleId}/auto-quiz/`, { method: "POST", body: {} }),
+  generateAutoQuizzes: (documentId: string) => api<{ queued: number }>(`/faculty/documents/${documentId}/auto-quizzes/`, { method: "POST", body: {} }),
   generateLessons: (documentId: string, force = false) =>
     api<T.LessonSummary & { queued: number }>(`/faculty/documents/${documentId}/lessons/`, { method: "POST", body: { force } }),
   transition: (id: string, action: "ready" | "publish" | "unpublish" | "archive") => api<T.Document>(`/faculty/documents/${id}/${action}/`, { method: "POST" }),

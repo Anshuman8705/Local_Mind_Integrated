@@ -7,12 +7,14 @@ from .models import Document
 class ModuleSerializer(serializers.ModelSerializer):
     chapter_id = serializers.UUIDField(read_only=True)
     lesson_status = serializers.SerializerMethodField()
+    quiz_status = serializers.SerializerMethodField()
+    auto_quiz_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Module
         fields = ["id", "chapter_id", "title", "order", "source_heading_index", "source_text", "source_missing",
                   "start_page", "end_page", "is_user_edited", "availability", "opened_at", "lesson_status",
-                  "created_at", "updated_at"]
+                  "quiz_status", "auto_quiz_id", "created_at", "updated_at"]
 
     def get_lesson_status(self, module) -> str:
         """ready | pending | generating | failed | none (the module has no text)."""
@@ -20,6 +22,15 @@ class ModuleSerializer(serializers.ModelSerializer):
         # A missing reverse one-to-one raises an AttributeError subclass, so
         # getattr's default covers both "prefetched and absent" and "not loaded".
         return lessons.state_for(module, getattr(module, "lesson", None))
+
+    def get_quiz_status(self, module) -> str:
+        """The automatic quiz: ready | pending | generating | failed | dismissed | none | off."""
+        from assessments.services import auto_quiz
+        return auto_quiz.state_for(module, getattr(module, "auto_quiz_job", None))
+
+    def get_auto_quiz_id(self, module):
+        job = getattr(module, "auto_quiz_job", None)
+        return str(job.assessment_id) if job and job.assessment_id else None
 
 
 class ModuleBriefSerializer(serializers.ModelSerializer):
@@ -86,14 +97,20 @@ class DocumentDetailSerializer(DocumentSerializer):
     chapters = ChapterSerializer(many=True, read_only=True)
     missing_source_modules = serializers.SerializerMethodField()
     lessons = serializers.SerializerMethodField()
+    auto_quizzes = serializers.SerializerMethodField()
 
     class Meta(DocumentSerializer.Meta):
-        fields = DocumentSerializer.Meta.fields + ["extracted_headings", "chapters", "missing_source_modules", "lessons"]
+        fields = DocumentSerializer.Meta.fields + ["extracted_headings", "chapters", "missing_source_modules", "lessons", "auto_quizzes"]
 
     def get_missing_source_modules(self, doc):
         """Modules kept without text only because student work refers to them;
         they are hidden from students. Every other empty module is removed."""
         return [str(m.id) for m in Module.objects.filter(chapter__document=doc, source_missing=True)]
+
+    def get_auto_quizzes(self, doc) -> dict:
+        """Automatic module quizzes: total / ready / pending / generating / failed / dismissed."""
+        from assessments.services import auto_quiz
+        return auto_quiz.summary_for_document(doc)
 
     def get_lessons(self, doc) -> dict:
         """total / ready / pending / generating / failed over modules with text."""

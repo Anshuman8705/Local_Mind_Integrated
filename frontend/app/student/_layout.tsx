@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import React from "react";
+import { View } from "react-native";
+import { OfflineBanner } from "@/offline/OfflineBanner";
 import { shellScreen, useShell } from "@/ui/Shell";
 
 const icon = (name: keyof typeof Ionicons.glyphMap) => {
@@ -12,6 +14,8 @@ const icon = (name: keyof typeof Ionicons.glyphMap) => {
 export default function StudentLayout() {
   const shell = useShell({ name: "Student portal" });
   return (
+    <View style={{ flex: 1 }}>
+    <OfflineBanner />
     <Tabs screenOptions={shell.screenOptions} tabBar={shell.tabBar}>
       <Tabs.Screen name="index" options={{ title: "My Subjects", tabBarLabel: "Subjects", tabBarIcon: icon("library-outline") }} />
       <Tabs.Screen name="quizzes" options={{ title: "Quizzes", tabBarIcon: icon("help-circle-outline") }} />
@@ -25,5 +29,6 @@ export default function StudentLayout() {
       <Tabs.Screen name="attempt/[id]" options={shellScreen({ href: null, title: "Quiz Result" }, { backTo: "/student/quizzes" })} />
       <Tabs.Screen name="assignment/[id]" options={shellScreen({ href: null, title: "Assignment" }, { backTo: "/student/assignments" })} />
     </Tabs>
+    </View>
   );
 }

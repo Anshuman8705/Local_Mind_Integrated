@@ -637,6 +637,11 @@ python manage.py requeue_stuck_documents           # re-run documents abandoned 
 python manage.py generate_lessons --status          # lessons queued, generating, ready, failed
 python manage.py generate_lessons --queue           # queue every module without a current lesson (after an upgrade)
 python manage.py generate_lessons --run --limit 10  # generate in this process instead of the web worker
+python manage.py generate_auto_quizzes --status     # automatic module quizzes: queued, ready, failed, dismissed
+python manage.py generate_auto_quizzes --queue      # queue a quiz for every module without one (books uploaded before this feature)
+python manage.py generate_auto_quizzes --remove-short --dry-run  # automatic quizzes on modules under AUTO_QUIZ_MIN_CHARS (drop --dry-run to delete unattempted ones)
+python manage.py tidy_book --list                   # books with their ids and module counts
+python manage.py tidy_book --document <id> --dry-run # fold textbook boxes and tiny modules into their sections (drop --dry-run to apply)
 python manage.py requeue_stuck_documents --dry-run
 python manage.py flushexpiredtokens                # trim JWT blacklist
 python manage.py monitor_ai --purge                # apply AI-monitor retention (open incidents kept)

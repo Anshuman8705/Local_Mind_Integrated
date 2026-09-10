@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
 from dataclasses import dataclass
 
 from .chunking import ensure_chunks, tokenize
@@ -42,20 +43,61 @@ def _idf(term: str, docs_with_term: int, total: int) -> float:
     return math.log(1 + (total - docs_with_term + 0.5) / (docs_with_term + 0.5))
 
 
+def stem(term: str) -> str:
+    """A light, conservative stem so a question and the book meet on the same
+    word: plural and verb endings ("plants"/"plant", "digested"/"digests",
+    "processes"/"process", "studies"/"study") and the common Latin plurals of
+    science textbooks ("villi"/"villus", "nuclei"/"nucleus", "viruses"/"virus").
+    Short words are left alone so unrelated words do not collide."""
+    t = term
+    if len(t) <= 3:
+        return t
+    # English plural and verb endings first.
+    for suffix, keep in (("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x")):
+        if t.endswith(suffix) and len(t) > len(suffix) + 2:
+            t = t[: -len(suffix)] + keep
+            break
+    else:
+        if t.endswith("es") and len(t) > 4 and t[-3] in "sxz":
+            t = t[:-2]
+        elif t.endswith("s") and not t.endswith(("ss", "us", "is")) and len(t) > 3:
+            t = t[:-1]
+        elif t.endswith("ing") and len(t) > 5:
+            t = t[:-3]
+        elif t.endswith("ed") and len(t) > 4:
+            t = t[:-2]
+    # Then Latin singular/plural pairs on what is left.
+    if len(t) >= 5 and t.endswith(("us", "um", "ae")):
+        t = t[:-2]
+    elif len(t) >= 5 and t.endswith("i") and not t.endswith("ii"):
+        t = t[:-1]
+    return t
+
+
+def _stemmed(counts: dict) -> dict:
+    out: dict = {}
+    for term, n in (counts or {}).items():
+        key = stem(term)
+        out[key] = out.get(key, 0) + n
+    return out
+
+
 def score_chunks(query: str, chunks) -> list[Hit]:
-    """BM25 scores for every chunk against the query; unsorted."""
-    query_terms = tokenize(query)
+    """BM25 scores for every chunk against the query; unsorted. Terms are
+    compared after ``stem`` on both sides; the stored term counts are stemmed
+    here, so chunks built before stemming existed need no rebuild."""
+    query_terms = [stem(t) for t in tokenize(query)]
     if not query_terms or not chunks:
         return []
     total = len(chunks)
-    lengths = [max(1, sum(c.terms.values())) if c.terms else max(1, len(tokenize(c.text))) for c in chunks]
+    chunk_terms = [_stemmed(c.terms) if c.terms else _stemmed(dict(Counter(tokenize(c.text)))) for c in chunks]
+    lengths = [max(1, sum(terms.values())) for terms in chunk_terms]
     avg_len = sum(lengths) / total
     df = {}
     for term in set(query_terms):
-        df[term] = sum(1 for c in chunks if term in (c.terms or {}))
+        df[term] = sum(1 for terms in chunk_terms if term in terms)
     hits = []
-    for chunk, length in zip(chunks, lengths):
-        terms = chunk.terms or {}
+    for chunk, terms, length in zip(chunks, chunk_terms, lengths):
         score = 0.0
         for term in query_terms:
             tf = terms.get(term, 0)

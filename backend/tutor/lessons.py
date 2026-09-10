@@ -381,17 +381,25 @@ _worker_lock = threading.Lock()
 
 
 def _worker_loop():
+    """One background worker per process for lessons and automatic quizzes.
+    It alternates between the two queues, one job at a time, so a module's
+    lesson and quiz both make progress rather than every lesson in the
+    library finishing before the first quiz starts."""
     global _worker
+    from assessments.services import auto_quiz
+
     idle_since = time.monotonic()
     try:
         while True:
             close_old_connections()
-            try:
-                outcome = run_pending(limit=1)
-            except Exception:
-                logger.exception("Lesson worker iteration failed")
-                outcome = {"ready": 0, "failed": 0, "discarded": 0}
-                time.sleep(5)
+            outcome = {"ready": 0, "failed": 0, "discarded": 0}
+            for runner, label in ((run_pending, "lesson"), (auto_quiz.run_pending, "quiz")):
+                try:
+                    for key, value in runner(limit=1).items():
+                        outcome[key] = outcome.get(key, 0) + value
+                except Exception:
+                    logger.exception("Background %s job failed", label)
+                    time.sleep(5)
             if sum(outcome.values()):
                 idle_since = time.monotonic()
                 continue
@@ -432,7 +440,8 @@ def resume_on_startup(delay: float = 5.0) -> None:
         time.sleep(delay)
         try:
             close_old_connections()
-            if ModuleLesson.objects.filter(_claimable(timezone.now())).exists():
+            from assessments.services import auto_quiz
+            if ModuleLesson.objects.filter(_claimable(timezone.now())).exists() or auto_quiz.has_claimable():
                 start_worker()
         except Exception:  # database not migrated yet, for instance
             logger.warning("Lesson worker did not resume at startup", exc_info=True)

@@ -135,8 +135,10 @@ def open_modules_for_publish(actor, modules, reason, target=None, request=None):
     audit.record(actor, "module.opened_on_publish", target,
                  {"reason": reason, "count": opened, "modules": [str(i) for i in module_ids]}, request)
     # Lessons are already queued when the book is processed and whenever a
-    # module's text changes (tutor/lessons.py), so opening a module does not
-    # need to start anything.
+    # module's text changes (tutor/lessons.py). Opening a module publishes its
+    # automatic quiz once that quiz is ready.
+    from assessments.services import auto_quiz
+    auto_quiz.publish_after_commit([m for m in modules if m.id in module_ids])
     return opened
 
 

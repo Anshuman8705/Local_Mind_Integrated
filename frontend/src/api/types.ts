@@ -41,6 +41,9 @@ export interface Document {
   missing_source_modules?: string[];
   /** Lesson generation counts over modules with text (detail endpoint only). */
   lessons?: LessonSummary;
+  /** Automatic module quiz counts (detail endpoint only). */
+  auto_quizzes?: { total: number; ready: number; checking?: number; held?: number; pending: number; generating: number; failed: number;
+    dismissed: number; short?: number; min_chars?: number; enabled: boolean };
   /** Detail endpoint only: chapters with each module's lesson_status. */
   chapters?: OutlineChapter[];
   uploaded_by_name?: string; created_at: string; published_at?: string | null;
@@ -53,6 +56,9 @@ export interface Heading { index: number; level: number; title: string; start_pa
 export interface OutlineModule {
   id?: string; title: string; order: number; source_heading_index: number | null; source_text?: string;
   source_missing?: boolean; availability?: ModuleAvailability; lesson_status?: LessonStatus;
+  /** The module's automatic quiz: ready, checking (waiting for the AI monitor), held (flagged; needs review), pending,
+   * generating, failed, dismissed (deleted by faculty), short (module too short), none or off. */
+  quiz_status?: string; auto_quiz_id?: string | null;
 }
 export interface OutlineChapter { id?: string; title: string; order: number; source_heading_index?: number | null; modules: OutlineModule[] }
 export interface Outline { document_id: string; status: DocumentStatus; content_version: number; headings: Heading[]; outline_source?: string; document_title: string; chapters: OutlineChapter[] }
@@ -71,6 +77,10 @@ export interface Quiz {
   version: number; question_count?: number; attempt_count?: number; questions?: Question[];
   /** Modules the questions were written from, when the quiz targets a chosen set. */
   source_module_ids?: string[];
+  /** Written automatically for its module; see held_for_review. */
+  auto_generated?: boolean;
+  /** An automatic quiz the AI monitor flagged: kept as a draft until faculty publish it or clear the incident. */
+  held_for_review?: boolean; hold_reason?: string; checked_at?: string | null;
   /** Returned by generation only: what fell short of the request, or null. */
   generation_warning?: string | null;
   results_release?: "immediate" | "held" | "scheduled";

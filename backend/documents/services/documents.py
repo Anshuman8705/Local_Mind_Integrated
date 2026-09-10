@@ -198,13 +198,18 @@ def run_processing(document_id):
         audit.record(None, "document.processed", document, {
             "outline_source": source, "chapters": document.chapters.count(),
             "modules": Module.objects.filter(chapter__document=document).count(),
-            "empty_modules_removed": len(report["removed_empty_modules"])})
+            "empty_modules_removed": len(report["removed_empty_modules"]),
+            "fragments_merged": len((outline.get("_tidy_report") or {}).get("merged_modules", [])),
+            "titles_repaired": (outline.get("_tidy_report") or {}).get("renamed", 0)})
         logger.info("Processed document %s (%s)", document_id, source)
         # Lessons for every module start now, in the background, so they are
         # ready by the time faculty publish and students open the Lesson tab.
+        from assessments.services import auto_quiz
         from tutor import lessons
-        lessons.on_content_changed(list(Module.objects.filter(chapter__document=document).select_related("chapter__document")),
-                                   reason="document.processed")
+        processed = list(Module.objects.filter(chapter__document=document).select_related("chapter__document"))
+        lessons.on_content_changed(processed, reason="document.processed")
+        # And a quiz for every module, generated after its lesson.
+        auto_quiz.on_content_changed(processed, reason="document.processed")
     except NoExtractableContent as exc:
         # Expected outcome for blank or unreadable files: a clear message, no traceback.
         logger.warning("Processing of document %s produced no content: %s", document_id, exc)
@@ -303,10 +308,12 @@ def replace_outline(actor, document, outline, request=None):
 
 def _queue_lessons_after_commit(document, reason, modules=None):
     def queue():
+        from assessments.services import auto_quiz
         from tutor import lessons
         targets = modules if modules is not None else list(
             Module.objects.filter(chapter__document=document).select_related("chapter__document"))
         lessons.on_content_changed(targets, reason=reason)
+        auto_quiz.on_content_changed(targets, reason=reason)
     transaction.on_commit(queue)
 
 
@@ -410,6 +417,8 @@ def publish(actor, document, request=None):
     # Lessons were queued at processing time; this only fills gaps (auto
     # generation switched on since, or a lesson that gave up after failures).
     _queue_lessons_after_commit(document, "document.published")
+    from assessments.services import auto_quiz
+    auto_quiz.publish_after_commit(Module.objects.filter(chapter__document=document))
     # Publishing is what makes a book visible to students, so open every module
     # that has source text. Faculty can still lock modules or chapters afterwards
     # to pace the course; a re-publish of a book that already has open modules
@@ -505,6 +514,10 @@ def set_module_availability(actor, module, availability, request=None):
     if availability == ModuleAvailability.OPEN:
         module.opened_by, module.opened_at = actor, timezone.now()
     module.save(update_fields=["availability", "opened_by", "opened_at", "updated_at"])
+    if availability == ModuleAvailability.OPEN:
+        # Its automatic quiz goes live with it.
+        from assessments.services import auto_quiz
+        auto_quiz.publish_after_commit([module])
     audit.record(actor, f"module.{'opened' if availability == 'open' else 'locked'}", module, {"document": str(document.id)}, request)
     return module
 

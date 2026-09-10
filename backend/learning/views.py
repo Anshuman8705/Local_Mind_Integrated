@@ -73,7 +73,12 @@ class StudentModuleView(APIView):
     def get(self, request, module_id):
         module = services.resolve_accessible_module(request.user, module_id)
         services.settle_student_results(request.user)
-        progress = services.record_module_view(request.user, module)
+        if getattr(request, "_offline_prefetch", False):
+            # Downloading for offline use is not reading: do not mark the
+            # module started or count a view.
+            progress = services.progress_map(request.user, [module]).get(module.id)
+        else:
+            progress = services.record_module_view(request.user, module)
         payload = _module_payload(module, progress, include_source=True)
         payload["chapter_title"] = module.chapter.title
         payload["document_id"] = str(module.chapter.document_id)

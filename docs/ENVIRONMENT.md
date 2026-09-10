@@ -52,6 +52,15 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 | `LESSON_RETRY_MINUTES` | `10` | Gap before a failed lesson is retried; doubles per attempt, capped at six times this. |
 | `LESSON_STALE_MINUTES` | `15` | A lesson still marked generating after this long belonged to a process that stopped; any worker may take it again. |
 | `LESSON_WORKER_IDLE_SECONDS` | `30` | How long the idle worker thread waits for new work before exiting; the next request or process start wakes it. |
+| `OUTLINE_MERGE_SMALL` | `true` | When a book is processed, repair garbled heading titles (letter-spaced, doubled, drop-cap copies) and fold textbook boxes ("Questions", "Activity 5.3", "Do You Know?", "More to Know!"...) and modules shorter than `OUTLINE_MERGE_MIN_CHARS` into the section they belong to. `false` keeps every heading as its own module (titles are still repaired). Existing books: `python manage.py tidy_book --document <id>`. |
+| `OUTLINE_MERGE_MIN_CHARS` | `500` | Modules shorter than this are folded into their section. A short numbered heading that only introduces its first subsection ("5.2 Nutrition" before "5.2.1") joins the text after it; one whose content follows in boxes stays as the home for those boxes. |
+| `OUTLINE_MERGE_MAX_CHARS` | `16000` | Folding never grows a module past this with a box of `OUTLINE_MERGE_MIN_CHARS` or more; a few lines of box always fit. |
+| `AUTO_QUIZ_ENABLED` | `true` | Write one quiz per module in the background when a book is processed (in turn with lessons). While the AI monitor is on, each is checked first and published once the check is done and its module is open in a published book; a check that raises a high or critical incident holds it as a draft for faculty review. `false`: no automatic quizzes; faculty build quizzes by hand as before. |
+| `AUTO_QUIZ_MCQS` | `5` | Multiple-choice questions per automatic quiz (fewer when a module's text cannot support that many). |
+| `AUTO_QUIZ_SUBJECTIVE` | `0` | Open-ended questions per automatic quiz. Each one is marked by the model when a student submits, which is slow on a CPU. |
+| `AUTO_QUIZ_PASS_PERCENTAGE` | `65` | Pass mark of automatic quizzes. |
+| `AUTO_QUIZ_MAX_ATTEMPTS` | `3` | Attempts allowed per student on an automatic quiz. |
+| `AUTO_QUIZ_MIN_CHARS` | `500` | Modules with less text than this (a "Questions" box, a bare heading) get no automatic quiz. `0` gives every module one. `python manage.py generate_auto_quizzes --remove-short` deletes unattempted automatic quizzes already written for such modules. |
 | `FACULTY_CAN_PUBLISH` | `true` | When false, faculty may mark a book ready but only administrators can publish (`PUBLISH_ADMIN_ONLY`). |
 | `DEFAULT_PASS_PERCENTAGE` | `65` | Pass mark applied when a quiz does not set its own. |
 | `MAX_QUIZ_DURATION_HOURS` | `6` | Upper bound on server-computed attempt time, so an abandoned tab does not record days. |

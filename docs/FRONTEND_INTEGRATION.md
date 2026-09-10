@@ -6,6 +6,10 @@ These notes are for whoever builds or adapts the client (the reference Expo app 
 
 The client needs one base URL. Everything is under `/api/`. The server's `DJANGO_CORS_ALLOWED_ORIGINS` must list the exact origin a web build runs from; native builds are unaffected by CORS. Tokens are sent in the `Authorization: Bearer` header, never as cookies, so credentials mode stays off.
 
+## Offline reading
+
+After a student signs in, fetch `GET /api/student/offline/` and store each entry of `entries` under its key (the request path, plus the sorted query when there is one). When a student GET fails because the server cannot be reached, answer it from that store. Refresh the bundle when the app starts online, when connectivity returns, when the app comes to the foreground and periodically; skip rewriting when `version` has not changed. Clear the store on sign-out and when a different user signs in. Anything that writes (tutor questions, quiz attempts, assignment submissions) needs the server.
+
 ## Login and first run
 
 The client presents three separate login screens (behind a chooser) and calls `POST /api/auth/login/{role}/`. A wrong role, a wrong password and a discontinued account all produce the same 401 `INVALID_CREDENTIALS`, so the client should show one generic message. Store `access`, `refresh`, `user` (which includes `role`, `full_name`, `email` and `profile`) and `session_id`.

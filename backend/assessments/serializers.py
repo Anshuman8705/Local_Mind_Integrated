@@ -18,7 +18,8 @@ class AssessmentSerializer(serializers.ModelSerializer):
         fields = ["id", "subject_id", "chapter_id", "module_id", "kind", "title", "instructions", "questions", "generator", "status",
                   "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at", "version", "supersedes",
                   "created_by_name", "published_at", "closed_at", "question_count", "attempt_count", "created_at", "updated_at",
-                  "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count"]
+                  "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count",
+                  "auto_generated", "checked_at", "held_for_review", "hold_reason"]
 
     def get_attempt_count(self, a) -> int:
         return a.attempts.count()
@@ -41,7 +42,7 @@ class AssessmentStudentSerializer(serializers.ModelSerializer):
         model = Assessment
         fields = ["id", "module_id", "chapter_id", "kind", "title", "instructions", "pass_percentage", "max_attempts",
                   "time_limit_minutes", "available_from", "due_at", "question_count", "version",
-                  "results_release", "results_release_at"]
+                  "results_release", "results_release_at", "auto_generated"]
 
 
 class AttemptSerializer(serializers.ModelSerializer):

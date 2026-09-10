@@ -57,7 +57,8 @@ def _detail(user, document_id):
     """The document with its outline and each module's lesson loaded in a
     handful of queries; the book screen polls this while lessons generate."""
     document = _doc(user, document_id)
-    return Document.objects.select_related("subject", "uploaded_by").prefetch_related("chapters__modules__lesson").get(pk=document.pk)
+    return (Document.objects.select_related("subject", "uploaded_by")
+            .prefetch_related("chapters__modules__lesson", "chapters__modules__auto_quiz_job").get(pk=document.pk))
 
 
 class DocumentDetailView(APIView):
@@ -119,7 +120,7 @@ class OutlineView(APIView):
 
     def get(self, request, document_id):
         document = _doc(request.user, document_id)
-        chapters = document.chapters.prefetch_related("modules__lesson")
+        chapters = document.chapters.prefetch_related("modules__lesson", "modules__auto_quiz_job")
         return Response({"document_id": str(document.id), "document_title": document.title, "status": document.status,
                          "outline_source": document.outline_source, "headings": document.extracted_headings,
                          "chapters": ChapterSerializer(chapters, many=True).data})
@@ -181,6 +182,38 @@ class ModuleLessonView(APIView):
         lessons.request_lessons([module], force=True, reason="faculty.regenerate")
         audit.record(request.user, "lesson.regenerate_requested", module, {}, request)
         return Response(lessons.detail_for_faculty(module), status=status.HTTP_202_ACCEPTED)
+
+
+class ModuleAutoQuizView(APIView):
+    """POST: write the module's automatic quiz again (queued in the background)."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def post(self, request, module_id):
+        from assessments.services import auto_quiz
+        from audit import services as audit
+        from tutor import lessons
+        module = get_or_404(Module.objects.filter(chapter__document__in=_docs_for(request.user)).select_related("chapter__document"), pk=module_id)
+        if not lessons.has_text(module):
+            raise APIError("This module has no source text, so there is nothing to write a quiz from.", code="EMPTY_SOURCE_TEXT", status_code=400)
+        auto_quiz.request_quizzes([module], force=True, reason="faculty.regenerate_quiz")
+        audit.record(request.user, "auto_quiz.regenerate_requested", module, {}, request)
+        return Response({"module_id": str(module.id), "quiz_status": auto_quiz.state_for(module)}, status=status.HTTP_202_ACCEPTED)
+
+
+class DocumentAutoQuizzesView(APIView):
+    """POST: queue automatic quizzes for every module of a book that lacks one."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def post(self, request, document_id):
+        from assessments.services import auto_quiz
+        from audit import services as audit
+        document = _doc(request.user, document_id)
+        modules = list(Module.objects.filter(chapter__document=document).select_related("chapter__document"))
+        queued = auto_quiz.request_quizzes(modules, reason="faculty.generate_quizzes")
+        audit.record(request.user, "auto_quiz.generate_requested", document, {"queued": queued}, request)
+        return Response({"queued": queued, **auto_quiz.summary_for_document(document)}, status=status.HTTP_202_ACCEPTED)
 
 
 class DocumentLessonsView(APIView):

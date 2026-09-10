@@ -22,5 +22,8 @@ def _on_message(sender, instance: Message, created: bool, **kwargs):
 
 @receiver(post_save, sender=Assessment, dispatch_uid="ai_monitor.assessment")
 def _on_assessment(sender, instance: Assessment, created: bool, **kwargs):
-    if created and instance.generator == "ai" and services.enabled():
+    # Automatic quizzes are sent for checking by assessments.services.auto_quiz
+    # itself, which also needs to know when the check is done (to publish or
+    # hold the quiz); queueing them here as well would check them twice.
+    if created and instance.generator == "ai" and not instance.auto_generated and services.enabled():
         transaction.on_commit(lambda: services.enqueue_assessment(instance))

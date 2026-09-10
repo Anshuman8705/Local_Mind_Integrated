@@ -236,6 +236,12 @@ LOCALMIND = {
     # Per-account lockout after repeated failed logins, counted from the audit
     # log so it holds across gunicorn workers and restarts. Keyed by the email
     # typed, so it reveals nothing about whether the account exists.
+    # New books: fold textbook boxes ("Questions", "Activity 5.3", "Do You
+    # Know?") and modules shorter than OUTLINE_MERGE_MIN_CHARS into the section
+    # they belong to, never growing a module past OUTLINE_MERGE_MAX_CHARS.
+    "OUTLINE_MERGE_SMALL": env_bool("OUTLINE_MERGE_SMALL", True),
+    "OUTLINE_MERGE_MIN_CHARS": env_int("OUTLINE_MERGE_MIN_CHARS", 500),
+    "OUTLINE_MERGE_MAX_CHARS": env_int("OUTLINE_MERGE_MAX_CHARS", 16000),
     "LOGIN_MAX_FAILURES": env_int("LOGIN_MAX_FAILURES", 10),
     "LOGIN_LOCKOUT_MINUTES": env_int("LOGIN_LOCKOUT_MINUTES", 15),
     "FACULTY_CAN_PUBLISH": env_bool("FACULTY_CAN_PUBLISH", True),
@@ -337,6 +343,20 @@ LESSONS = {
     # How long the idle worker thread lingers before exiting.
     "IDLE_EXIT_SECONDS": env_int("LESSON_WORKER_IDLE_SECONDS", 30),
     "YIELD_SECONDS": 1.0,
+}
+
+# Automatic quizzes (assessments/services/auto_quiz.py): one per module,
+# generated in the background after its lesson, published when the module is
+# open to students.
+AUTO_QUIZ = {
+    "ENABLED": env_bool("AUTO_QUIZ_ENABLED", True),
+    "MCQS": env_int("AUTO_QUIZ_MCQS", 5),
+    "SUBJECTIVE": env_int("AUTO_QUIZ_SUBJECTIVE", 0),
+    "PASS_PERCENTAGE": env_int("AUTO_QUIZ_PASS_PERCENTAGE", 65),
+    "MAX_ATTEMPTS": env_int("AUTO_QUIZ_MAX_ATTEMPTS", 3),
+    # Modules with less text than this (a "Questions" box, a bare heading) get
+    # no automatic quiz. 0 gives every module one.
+    "MIN_CHARS": env_int("AUTO_QUIZ_MIN_CHARS", 500),
 }
 
 # AI Monitoring & Guard: the independent evaluation layer (ai_monitor app).

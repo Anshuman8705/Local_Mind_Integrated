@@ -423,11 +423,20 @@ def evaluate_assessment(assessment: Assessment, force_judge: bool = False) -> Ev
         checks = validators.run_quiz_checks(questions=assessment.questions or [], evidence=evidence)
         metadata = {"subject": assessment.subject.code, "quiz": assessment.title, "generator": assessment.generator,
                     "questions": len(assessment.questions or []), "modules": ", ".join(m.title for m in modules)[:200]}
-        return _run(kind=InteractionKind.QUIZ, interaction_id=assessment.pk, prompt=f"Generate a quiz on: {', '.join(m.title for m in modules)}",
-                    response_text=_quiz_text(assessment), checks=checks, evidence=evidence, metadata=metadata, links=links, force_judge=force_judge)
+        evaluation = _run(kind=InteractionKind.QUIZ, interaction_id=assessment.pk, prompt=f"Generate a quiz on: {', '.join(m.title for m in modules)}",
+                          response_text=_quiz_text(assessment), checks=checks, evidence=evidence, metadata=metadata, links=links, force_judge=force_judge)
     except Exception as exc:
         logger.exception("Monitor failed on assessment %s", assessment.pk)
-        return _failed(InteractionKind.QUIZ, assessment.pk, exc, links)
+        evaluation = _failed(InteractionKind.QUIZ, assessment.pk, exc, links)
+    if assessment.auto_generated:
+        # Automatic quizzes wait for this check before going live. A check
+        # that could not run does not keep them offline for ever.
+        try:
+            from assessments.services.auto_quiz import after_check
+            after_check(assessment, evaluation)
+        except Exception:
+            logger.exception("Could not publish or hold automatic quiz %s after its check", assessment.pk)
+    return evaluation
 
 
 def evaluate(kind: str, interaction_id, force_judge: bool = False) -> Evaluation:
@@ -556,6 +565,10 @@ def review_incident(actor, incident: Incident, action: str, *, note: str = "", a
         if label:
             Feedback.objects.create(evaluation=incident.evaluation, incident=incident, reviewer=actor, label=label, note=note[:2000])
         audit.record(actor, f"ai_monitor.incident_{action}", incident, {"severity": incident.severity, "issue_type": incident.issue_type, "note": bool(note)}, request)
+    # A false positive or a closed incident releases an automatic quiz that was
+    # held because of it.
+    from assessments.services.auto_quiz import release_after_review
+    release_after_review(incident)
     return incident
 
 

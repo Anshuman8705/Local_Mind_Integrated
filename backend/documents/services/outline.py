@@ -8,6 +8,7 @@ reference a real index is discarded and the source hierarchy is used instead.
 """
 import html
 import logging
+import re
 from pathlib import Path
 
 from django.db import transaction
@@ -154,11 +155,303 @@ Rules:
     return {"document_title": clean_title(result.data.get("document_title")) or document.title, "chapters": chapters}
 
 
+# ------------------------------------------------------ tidying a new outline --
+#
+# PDFs of school textbooks give the heading finder two kinds of trouble.
+#
+# Titles come out garbled: letter-spaced display type ("Q U E S T I O N S"),
+# the same heading printed twice ("Activity 5.3 Activity 5.3") and a drop-cap
+# layer interleaved with the real one ("5.1 WHA 5.1 WHAT ARE LIFE PROCESSES?
+# T ARE LIFE PROCESSES?"). ``tidy_heading_title`` repairs those three shapes.
+#
+# And every box in the page gets a heading of its own, so "Questions",
+# "Activity 5.4" or a three-line "Do You Know?" become modules: a student's
+# module list fills with fragments, and each one costs a lesson and a quiz.
+# ``plan_merges`` folds such boxes, and any module too short to stand alone,
+# into the section they belong to (the one before them in the book).
+
+BOX_TITLE_RE = re.compile(
+    r"^(?:questions?|exercises?|activit(?:y|ies)(?:\s*[\d.]+)?|group\s+activity(?:\s*[\d.]+)?|"
+    r"do\s+you\s+know\??|did\s+you\s+know\??|more\s+to\s+know!?|think\s+it\s+over\??|"
+    r"think\s+and\s+act|let\s+us\s+recall|recall|test\s+yourself|try\s+this|fact\s+file|"
+    r"intext\s+questions?|check\s+your\s+progress)\s*[.!?:]*$",
+    re.I,
+)
+
+
+def tidy_heading_title(value) -> str:
+    """Repair letter-spaced, doubled and interleaved heading text."""
+    text = html.unescape(str(value or "")).strip()
+    # Words separated by two or more spaces, letters by one: "M O R E  T O  K N O W".
+    groups = re.split(r"\s{2,}", text)
+    spaced = [len(g.split()) >= 2 and all(len(tok) == 1 for tok in g.split()) for g in groups]
+    if any(s and len(g.split()) >= 3 for s, g in zip(spaced, groups)):
+        groups = ["".join(g.split()) if s else g for s, g in zip(spaced, groups)]
+    text = " ".join(" ".join(groups).split())
+    n = len(text)
+    # "Activity 5.3 Activity 5.3"
+    if n >= 3 and n % 2 == 1 and text[n // 2] == " " and text[: n // 2] == text[n // 2 + 1:]:
+        return text[: n // 2]
+    # "5.1 WHA 5.1 WHAT ARE LIFE PROCESSES? T ARE LIFE PROCESSES?" is P + F + S
+    # with P + S == F: a drop-cap copy split around the real title.
+    if n >= 8 and (n - 2) % 2 == 0:
+        size = (n - 2) // 2
+        for cut in range(1, size):
+            if text[cut] != " " or text[cut + 1 + size: cut + 2 + size] != " ":
+                continue
+            prefix, full, suffix = text[:cut], text[cut + 1: cut + 1 + size], text[cut + 2 + size:]
+            if prefix + suffix == full:
+                return full
+    return text
+
+
+_NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)*)\s")
+
+
+def _section_number(title):
+    match = _NUMBER_RE.match(tidy_heading_title(title))
+    return match.group(1) if match else None
+
+
+def is_box_title(title) -> bool:
+    return bool(BOX_TITLE_RE.match(tidy_heading_title(title)))
+
+
+def plan_merges(items, min_chars, max_chars):
+    """Decide which modules fold into which.
+
+    ``items`` are dicts in book order with ``key``, ``chapter``, ``title``,
+    ``text`` and optionally ``locked`` (cannot be removed: student work refers
+    to it). A module is a fragment when it is a textbook box or shorter than
+    ``min_chars``. A fragment folds into:
+
+    1. the module after it, when it is a short numbered heading that opens the
+       next numbered section ("5.2 Nutrition" with a few lines, before the
+       text and "5.2.1 Autotrophic Nutrition" that follow);
+    2. otherwise the nearest earlier real module in its chapter, or the
+       previous chapter's last one when its whole chapter is fragments;
+    3. failing that, the next real module of its chapter.
+
+    A fragment of ``min_chars`` or more never grows a module beyond
+    ``max_chars``; a shorter one always fits. Returns ``[(source_key, target_key,
+    "append" | "prepend")]`` in the order to apply them.
+    """
+    if not items:
+        return []
+    size = {it["key"]: len((it.get("text") or "").strip()) for it in items}
+    by_chapter = {}
+    for it in items:
+        by_chapter.setdefault(it["chapter"], []).append(it)
+
+    def opens_next(it):
+        rows = by_chapter[it["chapter"]]
+        number = _section_number(it["title"])
+        later = rows[rows.index(it) + 1:]
+        nxt = next((r for r in later if _section_number(r["title"])), None)
+        return bool(number and nxt and _section_number(nxt["title"]).startswith(number + "."))
+
+    def fragment(it):
+        if it.get("locked"):
+            return False
+        if is_box_title(it["title"]):
+            return True
+        if size[it["key"]] >= min_chars:
+            return False
+        # A short numbered heading is a real section whose text follows in the
+        # boxes after it ("5.2.4 Nutrition in Human Beings", then "Activity
+        # 5.5"...), unless it only introduces its first subsection ("5.2
+        # Nutrition" before "5.2.1").
+        return not _section_number(it["title"]) or opens_next(it)
+
+    all_fragments = {ch: all(fragment(it) for it in rows) for ch, rows in by_chapter.items()}
+
+    def target_ok(it):
+        # Text can land in a real section, including one student work refers
+        # to, but never in another box that could not be folded.
+        return not fragment(it) and not is_box_title(it["title"])
+
+    def next_real(it):
+        rows = by_chapter[it["chapter"]]
+        return next((r for r in rows[rows.index(it) + 1:] if target_ok(r)), None)
+
+    merges, done = [], set()
+
+    def fold(src, dst, mode):
+        # The size cap is for real content; a few lines of box always fit.
+        if dst is None or (size[src["key"]] >= min_chars and size[dst["key"]] + size[src["key"]] > max_chars):
+            return False
+        merges.append((src["key"], dst["key"], mode))
+        size[dst["key"]] += size[src["key"]]
+        done.add(src["key"])
+        return True
+
+    last_real = None
+    for it in items:
+        if not fragment(it):
+            if target_ok(it):
+                last_real = it
+            continue
+        nxt = next_real(it)
+        if _section_number(it["title"]) and opens_next(it) and nxt is not None:
+            if fold(it, nxt, "prepend"):
+                continue
+        if last_real is not None and (last_real["chapter"] == it["chapter"] or all_fragments[it["chapter"]]):
+            if fold(it, last_real, "append"):
+                continue
+        fold(it, nxt, "prepend")
+    # Prepends must land in book order: a later prepend into the same target
+    # sits closer to it, so apply prepends to a target in reverse.
+    appends = [m for m in merges if m[2] == "append"]
+    prepends = [m for m in merges if m[2] == "prepend"]
+    return appends + list(reversed(prepends))
+
+
+def _joined(target_text, title, text, mode):
+    block = f"## {title}\n\n{(text or '').strip()}".strip()
+    base = (target_text or "").strip()
+    if not base:
+        return block
+    return f"{base}\n\n{block}" if mode == "append" else f"{block}\n\n{base}"
+
+
+def tidy_outline(outline, sections):
+    """Clean titles and fold fragments into their sections in a freshly
+    planned outline. Returns (outline, report). Used for processing only; an
+    outline a person saved is kept exactly as they arranged it."""
+    from django.conf import settings
+
+    cfg = settings.LOCALMIND
+    lookup = section_lookup(sections or [])
+    report = {"merged_modules": [], "renamed": 0}
+    items, entries = [], {}
+    for c_pos, chapter in enumerate(outline.get("chapters") or []):
+        tidy = tidy_heading_title(chapter.get("title"))
+        if tidy and tidy != chapter.get("title"):
+            chapter["title"] = tidy
+            report["renamed"] += 1
+        for m_pos, module in enumerate(chapter.get("modules") or []):
+            tidy = tidy_heading_title(module.get("title"))
+            if tidy and tidy != module.get("title"):
+                module["title"] = tidy
+                report["renamed"] += 1
+            idx = module.get("source_heading_index")
+            section = lookup.get(int(idx)) if idx is not None and str(idx).lstrip("-").isdigit() else None
+            text = section.get("source_text", "") if section else str(module.get("source_text") or "")
+            key = (c_pos, m_pos)
+            entries[key] = {"module": module, "text": text, "section": section}
+            items.append({"key": key, "chapter": c_pos, "title": module.get("title") or "", "text": text})
+    if not cfg.get("OUTLINE_MERGE_SMALL", True):
+        return outline, report
+    merges = plan_merges(items, int(cfg.get("OUTLINE_MERGE_MIN_CHARS", 500)), int(cfg.get("OUTLINE_MERGE_MAX_CHARS", 12000)))
+    removed = set()
+    for source, target, mode in merges:
+        src, dst = entries[source], entries[target]
+        dst["text"] = _joined(dst["text"], src["module"].get("title"), src["text"], mode)
+        module = dst["module"]
+        if dst["section"] and module.get("source_heading_index") is not None:
+            module["start_page"] = dst["section"].get("start_page")
+            module["end_page"] = dst["section"].get("end_page")
+        module["source_heading_index"] = None
+        module["source_text"] = dst["text"]
+        pages = [p for p in (module.get("end_page"), (src["section"] or {}).get("end_page"), src["module"].get("end_page")) if p]
+        if pages:
+            module["end_page"] = max(pages)
+        removed.add(source)
+        report["merged_modules"].append({"title": src["module"].get("title"), "into": module.get("title")})
+    chapters = []
+    for c_pos, chapter in enumerate(outline.get("chapters") or []):
+        had_modules = bool(chapter.get("modules"))
+        chapter["modules"] = [m for m_pos, m in enumerate(chapter.get("modules") or []) if (c_pos, m_pos) not in removed]
+        # A chapter whose every module was folded into the previous chapter is
+        # gone; one the planner gave no modules keeps its own fallback.
+        if chapter["modules"] or not had_modules:
+            chapters.append(chapter)
+    outline["chapters"] = chapters
+    return outline, report
+
+
+def tidy_existing_document(document, *, dry_run=False, actor=None, titles=True):
+    """Apply the same tidying to a book that is already in use.
+
+    Titles are repaired in place. Fragments are folded into their sections as
+    for a new outline, except modules that student work refers to (progress, a
+    quiz attempt, an assignment, a tutor conversation), which stay where they
+    are. A folded module's unattempted automatic quiz and its lesson go with
+    it; the module that receives the text gets a new lesson and, if nobody has
+    attempted it, a new automatic quiz. Returns a report; with ``dry_run``
+    nothing changes.
+    """
+    from django.conf import settings
+    from django.db import transaction as db_transaction
+
+    from audit import services as audit
+
+    cfg = settings.LOCALMIND
+    modules = list(Module.objects.filter(chapter__document=document).select_related("chapter").order_by("chapter__order", "order"))
+    report = {"renamed": [], "merged": [], "kept_in_use": [], "chapters_removed": []}
+    items = []
+    for m in modules:
+        locked = _module_is_referenced(m)
+        items.append({"key": m.pk, "chapter": m.chapter_id, "title": m.title, "text": m.source_text, "locked": locked})
+        if locked and (is_box_title(m.title) or len(m.source_text.strip()) < int(cfg.get("OUTLINE_MERGE_MIN_CHARS", 500))):
+            report["kept_in_use"].append(m.title)
+    merges = plan_merges(items, int(cfg.get("OUTLINE_MERGE_MIN_CHARS", 500)), int(cfg.get("OUTLINE_MERGE_MAX_CHARS", 12000)))
+    by_pk = {m.pk: m for m in modules}
+    chapters = {m.chapter_id: m.chapter for m in modules}
+    for source, target, mode in merges:
+        report["merged"].append({"title": by_pk[source].title, "into": by_pk[target].title, "position": mode})
+    if titles:
+        for obj in list(chapters.values()) + modules:
+            tidy = tidy_heading_title(obj.title)
+            if tidy and tidy != obj.title:
+                report["renamed"].append({"from": obj.title, "to": tidy})
+    if dry_run or not (merges or report["renamed"]):
+        return report
+
+    changed = {}
+    with db_transaction.atomic():
+        if titles:
+            for obj in list(chapters.values()) + modules:
+                tidy = tidy_heading_title(obj.title)
+                if tidy and tidy != obj.title:
+                    obj.title = tidy
+                    obj.save(update_fields=["title", "updated_at"])
+        for source, target, mode in merges:
+            src, dst = by_pk[source], by_pk[target]
+            dst.source_text = _joined(dst.source_text, src.title, src.source_text, mode)
+            dst.source_heading_index = None
+            dst.source_missing = False
+            pages = [p for p in (dst.end_page, src.end_page) if p]
+            if pages:
+                dst.end_page = max(pages)
+            dst.save(update_fields=["source_text", "source_heading_index", "source_missing", "end_page", "updated_at"])
+            changed[dst.pk] = dst
+            _drop_module(src)
+        for chapter in chapters.values():
+            if not chapter.modules.exists() and not _chapter_has_own_references(chapter):
+                report["chapters_removed"].append(chapter.title)
+                chapter.delete()
+        from . import documents as doc_service
+        doc_service._bump_version(document, actor)
+        audit.record(actor, "document.tidied", document, {
+            "merged": len(report["merged"]), "renamed": len(report["renamed"]), "kept_in_use": len(report["kept_in_use"])})
+        if changed:
+            doc_service._queue_lessons_after_commit(document, "document.tidied", modules=list(changed.values()))
+    return report
+
+
 def build_proposed_outline(document, sections, headings):
+    """The outline processing proposes: the AI's plan when usable, the book's
+    own heading levels otherwise, then tidied (see ``tidy_outline``). The
+    tidying report rides along under ``_tidy_report``; persist_outline ignores
+    unknown keys."""
     outline = ai_outline(document, headings)
-    if outline:
-        return outline, "ai"
-    return source_hierarchy_outline(document.original_name, sections), "source_hierarchy"
+    source = "ai"
+    if not outline:
+        outline, source = source_hierarchy_outline(document.original_name, sections), "source_hierarchy"
+    outline, report = tidy_outline(outline, sections)
+    outline["_tidy_report"] = report
+    return outline, source
 
 
 def _fill_from_section(target, data, lookup):
@@ -300,7 +593,7 @@ def persist_outline(document, outline, sections, user_edited=False):
             if mid not in dropped_empty and _module_is_referenced(module):
                 raise Conflict(f'Module "{module.title}" has student activity and cannot be removed; unpublish and archive instead.',
                                code="MODULE_IN_USE", details={"module_id": mid})
-            module.delete()
+            _drop_module(module)
     for cid, chapter in existing_chapters.items():
         if cid not in kept_chapter_ids:
             if _chapter_is_referenced(chapter):
@@ -325,9 +618,20 @@ def _module_is_referenced(module):
     from assignments.models import Assignment
     from tutor.models import Conversation
 
-    return (Assessment.objects.filter(Q(module=module) | Q(source_modules=module)).exists()
+    # The module's own automatic quiz is not student activity until someone
+    # attempts it; it is removed with the module (see _drop_module).
+    quizzes = Assessment.objects.filter(Q(module=module) | Q(source_modules=module)).exclude(auto_generated=True, attempts__isnull=True)
+    return (quizzes.exists()
             or Assignment.objects.filter(Q(module=module) | Q(source_modules=module)).exists()
             or Conversation.objects.filter(module=module).exists())
+
+
+def _drop_module(module):
+    """Delete a module and the automatic quiz nobody has attempted yet (the
+    quiz protects the module from deletion otherwise)."""
+    from assessments.models import Assessment
+    Assessment.objects.filter(module=module, auto_generated=True, attempts__isnull=True).delete()
+    module.delete()
 
 
 def _chapter_has_own_references(chapter):
