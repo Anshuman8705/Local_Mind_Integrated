@@ -1,5 +1,7 @@
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
+from django.utils import timezone
 
 from core.models import TimeStampedUUIDModel
 
@@ -83,6 +85,22 @@ class Assessment(TimeStampedUUIDModel):
         return len(self.questions or [])
 
 
+def results_visible_q(prefix: str = "", now=None) -> Q:
+    """Query form of ``AssessmentAttempt.results_visible``.
+
+    ``prefix`` is the path from the queried model to the attempt ("" when
+    querying attempts directly). Every student-facing aggregate filters with
+    this, so a held score cannot reach a student through an average, a count
+    or a progress row when the attempt screen itself withholds it.
+    """
+    now = now or timezone.now()
+    a = f"{prefix}assessment__"
+    return (Q(**{f"{a}results_release": ResultsRelease.IMMEDIATE})
+            | Q(**{f"{prefix}results_released_at__isnull": False})
+            | Q(**{f"{a}results_released_at__isnull": False})
+            | Q(**{f"{a}results_release": ResultsRelease.SCHEDULED, f"{a}results_release_at__lte": now}))
+
+
 class AttemptStatus(models.TextChoices):
     IN_PROGRESS = "in_progress", "In progress"
     SUBMITTED = "submitted", "Submitted"
@@ -111,6 +129,13 @@ class AssessmentAttempt(TimeStampedUUIDModel):
     evaluated_at = models.DateTimeField(null=True, blank=True)
     # Set when this one attempt is released ahead of the rest.
     results_released_at = models.DateTimeField(null=True, blank=True)
+    # When this attempt's outcome was written to the student's ModuleProgress.
+    # Progress is only written once the result is visible to the student
+    # (otherwise "needs review" and the best percentage would reveal a held
+    # score), and only counted once, so a faculty re-evaluation of an attempt
+    # that was already recorded updates the progress row without inflating
+    # quiz_attempts.
+    outcome_recorded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-started_at"]
@@ -123,8 +148,6 @@ class AssessmentAttempt(TimeStampedUUIDModel):
     @property
     def results_visible(self):
         """Whether the student who owns this attempt may see its outcome."""
-        from django.utils import timezone
-
         mode = self.assessment.results_release
         if mode == ResultsRelease.IMMEDIATE:
             return True

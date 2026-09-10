@@ -25,7 +25,7 @@ export const student = {
   document: (id: string) => api<T.DocumentTree>(`/student/documents/${id}/`),
   module: (id: string) => api<T.ModuleFull>(`/student/modules/${id}/`),
   reportTime: (moduleId: string, seconds: number) => api<{ learning_seconds: number }>(`/student/modules/${moduleId}/time/`, { method: "POST", body: { seconds } }),
-  teach: (moduleId: string) => api<T.TeachResponse>(`/student/modules/${moduleId}/teach/`, { method: "POST" }),
+  teach: (moduleId: string) => api<T.TeachResponse>(`/student/modules/${moduleId}/teach/`),
   ask: (moduleId: string, question: string, conversation_id?: string) =>
     api<T.AskResponse>(`/student/modules/${moduleId}/ask/`, { method: "POST", body: { question, conversation_id } }),
   conversations: (module?: string) => api<T.Conversation[]>("/student/conversations/", { query: { module } }).then(list),
@@ -59,7 +59,11 @@ export const manage = {
   process: (id: string) => api<T.Document>(`/faculty/documents/${id}/process/`, { method: "POST" }),
   outline: (id: string) => api<T.Outline>(`/faculty/documents/${id}/outline/`),
   saveOutline: (id: string, chapters: T.OutlineChapter[], document_title?: string) =>
-    api<T.Document>(`/faculty/documents/${id}/outline/`, { method: "PUT", body: { chapters, document_title } }),
+    api<T.Document & { outline_report?: T.OutlineReport }>(`/faculty/documents/${id}/outline/`, { method: "PUT", body: { chapters, document_title } }),
+  moduleLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`),
+  regenerateLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`, { method: "POST", body: {} }),
+  generateLessons: (documentId: string, force = false) =>
+    api<T.LessonSummary & { queued: number }>(`/faculty/documents/${documentId}/lessons/`, { method: "POST", body: { force } }),
   transition: (id: string, action: "ready" | "publish" | "unpublish" | "archive") => api<T.Document>(`/faculty/documents/${id}/${action}/`, { method: "POST" }),
   deleteDocument: (id: string) => api<{ detail: string }>(`/faculty/documents/${id}/`, { method: "DELETE" }),
   editModule: (id: string, body: { title?: string; source_text?: string }) => api<T.ModuleFull>(`/faculty/modules/${id}/`, { method: "PATCH", body }),
@@ -114,7 +118,8 @@ export const admin = {
 
   users: (kind: "faculty" | "students", q: Q = {}) => api<T.Paginated<T.User>>(`/admin/${kind}/`, { query: q }).then(list),
   user: (kind: "faculty" | "students", id: string) => api<T.User>(`/admin/${kind}/${id}/`),
-  createUser: (kind: "faculty" | "students", body: Record<string, unknown>) => api<T.User>(`/admin/${kind}/`, { method: "POST", body }),
+  createUser: (kind: "faculty" | "students", body: Record<string, unknown>) => api<T.CreatedUser>(`/admin/${kind}/`, { method: "POST", body }),
+  resetPassword: (kind: "faculty" | "students", id: string) => api<T.PasswordReset>(`/admin/${kind}/${id}/reset-password/`, { method: "POST", body: {} }),
   updateUser: (kind: "faculty" | "students", id: string, body: Record<string, unknown>) => api<T.User>(`/admin/${kind}/${id}/`, { method: "PATCH", body }),
   userAction: (kind: "faculty" | "students", id: string, action: "discontinue" | "reactivate" | "reset-password", body: Record<string, unknown> = {}) =>
     api<T.User>(`/admin/${kind}/${id}/${action}/`, { method: "POST", body }),

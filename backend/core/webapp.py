@@ -18,7 +18,9 @@ IMMUTABLE_PREFIXES = ("_expo/", "assets/")
 def _resolve(path: str) -> Path | None:
     root: Path = settings.WEB_DIST
     candidate = (root / path).resolve() if path else None
-    if candidate and candidate.is_file() and str(candidate).startswith(str(root)):
+    # is_relative_to, not a string prefix: "/srv/web-old/x" starts with
+    # "/srv/web" but is outside it.
+    if candidate and candidate.is_file() and candidate.is_relative_to(root.resolve()):
         return candidate
     return None
 

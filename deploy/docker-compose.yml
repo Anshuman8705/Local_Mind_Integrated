@@ -45,6 +45,8 @@ services:
       MEDIA_ROOT: /app/media
       WEB_DIST: /app/web
       DJANGO_DEBUG: "false"
+      # nginx (the web service) is the one proxy in front of gunicorn.
+      TRUSTED_PROXY_COUNT: "1"
     volumes:
       - media:/app/media
       - static:/app/staticfiles
@@ -74,7 +76,6 @@ services:
         while true; do
           python manage.py requeue_stuck_documents || true
           python manage.py flushexpiredtokens || true
-          python manage.py monitor_ai --purge || true
           python manage.py monitor_ai --purge || true
           sleep 900
         done

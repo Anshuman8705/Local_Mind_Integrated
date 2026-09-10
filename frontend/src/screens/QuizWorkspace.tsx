@@ -38,6 +38,9 @@ export default function QuizWorkspace({ initialId, startNew }: { initialId?: str
   const needle = useDebounced(search, 150).trim().toLowerCase();
   const list = useAsync(() => manage.quizzes({ status: status || undefined }), [status]);
   const [selected, setSelected] = useState<string | null>(initialId ?? (startNew ? "new" : null));
+  // What the generator reported for the quiz just created (fewer questions
+  // than asked, dropped ones), shown on that quiz until another is opened.
+  const [createdNote, setCreatedNote] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => { if (initialId) setSelected(initialId); }, [initialId]);
   // On a wide window the right pane would sit empty, so the first quiz opens.
   useEffect(() => {
@@ -84,13 +87,14 @@ export default function QuizWorkspace({ initialId, startNew }: { initialId?: str
       {selected === "new" ? (
         <QuizBuilder
           onCancel={() => setSelected(list.data?.[0]?.id ?? null)}
-          onCreated={async (id) => { await list.reload(); setSelected(id); }}
+          onCreated={async (id, note) => { setCreatedNote(note ? { id, text: note } : null); await list.reload(); setSelected(id); }}
           onBack={split ? undefined : () => setSelected(null)}
         />
       ) : selected ? (
         <QuizDetail
           key={selected}
           id={selected}
+          note={createdNote?.id === selected ? createdNote.text : undefined}
           onChanged={list.reload}
           onDeleted={() => { setSelected(null); list.reload(); router.setParams?.({}); }}
           onBack={split ? undefined : () => setSelected(null)}
@@ -117,7 +121,7 @@ export default function QuizWorkspace({ initialId, startNew }: { initialId?: str
 /* One quiz                                                            */
 /* ------------------------------------------------------------------ */
 
-function QuizDetail({ id, onChanged, onDeleted, onBack }: { id: string; onChanged: () => void; onDeleted: () => void; onBack?: () => void }) {
+function QuizDetail({ id, onChanged, onDeleted, onBack, note }: { id: string; onChanged: () => void; onDeleted: () => void; onBack?: () => void; note?: string }) {
   const router = useRouter();
   const q = useAsync(() => manage.quiz(id), [id]);
   const [tab, setTab] = useState<Tab>("questions");
@@ -217,7 +221,8 @@ function QuizDetail({ id, onChanged, onDeleted, onBack }: { id: string; onChange
             action={<Button title="Release results" small onPress={() => release.run()} busy={release.busy} />}
           />
         ) : null}
-        {d.generator === "fallback" ? <Notice tone="warning" message="This draft was produced without the AI. Placeholder options are marked; rewrite them before publishing." /> : null}
+        {d.generator === "fallback" ? <Notice tone="warning" message="This older draft was produced without the AI. Placeholder options are marked; rewrite them before publishing." /> : null}
+        {note ? <Notice tone="warning" message={`Generated with notes: ${note}. Review the questions, add any that are missing by hand, or generate again.`} /> : null}
 
         {tab === "questions" ? <QuestionsTab quiz={d} editable={editable} edit={edit} editQ={editQ} /> : null}
         {tab === "sources" ? <SourcesTab quiz={d} /> : null}
@@ -435,7 +440,7 @@ function AttemptsTab({ quizId, mode, onRelease }: { quizId: string; mode: Releas
 /* New quiz                                                            */
 /* ------------------------------------------------------------------ */
 
-function QuizBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; onCreated: (id: string) => void; onBack?: () => void }) {
+function QuizBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; onCreated: (id: string, note?: string | null) => void; onBack?: () => void }) {
   const [modules, setModules] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [mcqs, setMcqs] = useState("6");
@@ -459,7 +464,7 @@ function QuizBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; on
   });
   const generate = useAction(async () => {
     const quiz = await manage.generateQuiz({ ...common(), num_mcqs: Number(mcqs), num_subjective: Number(written) });
-    onCreated(quiz.id);
+    onCreated(quiz.id, quiz.generation_warning);
   });
   const blank = useAction(async () => {
     const quiz = await manage.createQuiz({
@@ -485,7 +490,7 @@ function QuizBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; on
         <ErrorBanner message={generate.error ?? blank.error} />
         <SectionLabel>Written from</SectionLabel>
         <ModulePicker value={modules} onChange={setModules} />
-        <Hint>Questions are grounded only in the text of the modules you tick, sampled evenly so no one module dominates.</Hint>
+        <Hint>Questions are written only from the modules you tick. Every ticked module gets at least one question when you ask for as many questions as modules, and the rest follow how much text each module has.</Hint>
 
         <SectionLabel>Questions to generate</SectionLabel>
         <Rows>
@@ -510,7 +515,11 @@ function QuizBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; on
           </SettingRow>
         </Rows>
 
-        <Notice message="If the AI is unavailable you get a clearly labelled placeholder draft to edit; it cannot be published as it stands." />
+        {generate.busy ? (
+          <Notice message={`Writing ${Number(mcqs) + Number(written)} questions, a few at a time. On a laptop this takes about a minute for every three questions; keep this page open.`} />
+        ) : (
+          <Notice message="The tutor writes readable exam questions with four real options each. If it cannot write them right now, nothing is created and you can try again or write them yourself." />
+        )}
       </PaneScroll>
       <Foot>
         <Button title="Generate Questions" small onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />

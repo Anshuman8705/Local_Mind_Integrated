@@ -37,8 +37,12 @@ export interface Document {
   id: string; title: string; original_name: string; subject_id: string; subject_code?: string; status: DocumentStatus;
   file_type: string; file_size?: number; error_message?: string; content_version: number;
   chapter_count?: number; module_count?: number; outline_source?: string;
-  /** Ids of the modules with no source text. The detail endpoint returns a list, not a count. */
+  /** Ids of modules kept without text only because student work refers to them (hidden from students). */
   missing_source_modules?: string[];
+  /** Lesson generation counts over modules with text (detail endpoint only). */
+  lessons?: LessonSummary;
+  /** Detail endpoint only: chapters with each module's lesson_status. */
+  chapters?: OutlineChapter[];
   uploaded_by_name?: string; created_at: string; published_at?: string | null;
   processing_started_at?: string | null;
   /** Present only while a processing run is in flight. */
@@ -48,7 +52,7 @@ export interface DocumentTree { id: string; title: string; subject_id: string; c
 export interface Heading { index: number; level: number; title: string; start_page?: number; end_page?: number }
 export interface OutlineModule {
   id?: string; title: string; order: number; source_heading_index: number | null; source_text?: string;
-  source_missing?: boolean; availability?: ModuleAvailability;
+  source_missing?: boolean; availability?: ModuleAvailability; lesson_status?: LessonStatus;
 }
 export interface OutlineChapter { id?: string; title: string; order: number; source_heading_index?: number | null; modules: OutlineModule[] }
 export interface Outline { document_id: string; status: DocumentStatus; content_version: number; headings: Heading[]; outline_source?: string; document_title: string; chapters: OutlineChapter[] }
@@ -57,14 +61,18 @@ export interface QuizOption { key: string; text: string }
 export interface Question {
   id: string; type: "mcq" | "subjective"; question: string; options?: QuizOption[];
   correct_answer?: string; explanation?: string; expected_rubric?: string; source_reference?: string;
+  /** The chosen module a generated question was written from. */
+  source_module_id?: string | null;
 }
 export interface Quiz {
-  id: string; title: string; instructions?: string; kind: "module" | "chapter"; subject_id: string; module_id: string | null;
+  id: string; title: string; instructions?: string; kind: "module" | "chapter" | "selection"; subject_id: string; module_id: string | null;
   chapter_id: string | null; status: "draft" | "published" | "closed" | "superseded"; generator: "ai" | "fallback" | "manual";
   pass_percentage: number; max_attempts: number; time_limit_minutes: number | null; available_from: string | null; due_at: string | null;
   version: number; question_count?: number; attempt_count?: number; questions?: Question[];
   /** Modules the questions were written from, when the quiz targets a chosen set. */
   source_module_ids?: string[];
+  /** Returned by generation only: what fell short of the request, or null. */
+  generation_warning?: string | null;
   results_release?: "immediate" | "held" | "scheduled";
   results_release_at?: string | null;
   results_released_at?: string | null;
@@ -106,13 +114,44 @@ export interface Submission {
 
 export interface LessonSection { heading: string; explanation: string; source_reference: string }
 export interface Lesson { title: string; learning_objectives: string[]; sections: LessonSection[]; key_terms: { term: string; definition: string }[]; summary: string }
-export interface TeachResponse { module_id: string; lesson: Lesson; generator: "ai" | "fallback"; cached: boolean; ai_error?: string }
+/**
+ * The Lesson tab. Lessons are generated in the background and stored, so this
+ * never waits for the model. ready: the tutor's lesson. preparing: queued or
+ * being generated, lesson is null, ask again shortly. unavailable: generation
+ * failed or AI is off, lesson is a plain version built from the source text.
+ */
+export interface TeachResponse {
+  module_id: string; status: "ready" | "preparing" | "unavailable"; lesson: Lesson | null;
+  generator: "ai" | "fallback" | null; cached: boolean; ai_error?: string;
+  queue_position?: number | null; retry_scheduled?: boolean; generated_at?: string | null;
+}
+export type LessonStatus = "ready" | "pending" | "generating" | "failed" | "none";
+export interface LessonSummary { total: number; ready: number; pending: number; generating: number; failed: number; auto_generate: boolean }
+export interface LessonDetail {
+  module_id: string; status: LessonStatus; lesson: Lesson | null; model: string; generated_at: string | null;
+  attempts: number; last_error: string; next_attempt_at: string | null; queue_position: number | null; auto_generate: boolean;
+}
+export interface OutlineReport {
+  removed_empty_modules: { id: string | null; title: string; chapter: string }[];
+  hidden_empty_modules: { id: string; title: string; chapter: string }[];
+  removed_empty_chapters: { id: string | null; title: string }[];
+}
 export interface Message { id: string; role: "user" | "assistant"; content: string; grounded: boolean; source_reference: string; created_at: string }
 export interface AskResponse { conversation_id: string; message: Message; follow_up_suggestions: string[] }
 export interface Conversation { id: string; module_id: string; title: string; last_message_at: string | null; messages?: Message[] }
 
 export interface AuditLog { id: string; actor_email: string; actor_role: string; action: string; target_type: string; target_id: string; target_label: string; summary: Record<string, unknown>; created_at: string }
-export interface ImportReport { total_rows: number; created: number; already_existing: number; invalid: number; errors: { row: number; email?: string | null; errors: string[] }[] }
+/** unique: each account gets its own one-time password, returned once. shared: every account starts on the server's INITIAL_USER_PASSWORD. */
+export type InitialPasswordMode = "unique" | "shared";
+export interface IssuedPassword { initial_password?: string | null; initial_password_mode?: InitialPasswordMode }
+export type CreatedUser = User & IssuedPassword;
+export interface PasswordReset extends IssuedPassword { detail: string }
+export interface ImportReport {
+  total_rows: number; created: number; already_existing: number; invalid: number;
+  errors: { row: number; email?: string | null; errors: string[] }[];
+  created_users?: { row: number; id: string; email: string; full_name?: string; initial_password?: string | null }[];
+  initial_password_mode?: InitialPasswordMode;
+}
 
 export interface AIModelStatus { name: string; present: boolean }
 export type ComponentStatus = "READY" | "ERROR" | "MISSING";

@@ -11,3 +11,8 @@ wheelhouse/
 dist/
 frontend/dist/
 frontend/.expo/
+# Local tooling and database copies never belong in the repository or a bundle.
+db.sqlite3-wal
+db.sqlite3-shm
+db-backup/
+*.exe

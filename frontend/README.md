@@ -38,7 +38,7 @@ The quiz screen resumes an open attempt if one exists, shows a countdown when a 
 
 The faculty outline editor preserves ids on every chapter and module it round-trips, which is what lets the backend update in place instead of recreating rows. Reordering, adding and removing are enabled while the book is under review; once published, structure is frozen and the same screen switches to per-module text edits. Modules can be mapped to a parsed heading or given pasted text; ones with neither are flagged and cannot be opened or published.
 
-Quiz editing after attempts exist creates a new version server-side; the screen follows the new id. Fallback-generated quizzes (no AI available) are labelled and the publish button will be refused by the server until placeholders are rewritten.
+Quiz editing after attempts exist creates a new version server-side; the screen follows the new id. Quiz generation never produces placeholder questions: when the tutor cannot write them the request fails and nothing is created, and a shortfall is shown as a note on the new quiz.
 
 Uploads use `expo-document-picker` and send multipart with the picked file; on web the `File` object is appended directly, on native the `{uri, name, type}` triple.
 

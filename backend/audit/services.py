@@ -1,6 +1,6 @@
 from .models import AuditLog
 
-SENSITIVE_KEYS = {"password", "new_password", "old_password", "token", "refresh", "access"}
+SENSITIVE_KEYS = {"password", "new_password", "old_password", "current_password", "initial_password", "token", "refresh", "access"}
 
 
 def _scrub(data):

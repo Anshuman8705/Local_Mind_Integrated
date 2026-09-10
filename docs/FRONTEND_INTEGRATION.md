@@ -30,7 +30,7 @@ Subjects come from `GET /api/student/subjects/`; books per subject from `GET /ap
 
 `GET /api/student/modules/{id}/` returns `source_text` and marks the module in progress. While the module is on screen, accumulate seconds and post them with `POST /api/student/modules/{id}/time/` every minute or two and on leaving the screen; chunks over fifteen minutes are clamped, so post often rather than once.
 
-Lesson: `POST /api/student/modules/{id}/teach/`. Render `lesson.title`, `learning_objectives`, `sections[]` (each `heading`, `explanation`, `source_reference`), `key_terms[]` and `summary`. Show `generator: "fallback"` as "AI lesson unavailable, showing source summary" rather than hiding it. The lesson is cached server-side per module and content version, so repeat calls are cheap.
+Lesson: `GET /api/student/modules/{id}/teach/`. It never waits for the model; lessons are generated in the background. On `status: "ready"` render `lesson.title`, `learning_objectives`, `sections[]` (each `heading`, `explanation`, `source_reference`), `key_terms[]` and `summary`. On `"preparing"` there is no lesson yet: say it is being prepared and call again every few seconds. On `"unavailable"` render the plain `lesson` built from the text and say so rather than hiding it.
 
 Doubts: `POST /api/student/modules/{id}/ask/` with `question` and, to continue a thread, the `conversation_id` from the previous response. Render `message.content`, show `message.source_reference` as the citation, and offer `follow_up_suggestions` as tappable prompts. Do not send source text or history; the server holds both.
 
@@ -50,7 +50,7 @@ Book upload is multipart with `subject_id`, `file` (PDF, DOCX or DOC; the refere
 
 After review: `ready/`, `publish/` (may return `PUBLISH_ADMIN_ONLY` depending on deployment; show it as "sent to admin for publishing"), then open modules with `POST /api/faculty/modules/{id}/availability/` or a chapter at once. Students see nothing until a module is open.
 
-Quizzes: generate with `POST /api/faculty/quizzes/generate/`, show the draft for editing (fallback drafts contain placeholder distractors that must be rewritten; publishing them fails with `PLACEHOLDER_QUESTIONS`), save edits with `PATCH`, publish with `status/`. Editing after attempts exist returns a new quiz id; update the list. Attempts and re-evaluation live under `.../attempts/` and `/api/faculty/quiz-attempts/{id}/re-evaluate/`.
+Quizzes: generate with `POST /api/faculty/quizzes/generate/`, show the draft for editing (show `generation_warning` when present; a 503 `QUIZ_GENERATION_FAILED` means nothing was created), save edits with `PATCH`, publish with `status/`. Editing after attempts exist returns a new quiz id; update the list. Attempts and re-evaluation live under `.../attempts/` and `/api/faculty/quiz-attempts/{id}/re-evaluate/`.
 
 Assignments mirror quizzes, with `rubric` points summing to `max_score` and evaluation at `/api/faculty/assignment-submissions/{id}/evaluate/`.
 

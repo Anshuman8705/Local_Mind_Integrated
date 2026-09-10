@@ -92,19 +92,41 @@ def resolve_student(actor, student_id):
 
 # ------------------------------------------------------------- student ------
 
-def student_overview(student, window=(None, None)):
+def _released_attempts(qs):
+    """Only attempts whose result the student has been given."""
+    from assessments.models import results_visible_q
+    return qs.filter(results_visible_q())
+
+
+def _released_submissions(qs):
+    return qs.filter(AssignmentSubmission.visible_q())
+
+
+def student_overview(student, window=(None, None), released_only=False):
+    """``released_only`` is True when the student reads their own overview:
+    held quiz and assignment results then stay out of every count and average.
+    Faculty and admins looking at a student see everything."""
+    if released_only:
+        from learning.services import settle_student_results
+        settle_student_results(student)
     enrollments = Enrollment.objects.filter(student=student, status="active").select_related("subject")
     subjects = [e.subject for e in enrollments]
-    modules = Module.objects.filter(chapter__document__subject__in=subjects, chapter__document__status="published")
+    modules = Module.objects.filter(chapter__document__subject__in=subjects, chapter__document__status="published", source_missing=False)
     progress = ModuleProgress.objects.filter(student=student, module__in=modules)
     status_counts = {row["status"]: row["n"] for row in progress.values("status").annotate(n=Count("id"))}
     total_modules = modules.count()
     completed = status_counts.get("completed", 0)
 
     attempts = _between(AssessmentAttempt.objects.filter(student=student, status="evaluated"), "submitted_at", window)
-    quiz_stats = attempts.aggregate(n=Count("id"), avg=Avg("percentage"), passed=Count("id", filter=Q(passed=True)))
     submissions = _between(AssignmentSubmission.objects.filter(student=student), "submitted_at", window)
-    sub_stats = submissions.aggregate(n=Count("id"), evaluated=Count("id", filter=Q(status="evaluated")), avg=Avg("score"), late=Count("id", filter=Q(is_late=True)))
+    # Counts of what was submitted are the student's own knowledge; outcomes
+    # (passed, averages, evaluated) come only from released results.
+    scored_attempts = _released_attempts(attempts) if released_only else attempts
+    scored_submissions = _released_submissions(submissions) if released_only else submissions
+    quiz_stats = {**attempts.aggregate(n=Count("id")),
+                  **scored_attempts.aggregate(avg=Avg("percentage"), passed=Count("id", filter=Q(passed=True)))}
+    sub_stats = {**submissions.aggregate(n=Count("id"), late=Count("id", filter=Q(is_late=True))),
+                 **scored_submissions.aggregate(evaluated=Count("id", filter=Q(status="evaluated")), avg=Avg("score"))}
 
     events = _between(ActivityEvent.objects.filter(user=student), "occurred_at", window)
     time_by_kind = {row["kind"]: row["s"] for row in events.values("kind").annotate(s=Sum("seconds"))}
@@ -145,10 +167,13 @@ def student_overview(student, window=(None, None)):
     }
 
 
-def student_subject_detail(student, subject, window=(None, None)):
+def student_subject_detail(student, subject, window=(None, None), released_only=False):
     if not student_enrolled_in_subject(student, subject):
         raise NotFound("Subject not found.")
-    modules = (Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published")
+    if released_only:
+        from learning.services import settle_student_results
+        settle_student_results(student)
+    modules = (Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published", source_missing=False)
                .select_related("chapter", "chapter__document").order_by("chapter__document__title", "chapter__order", "order"))
     progress = {p.module_id: p for p in ModuleProgress.objects.filter(student=student, module__in=modules)}
     rows = []
@@ -165,6 +190,8 @@ def student_subject_detail(student, subject, window=(None, None)):
         })
     attempts = _between(AssessmentAttempt.objects.filter(student=student, assessment__subject=subject, status="evaluated"), "submitted_at", window)
     subs = _between(AssignmentSubmission.objects.filter(student=student, assignment__subject=subject), "submitted_at", window)
+    if released_only:
+        attempts, subs = _released_attempts(attempts), _released_submissions(subs)
     return {
         "subject": {"id": str(subject.id), "code": subject.code, "name": subject.name},
         "modules": rows,
@@ -186,7 +213,7 @@ def subject_summary(actor, subject, window=(None, None)):
         raise NotFound("Subject not found.")
     enrolled = Enrollment.objects.filter(subject=subject, status="active")
     students = User.objects.filter(pk__in=enrolled.values("student"))
-    modules = Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published")
+    modules = Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published", source_missing=False)
     total_cells = students.count() * modules.count()
     completed_cells = ModuleProgress.objects.filter(student__in=students, module__in=modules, status="completed").count()
 
@@ -237,7 +264,7 @@ def subject_students(actor, subject, window=(None, None)):
     """One row per enrolled student: completion, quiz average, time, last seen."""
     if not faculty_manages_subject(actor, subject):
         raise NotFound("Subject not found.")
-    modules = Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published")
+    modules = Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published", source_missing=False)
     total = modules.count()
     enrolled = Enrollment.objects.filter(subject=subject, status="active").select_related("student", "student__student_profile").order_by("student__full_name")
 
@@ -280,7 +307,7 @@ def subject_modules(actor, subject):
         raise NotFound("Subject not found.")
     students = Enrollment.objects.filter(subject=subject, status="active").values("student")
     n_students = students.count()
-    modules = (Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published")
+    modules = (Module.objects.filter(chapter__document__subject=subject, chapter__document__status="published", source_missing=False)
                .select_related("chapter", "chapter__document").order_by("chapter__document__title", "chapter__order", "order"))
     prog = {}
     for r in ModuleProgress.objects.filter(module__in=modules, student__in=students).values("module", "status").annotate(n=Count("id")):

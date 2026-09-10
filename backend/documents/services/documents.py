@@ -36,7 +36,18 @@ def validate_upload(uploaded_file):
     cfg = settings.LOCALMIND
     ext = Path(uploaded_file.name or "").suffix.lower()
     if ext not in cfg["ALLOWED_UPLOAD_EXTENSIONS"]:
-        raise ValidationFailed("Supported files are PDF (.pdf), Word (.docx) and legacy Word (.doc).", code="UNSUPPORTED_FILE_TYPE")
+        raise ValidationFailed("Supported files are PDF (.pdf) and Word (.docx); legacy Word (.doc) where the server can convert it.",
+                               code="UNSUPPORTED_FILE_TYPE")
+    if ext == ".doc":
+        from .parser import legacy_doc_support
+        supported, reason = legacy_doc_support()
+        if not supported:
+            # Refuse now with the fix, rather than store the file and fail in
+            # processing minutes later with a converter error.
+            raise ValidationFailed(
+                f"This server cannot read legacy Word (.doc) files: {reason}. Open the file in Word or LibreOffice "
+                "and save it as .docx (or export it as PDF), then upload that.",
+                code="LEGACY_WORD_UNSUPPORTED")
     if uploaded_file.size == 0:
         raise ValidationFailed("The uploaded file is empty.", code="EMPTY_FILE")
     if uploaded_file.size > cfg["MAX_UPLOAD_MB"] * 1024 * 1024:
@@ -174,7 +185,7 @@ def run_processing(document_id):
         set_progress(document_id, 4, "structure",
                      f"Creating {module_count} module{'' if module_count == 1 else 's'} across {len(chapters)} chapter{'' if len(chapters) == 1 else 's'}")
         with transaction.atomic():
-            outline_service.persist_outline(document, outline, parsed["sections"], user_edited=False)
+            report = outline_service.persist_outline(document, outline, parsed["sections"], user_edited=False)
             document.processed_markdown_path = parsed["markdown_path"]
             document.extracted_headings = parsed["headings"]
             document.outline_source = source
@@ -184,8 +195,16 @@ def run_processing(document_id):
             document.error_message = ""
             document.save()
         clear_progress(document_id)
-        audit.record(None, "document.processed", document, {"outline_source": source, "chapters": len(outline["chapters"])})
+        audit.record(None, "document.processed", document, {
+            "outline_source": source, "chapters": document.chapters.count(),
+            "modules": Module.objects.filter(chapter__document=document).count(),
+            "empty_modules_removed": len(report["removed_empty_modules"])})
         logger.info("Processed document %s (%s)", document_id, source)
+        # Lessons for every module start now, in the background, so they are
+        # ready by the time faculty publish and students open the Lesson tab.
+        from tutor import lessons
+        lessons.on_content_changed(list(Module.objects.filter(chapter__document=document).select_related("chapter__document")),
+                                   reason="document.processed")
     except NoExtractableContent as exc:
         # Expected outcome for blank or unreadable files: a clear message, no traceback.
         logger.warning("Processing of document %s produced no content: %s", document_id, exc)
@@ -236,6 +255,18 @@ def _bump_version(document, actor):
     document.save(update_fields=["content_version", "last_edited_by", "last_edited_at", "updated_at"])
 
 
+def _outline_fingerprint(document):
+    """What students read: chapter and module identity, order, titles and text.
+    Used to tell a real outline edit from a save that changed nothing."""
+    import hashlib
+
+    rows = [("c", str(c.id), c.order, c.title) for c in document.chapters.order_by("order", "id")]
+    rows += [("m", str(m.id), str(m.chapter_id), m.order, m.title,
+              hashlib.sha256((m.source_text or "").encode()).hexdigest())
+             for m in Module.objects.filter(chapter__document=document).order_by("chapter_id", "order", "id")]
+    return hashlib.sha256(repr(rows).encode()).hexdigest()
+
+
 @transaction.atomic
 def replace_outline(actor, document, outline, request=None):
     _require_manage(actor, document.subject)
@@ -246,14 +277,37 @@ def replace_outline(actor, document, outline, request=None):
     # deletion guard in persist_outline still refuses to remove a module that
     # has student progress or a quiz built on it.
     sections = load_processed_sections(document)
-    outline_service.persist_outline(document, outline, sections, user_edited=True)
+    before = _outline_fingerprint(document)
+    report = outline_service.persist_outline(document, outline, sections, user_edited=True)
     document.outline_source = "edited"
     if document.status == DocumentStatus.READY:
         document.status = DocumentStatus.UNDER_REVIEW
     document.save(update_fields=["outline_source", "status", "updated_at"])
-    _bump_version(document, actor)
-    audit.record(actor, "document.outline_edited", document, {"version": document.content_version}, request)
+    # The content version keys every cached lesson, tutor answer and chunk set
+    # for the book. A save that changed nothing students read must not throw
+    # all of that away: on a CPU host each lesson costs tens of seconds to
+    # regenerate.
+    changed = _outline_fingerprint(document) != before
+    if changed:
+        _bump_version(document, actor)
+    audit.record(actor, "document.outline_edited", document, {
+        "version": document.content_version, "changed": changed,
+        "empty_modules_removed": [m["title"] for m in report["removed_empty_modules"]]}, request)
+    # New modules and modules whose text changed need a lesson; the rest keep
+    # theirs (request_lessons compares each module's text with its lesson's).
+    if changed:
+        _queue_lessons_after_commit(document, "document.outline_edited")
+    document.outline_report = report
     return document
+
+
+def _queue_lessons_after_commit(document, reason, modules=None):
+    def queue():
+        from tutor import lessons
+        targets = modules if modules is not None else list(
+            Module.objects.filter(chapter__document=document).select_related("chapter__document"))
+        lessons.on_content_changed(targets, reason=reason)
+    transaction.on_commit(queue)
 
 
 @transaction.atomic
@@ -288,14 +342,29 @@ def edit_module(actor, module, title=None, source_text=None, request=None):
         changes["title"] = [module.title, outline_service.clean_title(title)]
         module.title = outline_service.clean_title(title)
     if source_text is not None:
+        if not source_text.strip():
+            # A module without text would be removed from the outline on the
+            # next save and can never be opened by students, so it is refused
+            # here rather than stored.
+            raise ValidationFailed("A module needs source text. To take it out of the book, remove the module instead.",
+                                   code="EMPTY_SOURCE_TEXT")
         changes["source_text"] = True
         module.source_text = source_text
-        module.source_missing = not source_text.strip()
+        module.source_missing = False
+        # Hand-edited text is an override. While the module stays mapped to a
+        # heading, the next outline save refills it from that section and the
+        # edit is silently lost (the outline screen already clears the mapping
+        # client-side for the same reason; this makes the API behave the same).
+        if module.source_heading_index is not None:
+            changes["detached_from_heading"] = module.source_heading_index
+            module.source_heading_index = None
     if changes:
         module.is_user_edited = True
         module.save()
         _bump_version(document, actor)
         audit.record(actor, "module.edited", module, changes, request)
+        if "source_text" in changes:
+            _queue_lessons_after_commit(document, "module.edited", modules=[module])
     return module
 
 
@@ -316,12 +385,11 @@ def mark_ready(actor, document, request=None):
 def _validate_publishable(document):
     if not document.chapters.exists():
         raise Conflict("Cannot publish a document with no chapters.", code="EMPTY_OUTLINE")
-    if not Module.objects.filter(chapter__document=document).exists():
+    # Modules without text are removed when the outline is saved; the only ones
+    # left are those student work refers to, which stay hidden from students,
+    # so they no longer block publishing.
+    if not Module.objects.filter(chapter__document=document, source_missing=False).exists():
         raise Conflict("Cannot publish a document with no modules.", code="NO_MODULES")
-    missing = outline_service.missing_source_modules(document)
-    if missing:
-        raise Conflict("Every module must have source text before publishing.", code="MODULES_MISSING_SOURCE",
-                       details={"modules": [{"id": str(m["id"]), "title": m["title"], "chapter": m["chapter__title"]} for m in missing]})
 
 
 @transaction.atomic
@@ -339,6 +407,9 @@ def publish(actor, document, request=None):
     document.published_by, document.published_at, document.unpublished_at = actor, now, None
     document.save()
     audit.record(actor, "document.published", document, {"version": document.content_version}, request)
+    # Lessons were queued at processing time; this only fills gaps (auto
+    # generation switched on since, or a lesson that gave up after failures).
+    _queue_lessons_after_commit(document, "document.published")
     # Publishing is what makes a book visible to students, so open every module
     # that has source text. Faculty can still lock modules or chapters afterwards
     # to pace the course; a re-publish of a book that already has open modules

@@ -34,7 +34,11 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 
 | Variable | Default | Notes |
 |---|---|---|
-| `INITIAL_USER_PASSWORD` | `Welcome@LocalMind1` | Password given to every newly created or reset account. Must satisfy Django's validators. Change it per deployment. |
+| `INITIAL_PASSWORD_MODE` | `shared` | `shared`: every new account, Excel import row and admin reset starts on `INITIAL_USER_PASSWORD` and must change it at first login. `unique` (opt-in): each gets its own random one-time password, returned once and shown once in the admin screens (CSV for imports). With `shared`, anyone who knows the initial password can sign in to an account its owner has not claimed yet, which the per-account lockout below limits but does not prevent. |
+| `INITIAL_USER_PASSWORD` | `Welcome@LocalMind1` | The password new and reset accounts start on (shared mode). Must satisfy Django's validators. Change it per deployment. `python manage.py reset_onboarding_passwords` puts accounts that have not chosen a password back on it. |
+| `LOGIN_MAX_FAILURES` | `10` | Failed sign-ins for one email, inside the window below, after which that email is refused with `429 TOO_MANY_ATTEMPTS` even with the right password. Counted from the audit log, so it holds across workers and restarts. `0` disables it. |
+| `LOGIN_LOCKOUT_MINUTES` | `15` | The sliding window for the count above. A successful sign-in resets the count. |
+| `TRUSTED_PROXY_COUNT` | `0` | Reverse proxies in front of Django. Decides which `X-Forwarded-For` entry is the client for login throttling and the audit log. `0` ignores the header (standalone launcher); `1` for one nginx or Caddy in front (set by `deploy/docker-compose.yml` and `deploy/localmind.service`). Too high lets clients forge their address. |
 | `ACCESS_TOKEN_MINUTES` | `60` | Access token lifetime. |
 | `REFRESH_TOKEN_DAYS` | `7` | Refresh token lifetime; refresh rotates and blacklists. |
 | `SESSION_HEARTBEAT_TIMEOUT_MINUTES` | `10` | An application session with no heartbeat for this long is closed at its last heartbeat. Set it a little above the client's heartbeat interval. |
@@ -43,6 +47,11 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 
 | Variable | Default | Notes |
 |---|---|---|
+| `LESSON_AUTO_GENERATE` | `true` | Queue a lesson for every module when a book is processed and whenever a module's text changes; a background worker in the web process generates them and students read the stored result. `false`: lessons are generated only when faculty press Generate Lessons, and students see a plain lesson built from the text until then. |
+| `LESSON_MAX_ATTEMPTS` | `3` | A reply the model cannot shape into a lesson is retried this many times, with growing gaps, before the module waits for faculty to ask again. An unavailable or busy model does not use up attempts. |
+| `LESSON_RETRY_MINUTES` | `10` | Gap before a failed lesson is retried; doubles per attempt, capped at six times this. |
+| `LESSON_STALE_MINUTES` | `15` | A lesson still marked generating after this long belonged to a process that stopped; any worker may take it again. |
+| `LESSON_WORKER_IDLE_SECONDS` | `30` | How long the idle worker thread waits for new work before exiting; the next request or process start wakes it. |
 | `FACULTY_CAN_PUBLISH` | `true` | When false, faculty may mark a book ready but only administrators can publish (`PUBLISH_ADMIN_ONLY`). |
 | `DEFAULT_PASS_PERCENTAGE` | `65` | Pass mark applied when a quiz does not set its own. |
 | `MAX_QUIZ_DURATION_HOURS` | `6` | Upper bound on server-computed attempt time, so an abandoned tab does not record days. |
@@ -52,7 +61,7 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 
 | Variable | Default | Notes |
 |---|---|---|
-| `AI_ENABLED` | `true` | Master switch. When false every AI-dependent feature uses its fallback (source-hierarchy outlines, placeholder quizzes that cannot be published, deterministic lessons) and free-form questions return `AI_UNAVAILABLE`. Always forced false under the test runner. |
+| `AI_ENABLED` | `true` | Master switch. When false every AI-dependent feature uses its fallback (source-hierarchy outlines, plain lessons built from the text; quiz generation returns `QUIZ_GENERATION_FAILED` instead of a placeholder draft) and free-form questions return `AI_UNAVAILABLE`. Always forced false under the test runner. |
 | `AI_PROVIDER` | `llamacpp` | `llamacpp` runs the model inside the backend from a local GGUF file (default; fully offline, nothing to install). `ollama` talks to a local Ollama daemon. The gateway is the place to add a cloud provider later. |
 | `AI_MODEL_PATH` | *(empty)* | llamacpp: absolute path to the `.gguf`. When empty the file is `backend/models/<AI_MODEL_FILE>`. |
 | `AI_MODEL_FILE` | `Qwen3-1.7B-Q4_K_M.gguf` | llamacpp: file name under `backend/models/`; validated (size, GGUF header) before loading. |
@@ -79,6 +88,8 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 
 | Variable | Default | Notes |
 |---|---|---|
+| `API_DOCS_ENABLED` | same as `DJANGO_DEBUG` | Serve the live OpenAPI schema (`/api/schema/`) and Swagger UI (`/api/docs/`). Off in production by default: the schema maps every endpoint for anyone who can reach the server, and Swagger UI loads its scripts from a CDN, so it does not work offline anyway. `backend/openapi.yaml` is the committed copy. |
+| `GUNICORN_WORKERS` / `GUNICORN_THREADS` | `1` / `8` | Docker image only. Each worker loads its own copy of the model (about 1.8 GB at the default context) and keeps its own pre-warm queue, monitor queue and answer cache, so add workers only with RAM for another copy. |
 | `SESSION_COOKIE_SECURE` | `true` | Only relevant to the Django admin site. |
 | `CSRF_COOKIE_SECURE` | `true` | Same. |
 | `SECURE_SSL_REDIRECT` | `false` | Set true when Django itself terminates TLS; leave false behind a reverse proxy that already redirects. |
@@ -98,6 +109,7 @@ DJANGO_CORS_ALLOWED_ORIGINS=https://app.example.edu
 DATABASE_URL=postgres://localmind:<password>@127.0.0.1:5432/localmind
 MEDIA_ROOT=/var/lib/localmind/media
 INITIAL_USER_PASSWORD=<department policy>
+TRUSTED_PROXY_COUNT=1
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_TUTOR_MODEL=qwen3:1.7b
 OLLAMA_OUTLINE_MODEL=qwen3:1.7b

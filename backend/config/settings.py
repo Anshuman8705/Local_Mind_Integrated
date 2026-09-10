@@ -161,6 +161,13 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"login": "20/min", "ai": "60/min"},
+    # How many reverse proxies sit in front of Django. DRF throttles key on the
+    # client address; with this unset DRF trusts the whole X-Forwarded-For
+    # header, which any client can write, so the login limit could be dodged
+    # by changing that header on every request. 0 (the standalone launcher,
+    # no proxy) uses the socket address; 1 (nginx in front, as in deploy/)
+    # uses the address nginx appended.
+    "NUM_PROXIES": env_int("TRUSTED_PROXY_COUNT", 0),
 }
 
 SIMPLE_JWT = {
@@ -172,6 +179,10 @@ SIMPLE_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# Live OpenAPI schema and Swagger UI at /api/schema/ and /api/docs/. On in
+# development, off in production unless API_DOCS_ENABLED=true.
+API_DOCS_ENABLED = env_bool("API_DOCS_ENABLED", DEBUG or TESTING)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "LocalMind API",
@@ -217,6 +228,16 @@ LOCALMIND = {
     "MAX_UPLOAD_MB": env_int("MAX_UPLOAD_MB", 100),
     "ALLOWED_UPLOAD_EXTENSIONS": {".pdf", ".docx", ".doc"},
     "INITIAL_USER_PASSWORD": env_str("INITIAL_USER_PASSWORD", "Welcome@LocalMind1"),
+    # shared (default): every new account, Excel import row and admin reset
+    # starts on INITIAL_USER_PASSWORD and must change it at first login, as the
+    # platform always did. unique (opt-in): each gets its own random one-time
+    # password, returned once and shown once in the admin screens.
+    "INITIAL_PASSWORD_MODE": env_str("INITIAL_PASSWORD_MODE", "shared").strip().lower(),
+    # Per-account lockout after repeated failed logins, counted from the audit
+    # log so it holds across gunicorn workers and restarts. Keyed by the email
+    # typed, so it reveals nothing about whether the account exists.
+    "LOGIN_MAX_FAILURES": env_int("LOGIN_MAX_FAILURES", 10),
+    "LOGIN_LOCKOUT_MINUTES": env_int("LOGIN_LOCKOUT_MINUTES", 15),
     "FACULTY_CAN_PUBLISH": env_bool("FACULTY_CAN_PUBLISH", True),
     "SESSION_HEARTBEAT_TIMEOUT_MINUTES": env_int("SESSION_HEARTBEAT_TIMEOUT_MINUTES", 10),
     "MAX_QUIZ_DURATION_HOURS": env_int("MAX_QUIZ_DURATION_HOURS", 6),
@@ -295,6 +316,27 @@ AI = {
     "MAX_TOKENS_MONITOR": env_int("AI_MONITOR_MAX_TOKENS", 0),
     # Seconds to cache the provider readiness probe used by /api/health/.
     "HEALTH_CACHE_SECONDS": env_int("AI_HEALTH_CACHE_SECONDS", 30),
+}
+
+# Lessons are generated in the background (tutor/lessons.py) and read from the
+# database, so a student never waits for the model when opening a lesson.
+LESSONS = {
+    # Queue a lesson for every module when a book is processed and whenever a
+    # module's text changes. false: lessons are generated only when faculty
+    # press Generate lessons (students see a plain lesson from the text until then).
+    "AUTO_GENERATE": env_bool("LESSON_AUTO_GENERATE", True),
+    # A reply the model cannot shape into a lesson is retried this many times,
+    # with growing gaps, before the module waits for faculty to ask again.
+    "MAX_ATTEMPTS": env_int("LESSON_MAX_ATTEMPTS", 3),
+    # Base gap before a failed lesson is retried (doubles per attempt, capped at
+    # six times this). An unavailable model is retried at this interval forever.
+    "RETRY_MINUTES": env_int("LESSON_RETRY_MINUTES", 10),
+    # A lesson still "generating" after this long belonged to a process that
+    # stopped; another worker may claim it.
+    "STALE_MINUTES": env_int("LESSON_STALE_MINUTES", 15),
+    # How long the idle worker thread lingers before exiting.
+    "IDLE_EXIT_SECONDS": env_int("LESSON_WORKER_IDLE_SECONDS", 30),
+    "YIELD_SECONDS": 1.0,
 }
 
 # AI Monitoring & Guard: the independent evaluation layer (ai_monitor app).

@@ -635,6 +635,27 @@ def docling_artifacts_dir():
     return None
 
 
+def legacy_doc_support() -> tuple[bool, str]:
+    """Whether this machine can read a legacy binary Word (.doc) file.
+
+    Docling reads .doc only in recent 2.x releases, and only by handing the
+    file to LibreOffice to convert it to .docx first. The offline bundle ships
+    neither guarantee, so a .doc used to be accepted at upload and then fail in
+    processing. Checked at upload time instead. Returns (supported, reason).
+    """
+    import shutil
+
+    try:
+        from docling.datamodel.base_models import InputFormat
+    except Exception as exc:  # docling missing or broken
+        return False, f"the document parser (Docling) is not installed ({exc.__class__.__name__})"
+    if not hasattr(InputFormat, "DOC"):
+        return False, "the installed Docling release cannot read .doc files"
+    if not (shutil.which("soffice") or shutil.which("libreoffice")):
+        return False, "LibreOffice, which Docling uses to convert .doc files, is not installed on the server"
+    return True, ""
+
+
 def _convert_legacy_or_other(source: Path):
     from docling.document_converter import DocumentConverter
 

@@ -3,10 +3,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { manage } from "@/api/endpoints";
-import type { Document, OutlineChapter, OutlineModule } from "@/api/types";
+import type { Document, LessonDetail, LessonStatus, LessonSummary, OutlineChapter, OutlineModule, OutlineReport } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
-import { Badge, Button, Card, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, Panel, ProgressBar, Row, Screen, colors, confirmAsync, confirmDeleteAsync, fmtSeconds, radius, radiusSm, space } from "@/ui";
+import { Badge, Button, Card, Chip, Empty, ErrorBanner, H1, H2, Input, Loading, Notice, P, Panel, ProgressBar, Row, Screen, colors, confirmAsync, confirmDeleteAsync, fmtSeconds, radius, radiusSm, space } from "@/ui";
+import { LessonView } from "@/ui/LessonView";
 
 /** Which node of the outline the right-hand pane is editing. */
 type Selection = { ci: number; mi: number | null };
@@ -18,6 +19,22 @@ export default function DocumentScreen() {
   const d = doc.data;
   // Poll while processing.
   useEffect(() => { if (d?.status !== "processing") return; const t = setInterval(doc.reload, 3000); return () => clearInterval(t); }, [d?.status, doc.reload]);
+  // Lessons are generated in the background after processing and after edits.
+  // While any are queued the counts and the tree's lesson marks refresh; this
+  // reloads the book's details only, never the outline being edited.
+  const lessonsBusy = !!d?.lessons && d.lessons.pending + d.lessons.generating > 0;
+  const { setData: setDoc } = doc;
+  useEffect(() => {
+    if (!lessonsBusy) return;
+    const t = setInterval(async () => { try { setDoc(await manage.document(id)); } catch { /* shown on the next full reload */ } }, 10000);
+    return () => clearInterval(t);
+  }, [lessonsBusy, id, setDoc]);
+  const lessonStatus = useMemo(() => {
+    const map: Record<string, LessonStatus> = {};
+    for (const c of d?.chapters ?? []) for (const m of c.modules) if (m.id && m.lesson_status) map[m.id] = m.lesson_status;
+    return map;
+  }, [d?.chapters]);
+  const queueLessons = useAction(async () => { await manage.generateLessons(id); setDoc(await manage.document(id)); });
   // The outline editor holds its edits in local state until Save. Marking a
   // book ready or publishing it used to reload from the server, which threw
   // those edits away silently: modules deleted a moment earlier reappeared.
@@ -108,9 +125,10 @@ export default function DocumentScreen() {
           {actions}
         </View>
         <ErrorBanner message={doc.error ?? act.error ?? remove.error} onRetry={doc.error ? doc.reload : undefined} />
-        {missingSource ? <View style={ws.band}><Notice tone="warning" message={`${missingSource} module${missingSource === 1 ? "" : "s"} have no source text. Point them at a heading or paste text before publishing.`} /></View> : null}
+        {missingSource ? <View style={ws.band}><Notice tone="warning" message={`${missingSource} module${missingSource === 1 ? " has" : "s have"} no source text but ${missingSource === 1 ? "is" : "are"} kept because a quiz, an assignment or student work refers to ${missingSource === 1 ? "it" : "them"}. Students do not see ${missingSource === 1 ? "it" : "them"}. Paste text to bring ${missingSource === 1 ? "it" : "them"} back.`} /></View> : null}
+        {d!.lessons && d!.lessons.total > 0 ? <View style={ws.band}><LessonsBand summary={d!.lessons} onQueue={() => queueLessons.run()} busy={queueLessons.busy} error={queueLessons.error} /></View> : null}
         {d!.status === "published" ? <View style={ws.band}><Notice tone="warning" message="This book is live. Saved changes reach enrolled students immediately, and a module a student has already worked through cannot be removed." /></View> : null}
-        <OutlineWorkspace documentId={id} published={d!.status === "published"} onSaved={doc.reload} onState={setPending} />
+        <OutlineWorkspace documentId={id} published={d!.status === "published"} onSaved={doc.reload} onState={setPending} lessonStatus={lessonStatus} />
       </View>
     </Screen>
   );
@@ -172,8 +190,9 @@ function ProcessingCard({ doc }: { doc: Document }) {
  * PUT replaces the outline, so a rename here and a text edit three chapters
  * away are still one save.
  */
-function OutlineWorkspace({ documentId, published, onSaved, onState }: { documentId: string; published: boolean; onSaved: () => void; onState: (s: { dirty: boolean; save: () => Promise<void> }) => void }) {
+function OutlineWorkspace({ documentId, published, onSaved, onState, lessonStatus }: { documentId: string; published: boolean; onSaved: () => void; onState: (s: { dirty: boolean; save: () => Promise<void> }) => void; lessonStatus: Record<string, LessonStatus> }) {
   const q = useAsync(() => manage.outline(documentId), [documentId]);
+  const [report, setReport] = useState<OutlineReport | null>(null);
   const [chapters, setChapters] = useState<OutlineChapter[] | null>(null);
   const [dirty, setDirty] = useState(false);
   const [sel, setSel] = useState<Selection | null>(null);
@@ -203,7 +222,11 @@ function OutlineWorkspace({ documentId, published, onSaved, onState }: { documen
     const added = afterModules.filter((m) => !m.id).length;
     const renamed = afterModules.filter((m) => m.id && beforeModules.get(m.id)?.title !== m.title).length;
     const retexted = afterModules.filter((m) => m.id && m.source_text !== undefined && beforeModules.get(m.id)?.source_text !== m.source_text).length;
+    // A module without text is removed by the server on save, so the
+    // confirmation says so before it happens rather than after.
+    const emptied = afterModules.filter((m) => !(m.source_text ?? "").trim()).length;
     const lines: string[] = [];
+    if (emptied) lines.push(`${emptied} module${emptied === 1 ? "" : "s"} with no source text will be removed`);
     if (removedChapters.length) lines.push(`${removedChapters.length} chapter${removedChapters.length === 1 ? "" : "s"} removed`);
     if (removedModules.length) lines.push(`${removedModules.length} module${removedModules.length === 1 ? "" : "s"} removed`);
     if (added) lines.push(`${added} module${added === 1 ? "" : "s"} added`);
@@ -225,7 +248,9 @@ function OutlineWorkspace({ documentId, published, onSaved, onState }: { documen
         const edited = m.source_text !== undefined && (!m.id || m.source_text !== loaded.get(m.id));
         return { id: m.id, title: m.title, order: mi + 1, source_heading_index: m.source_heading_index ?? null, ...(edited ? { source_text: m.source_text } : {}) };
       }) }));
-    await manage.saveOutline(documentId, payload as OutlineChapter[]);
+    const saved = await manage.saveOutline(documentId, payload as OutlineChapter[]);
+    const r = saved.outline_report;
+    setReport(r && (r.removed_empty_modules.length || r.removed_empty_chapters.length || r.hidden_empty_modules.length) ? r : null);
     await q.reload(); onSaved();
   }, [chapters, documentId, q, onSaved]);
 
@@ -334,6 +359,7 @@ function OutlineWorkspace({ documentId, published, onSaved, onState }: { documen
       onSelect={setSel}
       onCollapse={() => setSel(null)}
       onAddChapter={addChapter}
+      lessonStatus={lessonStatus}
       style={split ? ws.treeSplit : ws.treeFull}
     />
   );
@@ -341,6 +367,7 @@ function OutlineWorkspace({ documentId, published, onSaved, onState }: { documen
   const pane = (
     <View style={ws.pane}>
       <ErrorBanner message={save.error ?? avail.error} />
+      {report ? <SaveReport report={report} onDismiss={() => setReport(null)} /> : null}
       {mod && chapter && sel ? (
         <ModulePane
           key={`${sel.ci}-${sel.mi}`}
@@ -354,6 +381,8 @@ function OutlineWorkspace({ documentId, published, onSaved, onState }: { documen
           onToggle={() => avail.run(sel.ci, sel.mi!)}
           toggleBusy={avail.busy}
           onBack={split ? undefined : () => setSel(null)}
+          lessonStatus={mod.id ? lessonStatus[mod.id] ?? mod.lesson_status : undefined}
+          textEdited={!!mod.id && (mod.source_text ?? "") !== ((q.data?.chapters ?? []).flatMap((c) => c.modules).find((x) => x.id === mod.id)?.source_text ?? "")}
         />
       ) : chapter && sel ? (
         <ChapterPane
@@ -392,13 +421,14 @@ const OUTLINE_SOURCE: Record<string, string> = {
 };
 
 /** The chapter and module tree. Chapters expand in place; modules select. */
-function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse, onAddChapter, style }: {
+function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse, onAddChapter, lessonStatus, style }: {
   chapters: OutlineChapter[];
   selection: Selection | null;
   outlineSource?: string;
   onSelect: (s: Selection) => void;
   onCollapse: () => void;
   onAddChapter: () => void;
+  lessonStatus: Record<string, LessonStatus>;
   style?: object;
 }) {
   const [filter, setFilter] = useState("");
@@ -421,7 +451,7 @@ function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse,
         </Row>
         <Text style={ws.treeMeta}>
           {chapters.length} chapter{chapters.length === 1 ? "" : "s"} · {totalModules} module{totalModules === 1 ? "" : "s"}
-          {outlineSource ? ` · ${OUTLINE_SOURCE[outlineSource] ?? `outline from ${outlineSource}`}` : ""}. Every module maps to a heading or carries its own text.
+          {outlineSource ? ` · ${OUTLINE_SOURCE[outlineSource] ?? `outline from ${outlineSource}`}` : ""}. Every module carries source text; one saved without text is removed.
         </Text>
         <Input compact value={filter} onChangeText={setFilter} placeholder="Find a chapter or module" />
       </View>
@@ -462,6 +492,7 @@ function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse,
                         <Text style={[ws.moduleNum, on && { color: colors.primary }]}>{mi + 1}</Text>
                         <Text style={[ws.moduleTitle, on && { color: colors.text, fontWeight: "600" }]} numberOfLines={1}>{m.title}</Text>
                         {m.source_missing ? <Ionicons name="alert-circle" size={13} color={colors.danger} /> : null}
+                        <LessonMark status={m.id ? lessonStatus[m.id] ?? m.lesson_status : undefined} />
                         <View style={[ws.dot, { backgroundColor: m.availability === "open" ? colors.primary : colors.faint }]} />
                       </Pressable>
                     );
@@ -478,7 +509,9 @@ function OutlineTree({ chapters, selection, outlineSource, onSelect, onCollapse,
 }
 
 /** One module, with room to actually read its source text. */
-function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, onRemove, onToggle, toggleBusy, onBack }: {
+function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, onRemove, onToggle, toggleBusy, onBack, lessonStatus, textEdited }: {
+  lessonStatus?: LessonStatus;
+  textEdited?: boolean;
   chapterTitle: string;
   module: OutlineModule;
   index: number;
@@ -491,6 +524,8 @@ function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, o
   onBack?: () => void;
 }) {
   const chars = (m.source_text ?? "").length;
+  const empty = !(m.source_text ?? "").trim();
+  const [view, setView] = useState<"text" | "lesson">("text");
   return (
     <View style={{ flex: 1, minHeight: 0, gap: space.md }}>
       <Row>
@@ -503,17 +538,23 @@ function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, o
         <View style={{ flex: 1, minWidth: 200 }}><Input value={m.title} onChangeText={(t) => onChange({ ...m, title: t })} /></View>
         {m.id ? <Badge value={m.availability ?? "locked"} /> : <Badge value="new" color={colors.accent} />}
         {m.source_missing ? <Badge value="no source" color={colors.danger} /> : null}
+        {lessonStatus && lessonStatus !== "none" ? <Badge value={LESSON_BADGE[lessonStatus]} color={LESSON_COLOR[lessonStatus]} /> : null}
       </Row>
       <Row>
         <Text style={ws.fieldLabel}>Position</Text>
         <Button title="Move up" small variant="secondary" onPress={() => onMove(-1)} disabled={index === 0} />
         <Button title="Move down" small variant="secondary" onPress={() => onMove(1)} disabled={index >= count - 1} />
       </Row>
-      <Row style={{ justifyContent: "space-between" }}>
-        <Text style={ws.fieldLabel}>Source text — edit to override the mapped section</Text>
-        <Text style={ws.charCount}>{chars.toLocaleString()} characters</Text>
+      <Row>
+        <Chip label="Source text" selected={view === "text"} onPress={() => setView("text")} />
+        <Chip label="Lesson" selected={view === "lesson"} onPress={() => setView("lesson")} />
+        <View style={{ flex: 1 }} />
+        {view === "text" ? <Text style={ws.charCount}>{chars.toLocaleString()} characters</Text> : null}
       </Row>
-      <Input
+      {view === "lesson" ? (
+        m.id ? <ModuleLessonPanel moduleId={m.id} textEdited={!!textEdited} /> : <Empty text="The lesson is generated in the background once this module is saved." icon="school-outline" />
+      ) : null}
+      {view === "text" ? <Input
         multiline
         value={m.source_text ?? ""}
         // The backend resolves a mapped heading and refills the text from that
@@ -522,18 +563,106 @@ function ModulePane({ chapterTitle, module: m, index, count, onChange, onMove, o
         // label above has always promised; re-picking the heading brings the
         // section's own text back.
         onChangeText={(t) => onChange({ ...m, source_text: t, source_heading_index: null })}
-        placeholder="No text yet. Pick a heading above, or paste the passage here."
+        placeholder="Paste the passage students should learn from. A module saved without text is removed."
         containerStyle={{ flex: 1, minHeight: 0 }}
         style={{ flex: 1, minHeight: 160, lineHeight: 24 }}
-      />
-      {m.source_heading_index !== null && m.source_heading_index !== undefined ? (
+      /> : null}
+      {view === "text" && empty ? <Notice tone="warning" message="This module has no text. Saving the outline removes it." /> : null}
+      {view === "text" && !empty && m.source_heading_index !== null && m.source_heading_index !== undefined ? (
         <Text style={ws.hint}>This text came from the book&apos;s own heading for this module. Editing it keeps what you type instead.</Text>
       ) : null}
+      {view === "text" && textEdited ? <Text style={ws.hint}>Saving the outline generates a new lesson for the edited text.</Text> : null}
       <Row>
         {m.id ? <Button title={m.availability === "open" ? "Lock for students" : "Open for students"} small variant="secondary" onPress={onToggle} disabled={!!m.source_missing} busy={toggleBusy} /> : null}
         <Button title="Remove Module" small variant="ghost" onPress={onRemove} />
       </Row>
     </View>
+  );
+}
+
+const LESSON_BADGE: Record<LessonStatus, string> = { ready: "lesson ready", pending: "lesson queued", generating: "lesson generating", failed: "lesson failed", none: "no lesson" };
+const LESSON_COLOR: Record<LessonStatus, string> = { ready: colors.success, pending: colors.faint, generating: colors.accent, failed: colors.warning, none: colors.faint };
+
+/** A small mark in the tree: nothing when the lesson is ready. */
+function LessonMark({ status }: { status?: LessonStatus }) {
+  if (!status || status === "ready" || status === "none") return null;
+  const icon = status === "failed" ? "alert-circle-outline" : status === "generating" ? "sync-outline" : "time-outline";
+  return <Ionicons name={icon} size={13} color={LESSON_COLOR[status]} accessibilityLabel={LESSON_BADGE[status]} />;
+}
+
+/** Lesson generation for the whole book, above the outline. */
+function LessonsBand({ summary: l, onQueue, busy, error }: { summary: LessonSummary; onQueue: () => void; busy?: boolean; error?: string | null }) {
+  const waiting = l.pending + l.generating;
+  const percent = l.total ? (100 * l.ready) / l.total : 0;
+  let message: string;
+  if (l.ready === l.total) message = `All ${l.total} lesson${l.total === 1 ? " is" : "s are"} ready for students.`;
+  else if (waiting) message = `Lessons: ${l.ready} of ${l.total} ready${l.generating ? ` · ${l.generating} being written` : ""}${l.pending ? ` · ${l.pending} queued` : ""}${l.failed ? ` · ${l.failed} failed` : ""}. They are generated in the background; you can keep working.`;
+  else if (l.failed) message = `Lessons: ${l.ready} of ${l.total} ready · ${l.failed} could not be generated. Students see a plain version of those modules until they are.`;
+  else message = `Lessons: ${l.ready} of ${l.total} ready.${l.auto_generate ? "" : " Automatic generation is off on this server."}`;
+  const needsQueue = l.ready < l.total && !waiting;
+  return (
+    <View style={{ gap: 6 }}>
+      <Row style={{ gap: space.md }}>
+        <Ionicons name="school-outline" size={16} color={l.failed && !waiting ? colors.warning : colors.primary} />
+        <Text style={{ flex: 1, color: colors.text, fontSize: 13.5 }}>{message}</Text>
+        {needsQueue ? <Button title={l.failed ? "Try Failed Again" : "Generate Lessons"} icon="refresh-outline" small variant="secondary" onPress={onQueue} busy={busy} /> : null}
+      </Row>
+      {l.ready < l.total ? <ProgressBar value={percent} height={6} /> : null}
+      <ErrorBanner message={error ?? null} />
+    </View>
+  );
+}
+
+/** What the last save removed, so modules never vanish without a word. */
+function SaveReport({ report, onDismiss }: { report: OutlineReport; onDismiss: () => void }) {
+  const removed = report.removed_empty_modules.map((m) => m.title);
+  const chapters = report.removed_empty_chapters.map((c) => c.title);
+  const hidden = report.hidden_empty_modules.map((m) => m.title);
+  const parts: string[] = [];
+  if (removed.length) parts.push(`Removed ${removed.length} module${removed.length === 1 ? "" : "s"} with no source text: ${removed.join(", ")}.`);
+  if (chapters.length) parts.push(`Removed ${chapters.length === 1 ? "a chapter" : `${chapters.length} chapters`} left with no modules: ${chapters.join(", ")}.`);
+  if (hidden.length) parts.push(`Kept but hidden from students, because student work refers to them: ${hidden.join(", ")}.`);
+  return (
+    <Row style={{ alignItems: "flex-start" }}>
+      <View style={{ flex: 1 }}><Notice tone="warning" message={parts.join(" ")} /></View>
+      <Button title="Dismiss" small variant="ghost" onPress={onDismiss} />
+    </Row>
+  );
+}
+
+/** The module's lesson, as students will see it, with its generation state. */
+function ModuleLessonPanel({ moduleId, textEdited }: { moduleId: string; textEdited: boolean }) {
+  const q = useAsync(() => manage.moduleLesson(moduleId), [moduleId]);
+  const d: LessonDetail | null = q.data;
+  const { setData } = q;
+  useEffect(() => {
+    if (d?.status !== "pending" && d?.status !== "generating") return;
+    const t = setTimeout(async () => { try { setData(await manage.moduleLesson(moduleId)); } catch { /* retried on next open */ } }, 6000);
+    return () => clearTimeout(t);
+  }, [d, moduleId, setData]);
+  const again = useAction(async () => { setData(await manage.regenerateLesson(moduleId)); });
+  const when = d?.generated_at ? new Date(d.generated_at).toLocaleString() : "";
+  let line = "";
+  if (d?.status === "ready") line = `Generated ${when}${d.model ? ` by ${d.model}` : ""}. This is what students see.`;
+  else if (d?.status === "generating") line = "The tutor is writing this lesson now.";
+  else if (d?.status === "pending") line = d.queue_position ? `Queued: ${d.queue_position === 1 ? "next in line" : `number ${d.queue_position} in line`}.` : "Queued.";
+  else if (d?.status === "failed") line = `Could not be generated (${d.last_error || "unknown error"}).${d.next_attempt_at ? ` Trying again at ${new Date(d.next_attempt_at).toLocaleTimeString()}.` : " It will not be retried until you ask."} Students see a plain version made from the text meanwhile.`;
+  else if (d?.status === "none") line = "This module has no text, so there is no lesson.";
+  return (
+    <ScrollView style={[{ flex: 1, minHeight: 0 }, Platform.OS === "web" && ({ overflowY: "auto" } as object)]} contentContainerStyle={{ gap: space.md, paddingBottom: space.lg }}>
+      <ErrorBanner message={q.error ?? again.error} onRetry={q.error ? q.reload : undefined} />
+      {q.loading && !d ? <Loading /> : null}
+      {textEdited ? <Notice message="You have edited this module's text. Save the outline and a new lesson is generated for it; the one below is for the saved text." /> : null}
+      {d ? (
+        <Row style={{ gap: space.md }}>
+          <Text style={[ws.hint, { flex: 1 }]}>{line}</Text>
+          {d.status !== "none" && d.status !== "pending" && d.status !== "generating" ? (
+            <Button title={d.status === "failed" ? "Try Again" : "Generate Again"} icon="refresh-outline" small variant="secondary" onPress={() => again.run()} busy={again.busy} />
+          ) : null}
+        </Row>
+      ) : null}
+      {d?.lesson ? <LessonView lesson={d.lesson} /> : null}
+    </ScrollView>
   );
 }
 

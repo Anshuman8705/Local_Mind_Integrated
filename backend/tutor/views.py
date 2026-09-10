@@ -15,12 +15,21 @@ def _msg(m):
 
 
 class TeachView(APIView):
+    """The stored lesson for a module. ``status`` is ready (``lesson`` is the
+    tutor's lesson), preparing (``lesson`` is null; ask again shortly) or
+    unavailable (``lesson`` is a plain lesson built from the source text).
+    Current clients GET. POST is what clients built before background
+    lessons send, and it always carries a lesson (a plain one from the text
+    while the tutor's is being prepared), because those clients cannot
+    handle a null lesson and installed phone apps cannot be updated at once."""
+
     permission_classes = [IsStudent]
-    throttle_scope = "ai"
+
+    def get(self, request, module_id):
+        return Response(svc.teach(request.user, module_id, request))
 
     def post(self, request, module_id):
-        lesson, meta = svc.teach(request.user, module_id, request)
-        return Response({"module_id": str(module_id), "lesson": lesson, **meta})
+        return Response(svc.teach(request.user, module_id, request, legacy=True))
 
 
 class AskView(APIView):

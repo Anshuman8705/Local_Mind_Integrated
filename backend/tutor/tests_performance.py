@@ -134,24 +134,17 @@ class TutorPromptTests(TestCase):
         client_for(other).post(f"/api/student/modules/{self.module.id}/ask/", q, format="json")
         self.assertEqual(gw.return_value.generate.call_count, 2)
 
-    @patch("tutor.services.gateway")
+    @patch("tutor.lessons.gateway")
     def test_lesson_uses_lesson_task_and_compact_source(self, gw):
+        from tutor import lessons
         lesson = {"title": "T", "learning_objectives": ["a", "b"], "sections": [{"heading": "h", "explanation": "e", "source_reference": "s"}] * 2, "key_terms": [], "summary": "s"}
         gw.return_value.generate.return_value = AIResult(ok=True, data=lesson, model="m")
-        res = self.sc.post(f"/api/student/modules/{self.module.id}/teach/")
-        self.assertEqual(res.status_code, 200)
+        lessons.request_lessons([self.module])
+        lessons.run_pending(wait_for_students=False)
         call = gw.return_value.generate.call_args.kwargs
         self.assertEqual(call["task"], "lesson")
+        self.assertTrue(call["background"])
         self.assertLessEqual(call["source_chars"], 8000 + 500)
-
-    def test_prewarm_queue_is_single_worker(self):
-        from tutor import services
-
-        with patch.object(services, "prewarm_lessons", return_value=(1, 0)) as pl:
-            queued = services.enqueue_prewarm([self.module.id, self.module.id])
-            self.assertEqual(queued, 1)
-            services._prewarm_queue.join()
-            self.assertEqual(pl.call_count, 1)
 
 
 class QuizPromptTests(TestCase):
@@ -163,15 +156,20 @@ class QuizPromptTests(TestCase):
         self.module = Module.objects.get(title="Operating Systems")
 
     @patch("assessments.services.generation.gateway")
-    def test_quiz_source_is_capped_and_uses_quiz_budget(self, gw):
-        from assessments.services.generation import generate_questions
+    def test_quiz_prompts_are_small_batches_of_the_module(self, gw):
+        import re
 
-        gw.return_value.generate.return_value = AIResult(ok=False, error_code="unavailable", error="x")
-        with override_settings(AI={**__import__("django.conf").conf.settings.AI, "MAX_SOURCE_CHARS": 3000}):
-            generate_questions(self.module.source_text, self.module.title, num_mcqs=5, module=self.module)
-        call = gw.return_value.generate.call_args.kwargs
-        self.assertEqual(call["task"], "quiz")
-        self.assertLessEqual(call["source_chars"], 3300)
-        self.assertLess(len(call["user_prompt"]), 5000)
-        self.assertIn("exactly 5 multiple-choice questions", call["user_prompt"])
-        self.assertIn("Output only the JSON", call["user_prompt"])
+        from assessments.services.generation import CHARS_PER_CALL, MCQ_BATCH, QuizGenerationFailed, generate_questions
+
+        gw.return_value.generate.return_value = AIResult(ok=False, error_code="malformed", error="x")
+        with self.assertRaises(QuizGenerationFailed):
+            generate_questions([self.module], num_mcqs=5)
+        calls = [c.kwargs for c in gw.return_value.generate.call_args_list]
+        self.assertGreaterEqual(len(calls), 2)
+        for call in calls:
+            self.assertEqual(call["task"], "quiz")
+            self.assertLessEqual(call["source_chars"], CHARS_PER_CALL)
+            self.assertNotIn("SOURCE TEXT", call["user_prompt"])
+            self.assertIn("Output only the JSON", call["user_prompt"])
+            asked = int(re.search(r"exactly (\d+) multiple-choice", call["user_prompt"]).group(1))
+            self.assertLessEqual(asked, MCQ_BATCH)

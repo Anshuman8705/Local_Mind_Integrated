@@ -108,6 +108,13 @@ def _target(actor, module_id=None, chapter_id=None, module_ids=None):
     raise ValidationFailed("module_ids, module_id or chapter_id is required.", code="TARGET_REQUIRED")
 
 
+def source_text_for(assessment):
+    """The text a quiz was written from, for any kind (module, chapter or a
+    selection that may span chapters). Public so the tutor's remediation uses
+    the same rule as grading."""
+    return _source_text(assessment)
+
+
 def _source_text(assessment):
     if assessment.kind == AssessmentKind.SELECTION:
         chosen = assessment.source_modules.all().order_by("chapter__order", "order")
@@ -155,10 +162,13 @@ def generate(actor, *, module_id=None, chapter_id=None, module_ids=None, num_mcq
         recent = Assessment.objects.filter(source_modules__in=modules).distinct().order_by("-created_at")[:5]
     else:
         recent = Assessment.objects.filter(module=module, chapter=chapter).order_by("-created_at")[:5]
-    previous = [q["question"] for a in recent for q in a.questions]
-    # Passing the module lets generation sample evenly across the whole of it
-    # rather than truncating at the front, so questions cover the end too.
-    questions, generator, error = generate_questions(source_text, default_title, num_mcqs, num_subjective, previous, module=module)
+    previous = [q for a in recent for q in a.questions]
+    # Questions are written from exactly the modules resolved above (the
+    # chosen ones, the one module, or the chapter's modules), spread across
+    # them. Nothing is created when no question could be written: there is no
+    # placeholder draft any more (QuizGenerationFailed reaches the client).
+    questions, error = generate_questions(modules, num_mcqs, num_subjective, previous)
+    generator = Generator.AI
     with transaction.atomic():
         assessment = Assessment.objects.create(
             subject=subject, chapter=chapter, module=module, kind=kind, title=(title or f"Quiz: {default_title}")[:300],
@@ -337,10 +347,45 @@ def _finalize(attempt, score, results, pending, actor=None):
         attempt.status = AttemptStatus.EVALUATED
         attempt.evaluated_at = timezone.now()
         attempt.evaluated_by = actor
-        if assessment.module_id:
-            learning.record_quiz_outcome(attempt.student, assessment.module, attempt.percentage, attempt.passed)
+        apply_outcome(attempt, save=False)
     attempt.save()
     return attempt
+
+
+def apply_outcome(attempt, save=True):
+    """Write an evaluated attempt into ModuleProgress, but only once the student
+    may see the result. Before this change progress was written at grading
+    time, so a held quiz still turned the module to "needs review" and set the
+    best percentage the student could read on the module page. Returns True
+    when progress was written."""
+    assessment = attempt.assessment
+    if attempt.status != AttemptStatus.EVALUATED or not assessment.module_id or not attempt.results_visible:
+        return False
+    learning.record_quiz_outcome(attempt.student, assessment.module, attempt.percentage, attempt.passed,
+                                 count_attempt=attempt.outcome_recorded_at is None)
+    attempt.outcome_recorded_at = timezone.now()
+    if save:
+        attempt.save(update_fields=["outcome_recorded_at", "updated_at"])
+    return True
+
+
+def settle_released_outcomes(student=None, assessment=None):
+    """Record every evaluated, now-visible attempt whose outcome has not been
+    written yet: after a faculty release, or once a scheduled time passes."""
+    from ..models import results_visible_q
+
+    qs = AssessmentAttempt.objects.filter(status=AttemptStatus.EVALUATED, outcome_recorded_at__isnull=True,
+                                          assessment__module__isnull=False)
+    if student is not None:
+        qs = qs.filter(student=student)
+    if assessment is not None:
+        qs = qs.filter(assessment=assessment)
+    qs = qs.filter(results_visible_q()).select_related("assessment__module", "student").order_by("submitted_at")
+    count = 0
+    for attempt in qs:
+        with transaction.atomic():
+            count += apply_outcome(attempt)
+    return count
 
 
 def submit_attempt(student, attempt_id, submitted_answers, request=None):
@@ -421,12 +466,14 @@ def release_results(actor, assessment, attempt_id=None, request=None):
             raise NotFound("Attempt not found.")
         attempt.results_released_at = now
         attempt.save(update_fields=["results_released_at", "updated_at"])
+        apply_outcome(attempt)
         audit.record(actor, "quiz.results_released", assessment, {"attempt": str(attempt.id)}, request)
         return 1
     count = assessment.attempts.filter(results_released_at__isnull=True).update(results_released_at=now)
     assessment.results_released_at = now
     assessment.results_released_by = actor
     assessment.save(update_fields=["results_released_at", "results_released_by", "updated_at"])
+    settle_released_outcomes(assessment=assessment)
     audit.record(actor, "quiz.results_released", assessment, {"attempts": count, "scope": "all"}, request)
     return count
 

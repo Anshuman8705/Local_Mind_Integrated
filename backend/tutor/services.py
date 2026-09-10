@@ -1,13 +1,10 @@
 """Tutor: teach, ask, remediate — all grounded in server-resolved module text."""
 import hashlib
 import logging
-import queue
 import re
-import threading
 import time
 
 from django.core.cache import cache
-from django.db import transaction
 from django.utils import timezone
 
 from ai.config import history_messages, task_config
@@ -15,22 +12,13 @@ from ai.gateway import gateway, trim_source
 from documents.services import retrieval
 from assessments.models import AssessmentAttempt, AttemptStatus
 from audit import services as audit
-from core.exceptions import AIUnavailable, NotFound, ValidationFailed
+from core.exceptions import AIUnavailable, Forbidden, NotFound, ValidationFailed
 from learning import services as learning
 
-from .models import Conversation, Message, ModuleLesson
+from . import lessons
+from .models import Conversation, Message
 
 logger = logging.getLogger("localmind.tutor")
-
-LESSON_SCHEMA = {"type": "object", "properties": {
-    "title": {"type": "string"},
-    "learning_objectives": {"type": "array", "minItems": 2, "maxItems": 6, "items": {"type": "string"}},
-    "sections": {"type": "array", "minItems": 2, "maxItems": 8, "items": {"type": "object", "properties": {
-        "heading": {"type": "string"}, "explanation": {"type": "string"}, "source_reference": {"type": "string"}},
-        "required": ["heading", "explanation", "source_reference"]}},
-    "key_terms": {"type": "array", "items": {"type": "object", "properties": {"term": {"type": "string"}, "definition": {"type": "string"}}, "required": ["term", "definition"]}},
-    "summary": {"type": "string"}},
-    "required": ["title", "learning_objectives", "sections", "key_terms", "summary"]}
 
 ANSWER_SCHEMA = {"type": "object", "properties": {
     "answer": {"type": "string"}, "grounded": {"type": "boolean"}, "source_reference": {"type": "string"},
@@ -79,51 +67,21 @@ def _module(student, module_id):
     return learning.resolve_accessible_module(student, module_id)
 
 
-def _fallback_lesson(module):
-    paragraphs = [p.strip() for p in module.source_text.split("\n\n") if p.strip()]
-    if not paragraphs:
-        paragraphs = [module.source_text.strip()]
-    sections = [{"heading": f"Part {i}", "explanation": p[:1500], "source_reference": p[:120]} for i, p in enumerate(paragraphs[:8], start=1)]
-    if len(sections) < 2:
-        text = sections[0]["explanation"]
-        half = len(text) // 2
-        sections = [{"heading": "Part 1", "explanation": text[:half], "source_reference": text[:120]},
-                    {"heading": "Part 2", "explanation": text[half:], "source_reference": text[half:half + 120]}]
-    return {"title": module.title, "learning_objectives": [f"Read and understand '{module.title}'", "Identify the key ideas in the source text"],
-            "sections": sections, "key_terms": [], "summary": "AI tutoring is unavailable; this lesson mirrors the source text directly."}
+def teach(student, module_id, request=None, legacy=False):
+    """The Lesson tab. Reads the lesson generated in the background; never
+    calls the model, so it answers in milliseconds whatever the queue is doing.
+    See tutor/lessons.py for how lessons are produced.
 
-
-def teach(student, module_id, request=None):
-    """Not wrapped in a transaction: the model call can take a minute, and a
-    transaction open that long holds the SQLite write lock against every other
-    request. Only the cache write below is atomic."""
+    ``legacy`` is for clients built before background lessons (they POST and
+    read ``lesson.title`` unconditionally, so a null lesson crashed their
+    Lesson tab to a blank page). They get the plain lesson from the text while
+    the tutor's lesson is being prepared; current clients GET and are told the
+    lesson is on its way."""
     module = _module(student, module_id)
-    version = module.chapter.document.content_version
-    cached = ModuleLesson.objects.filter(module=module, content_version=version, generator="ai").first()
-    if cached:
-        return cached.lesson, {"generator": "ai", "cached": True, "model": cached.model_name}
-    # A lesson covers the whole module, so the source is sampled evenly across
-    # its chunks rather than truncated at the front: without this a long module
-    # produced a lesson about its first few pages.
-    budget = task_config("lesson")
-    source, chunk_count = retrieval.coverage_sample(module, budget.source_chars)
-    if not source:
-        source = trim_source(module.source_text, budget.source_chars)
-    result = gateway().generate(
-        task="lesson",
-        system_prompt=GROUNDING + "TASK: Turn the source into a lesson with two to six learning_objectives, two to eight sections "
-                                  "(each with a heading, a clear explanation and a source_reference), the key_terms defined in the "
-                                  "source, and a short summary.",
-        user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{source}\"\"\"",
-        schema=LESSON_SCHEMA, source_chars=len(source), retrieved_chunks=chunk_count)
-    if result.ok:
-        lesson = result.data
-        with transaction.atomic():
-            ModuleLesson.objects.update_or_create(module=module, content_version=version, defaults={"lesson": lesson, "generator": "ai", "model_name": result.model})
-            audit.record(student, "tutor.teach", module, {"generator": "ai"}, request)
-        return lesson, {"generator": "ai", "cached": False, "model": result.model}
-    audit.record(student, "tutor.teach", module, {"generator": "fallback", "error": result.error_code}, request)
-    return _fallback_lesson(module), {"generator": "fallback", "cached": False, "ai_error": result.error_code}
+    data = lessons.lesson_for_student(module)
+    if legacy and data.get("lesson") is None:
+        data = {**data, "lesson": lessons.fallback_lesson(module), "generator": "fallback"}
+    return data
 
 
 def conversations(student, module_id=None):
@@ -233,20 +191,31 @@ def remediation(student, attempt_id, request=None):
         raise NotFound("Attempt not found.")
     if attempt.status not in (AttemptStatus.EVALUATED, AttemptStatus.PENDING_EVALUATION):
         raise ValidationFailed("Remediation is available after submission.", code="NOT_SUBMITTED")
+    # Remediation names the questions the student got wrong and explains the
+    # right answer, so it is a result like any other: while faculty hold the
+    # results it must say nothing, or a held quiz with attempts left could be
+    # retaken with the answers in hand.
+    if not attempt.results_visible:
+        raise Forbidden("Results for this quiz have not been released yet.", code="RESULTS_NOT_RELEASED")
     wrong = [r for r in attempt.detailed_results if r.get("is_correct") is False]
     if not wrong:
         return {"overview": "Every answered question was correct. Nothing to remediate.", "items": [], "generator": "rule"}
+    from assessments.services.assessments import source_text_for
+
     assessment = attempt.assessment
-    source = assessment.module.source_text if assessment.module else "\n\n".join(m.source_text for m in assessment.chapter.modules.all())
+    # Same rule as grading: a module, a chapter, or chosen modules that may
+    # span chapters (chapter and module are both null then).
+    source = source_text_for(assessment)
     items_text = "\n".join(
         f"- Q: {r['question']}\n  Student answered: {r.get('selected_option') or r.get('student_answer', '')}\n  Correct: {r.get('correct_option') or r.get('expected_rubric', '')}\n  Source: {r.get('source_reference', '')}"
         for r in wrong)
+    trimmed = trim_source(source)
     result = gateway().generate(
         task="remediation",
         system_prompt=GROUNDING + "TASK: For each INCORRECT ANSWER write one item: repeat the question, name the misconception the "
                                   "student's answer shows, and explain the correct idea from the source. Start with a two-sentence overview.",
-        user_prompt=f"SOURCE TEXT:\n\"\"\"{trim_source(source)}\"\"\"\n\nINCORRECT ANSWERS:\n{items_text}",
-        schema=REMEDIATION_SCHEMA, source_chars=len(trim_source(source)))
+        user_prompt=f"SOURCE TEXT:\n\"\"\"{trimmed}\"\"\"\n\nINCORRECT ANSWERS:\n{items_text}",
+        schema=REMEDIATION_SCHEMA, source_chars=len(trimmed))
     if result.ok:
         data = dict(result.data, generator="ai")
     else:
@@ -256,89 +225,3 @@ def remediation(student, attempt_id, request=None):
                 "generator": "fallback"}
     audit.record(student, "tutor.remediation", attempt, {"generator": data["generator"], "items": len(data["items"])}, request)
     return data
-
-
-# ---------- lesson prewarming ----------
-
-# One worker, one queue. Generating a lesson holds the embedded model, so
-# several at once would queue inside llama.cpp anyway while each held a
-# database connection and a thread. Publishing a book can ask for dozens.
-_prewarm_queue: "queue.Queue[str]" = queue.Queue()
-_prewarm_worker: threading.Thread | None = None
-_prewarm_lock = threading.Lock()
-
-
-def prewarm_lessons(module_ids) -> tuple[int, int]:
-    """Generate and cache a lesson for each module that has none. Returns
-    (generated, skipped). Safe to call from a worker thread."""
-    from learning.models import Module
-
-    generated = skipped = 0
-    for module in Module.objects.filter(id__in=list(module_ids)).select_related("chapter__document"):
-        version = module.chapter.document.content_version
-        if ModuleLesson.objects.filter(module=module, content_version=version, generator="ai").exists():
-            skipped += 1
-            continue
-        budget = task_config("lesson")
-        source, chunk_count = retrieval.coverage_sample(module, budget.source_chars)
-        if not source:
-            source = trim_source(module.source_text, budget.source_chars)
-        if not source.strip():
-            skipped += 1
-            continue
-        result = gateway().generate(
-            task="lesson",
-            system_prompt=GROUNDING + "TASK: Turn the source into a lesson with two to six learning_objectives, two to eight sections "
-                                      "(each with a heading, a clear explanation and a source_reference), the key_terms defined in the "
-                                      "source, and a short summary.",
-            user_prompt=f"MODULE: {module.title}\n\nSOURCE TEXT:\n\"\"\"{source}\"\"\"",
-            schema=LESSON_SCHEMA, source_chars=len(source), retrieved_chunks=chunk_count)
-        if result.ok:
-            ModuleLesson.objects.update_or_create(module=module, content_version=version,
-                                                  defaults={"lesson": result.data, "generator": "ai", "model_name": result.model})
-            generated += 1
-        else:
-            skipped += 1
-            logger.warning("Prewarm of module %s failed: %s", module.pk, result.error_code)
-    return generated, skipped
-
-
-def _prewarm_run():
-    from django.db import connection
-
-    while True:
-        try:
-            module_id = _prewarm_queue.get(timeout=30)
-        except queue.Empty:
-            with _prewarm_lock:
-                global _prewarm_worker
-                _prewarm_worker = None
-            connection.close()
-            return
-        try:
-            prewarm_lessons([module_id])
-        except Exception:
-            logger.exception("Prewarm worker failed for module %s", module_id)
-        finally:
-            _prewarm_queue.task_done()
-
-
-def enqueue_prewarm(module_ids) -> int:
-    """Queue modules for lesson generation, skipping any already queued.
-    Returns how many were added."""
-    queued = 0
-    already = set(_prewarm_queue.queue)
-    for module_id in module_ids:
-        key = str(module_id)
-        if key in already:
-            continue
-        already.add(key)
-        _prewarm_queue.put(key)
-        queued += 1
-    if queued:
-        with _prewarm_lock:
-            global _prewarm_worker
-            if _prewarm_worker is None or not _prewarm_worker.is_alive():
-                _prewarm_worker = threading.Thread(target=_prewarm_run, name="lesson-prewarm", daemon=True)
-                _prewarm_worker.start()
-    return queued

@@ -7,6 +7,7 @@ import { admin } from "@/api/endpoints";
 import type { ImportReport } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { Button, Card, Chip, ErrorBanner, H2, Loading, Notice, P, Row, Screen, Stat, colors, radiusSm, space } from "@/ui";
+import { OneTimeCredentials } from "@/ui/OneTimeCredentials";
 
 const kb = (bytes?: number) => (bytes ? `${Math.max(1, Math.round(bytes / 1024))} KB` : "");
 
@@ -47,8 +48,10 @@ export default function ImportUsers() {
     const summary = `Imported ${r.created} ${who} of ${r.total_rows} row${r.total_rows === 1 ? "" : "s"}${skipped}.`;
     // An email that is already on the platform is a normal outcome, not a
     // problem with the sheet: re-importing a class list should not be
-    // presented as a failure. Only genuinely invalid rows keep us here.
-    if (r.invalid === 0) {
+    // presented as a failure. Only genuinely invalid rows keep us here, or
+    // one-time passwords, which exist only in this response.
+    const issued = (r.created_users ?? []).some((u) => u.initial_password);
+    if (r.invalid === 0 && !issued) {
       router.replace({ pathname: "/admin/users", params: { kind, notice: summary } });
       return;
     }
@@ -56,6 +59,9 @@ export default function ImportUsers() {
   });
 
   const failures = (report?.errors ?? []).filter((e) => !(e.errors ?? []).every((x) => x === "User already exists."));
+  const credentials = (report?.created_users ?? []).filter((u) => u.initial_password)
+    .map((u) => ({ full_name: u.full_name, email: u.email, initial_password: u.initial_password as string }));
+  const backToPeople = () => report && router.replace({ pathname: "/admin/users", params: { kind, notice: `Imported ${report.created} ${who}${report.invalid ? `; ${report.invalid} row(s) skipped` : ""}.` } });
   const required = (spec.data?.columns ?? []).filter((c) => c.required).map((c) => c.name);
   const optional = (spec.data?.columns ?? []).filter((c) => !c.required).map((c) => c.name);
   const aliasHint = (spec.data?.columns ?? []).flatMap((c) => c.aliases).slice(0, 3).join(", ");
@@ -106,7 +112,12 @@ export default function ImportUsers() {
         </View>
       ) : null}
 
-      {report ? (
+      {report && credentials.length ? (
+        <OneTimeCredentials title={`${credentials.length} one-time password${credentials.length === 1 ? "" : "s"}`} rows={credentials}
+          filename={`localmind-${who}-one-time-passwords.csv`} onDone={report.invalid ? undefined : backToPeople} />
+      ) : null}
+
+      {report && report.invalid ? (
         <Card accent={colors.warning}>
           <H2 icon="alert-circle-outline">{report.invalid} row{report.invalid === 1 ? "" : "s"} could not be imported</H2>
           <Row><Stat label="rows" value={report.total_rows} /><Stat label="created" value={report.created} /><Stat label="already existed" value={report.already_existing} /><Stat label="invalid" value={report.invalid} /></Row>
@@ -120,7 +131,7 @@ export default function ImportUsers() {
               </Row>
             ))}
           </View>
-          <Button title="Back to People" small variant="secondary" onPress={() => router.replace({ pathname: "/admin/users", params: { kind, notice: `Imported ${report.created} ${who}; ${report.invalid} row(s) skipped.` } })} />
+          <Button title="Back to People" small variant="secondary" onPress={backToPeople} />
         </Card>
       ) : null}
     </Screen>

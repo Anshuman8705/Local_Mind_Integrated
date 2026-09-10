@@ -10,6 +10,8 @@ from audit.models import AuditLog
 from core.testing import assign, client_for, enroll, make_admin, make_faculty, make_student, make_subject
 from learning.models import Chapter, Module
 
+from core.exceptions import ValidationFailed
+
 from .models import Document, DocumentStatus
 from .services.outline import ai_outline, persist_outline, source_hierarchy_outline
 from .services.parser import extract_sections_from_markdown
@@ -108,15 +110,30 @@ class ParserAndOutlineTests(TestCase):
         self.assertIn("Paging", module.source_text)
         self.assertFalse(module.source_missing)
 
-    def test_persist_outline_marks_unmapped_module_as_missing_source(self):
+    def test_persist_outline_never_creates_a_module_without_text(self):
         doc = self._doc()
         parsed = fake_parse(None)
-        outline = {"document_title": "T", "chapters": [{"title": "C", "source_heading_index": 0,
-                   "modules": [{"title": "Ghost", "source_heading_index": None}]}]}
-        persist_outline(doc, outline, parsed["sections"])
-        ghost = Module.objects.get(title="Ghost")
-        self.assertTrue(ghost.source_missing)
-        self.assertEqual(ghost.source_text, "")
+        outline = {"document_title": "T", "chapters": [
+            {"title": "C", "source_heading_index": 0,
+             "modules": [{"title": "Real", "source_heading_index": 1}, {"title": "Ghost", "source_heading_index": None}]},
+            {"title": "Empty chapter", "modules": [{"title": "Also ghost", "source_heading_index": None, "source_text": "   "}]}]}
+        report = persist_outline(doc, outline, parsed["sections"], user_edited=True)
+        self.assertFalse(Module.objects.filter(title__in=["Ghost", "Also ghost"]).exists())
+        self.assertTrue(Module.objects.filter(title="Real", source_missing=False).exists())
+        self.assertFalse(Chapter.objects.filter(document=doc, title="Empty chapter").exists())
+        self.assertEqual({m["title"] for m in report["removed_empty_modules"]}, {"Ghost", "Also ghost"})
+        self.assertEqual([c["title"] for c in report["removed_empty_chapters"]], ["Empty chapter"])
+        # Orders stay contiguous after the drop.
+        self.assertEqual(list(Chapter.objects.filter(document=doc).values_list("order", flat=True)), [1])
+
+    def test_an_outline_with_no_text_anywhere_is_refused(self):
+        doc = self._doc()
+        parsed = fake_parse(None)
+        outline = {"document_title": "T", "chapters": [{"title": "C", "modules": [{"title": "Ghost", "source_heading_index": None}]}]}
+        with self.assertRaises(ValidationFailed) as ctx:
+            persist_outline(doc, outline, parsed["sections"], user_edited=True)
+        self.assertEqual(ctx.exception.code, "NO_SOURCE_TEXT")
+        self.assertFalse(Module.objects.filter(chapter__document=doc).exists())
 
     def test_persist_outline_reconciles_existing_ids(self):
         doc = self._doc()
@@ -215,30 +232,24 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(doc.status, DocumentStatus.ERROR)
         self.assertIn("Unreadable", doc.error_message)
 
-    def test_publish_blocked_until_every_module_has_source(self, _):
+    def test_module_text_cannot_be_emptied_and_hidden_modules_do_not_block_publish(self, _):
         client, doc = self._processed_doc()
         module = Module.objects.filter(chapter__document=doc).first()
+        res = client.patch(f"/api/faculty/modules/{module.id}/", {"source_text": "   "}, format="json")
+        self.assertEqual(res.status_code, 400, res.content)
+        self.assertEqual(res.data["error"]["code"], "EMPTY_SOURCE_TEXT")
+        module.refresh_from_db()
+        self.assertTrue(module.source_text.strip())
+        # A textless module kept only because student work refers to it is
+        # hidden from students and does not stop the book being published.
         module.source_text, module.source_missing = "", True
         module.save()
         res = client.post(f"/api/faculty/documents/{doc.id}/publish/")
-        self.assertEqual(res.status_code, 409)
-        self.assertEqual(res.data["error"]["code"], "MODULES_MISSING_SOURCE")
-        self.assertEqual(res.data["error"]["details"]["modules"][0]["id"], str(module.id))
-        fixed = client.patch(f"/api/faculty/modules/{module.id}/", {"source_text": "Restored text."}, format="json")
-        self.assertEqual(fixed.status_code, 200)
-        self.assertFalse(fixed.data["source_missing"])
-        res = client.post(f"/api/faculty/documents/{doc.id}/publish/")
         self.assertEqual(res.status_code, 200, res.content)
-        self.assertEqual(res.data["status"], "published")
-        self.assertEqual(res.data["content_version"], 2)
-
-    def test_review_edit_bumps_version_and_audits(self, _):
-        client, doc = self._processed_doc()
-        chapter = doc.chapters.first()
-        res = client.patch(f"/api/faculty/chapters/{chapter.id}/", {"title": "  Renamed  "}, format="json")
-        self.assertEqual(res.data["title"], "Renamed")
-        self.assertTrue(res.data["is_user_edited"])
-        self.assertTrue(AuditLog.objects.filter(action="chapter.edited").exists())
+        tree = client_for(self.student).get(f"/api/student/documents/{doc.id}/").data
+        visible = [m["id"] for c in tree["chapters"] for m in c["modules"]]
+        self.assertNotIn(str(module.id), visible)
+        self.assertEqual(client_for(self.student).get(f"/api/student/modules/{module.id}/").status_code, 404)
 
     def test_outline_put_preserves_ids(self, _):
         client, doc = self._processed_doc()
@@ -254,8 +265,12 @@ class DocumentLifecycleTests(TestCase):
         self.assertEqual(pub.status_code, 200, pub.content)
         # Editing a live book is allowed; the guard that matters is the one on
         # modules with student work, covered separately below.
+        # An outline that would leave the book with no module that has text
+        # is refused whole, and the live book is untouched.
         res = client.put(f"/api/faculty/documents/{doc.id}/outline/", {"chapters": [{"title": "x", "modules": []}]}, format="json")
-        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.status_code, 400, res.content)
+        self.assertEqual(res.data["error"]["code"], "NO_SOURCE_TEXT")
+        self.assertTrue(Module.objects.filter(chapter__document=doc).exists())
 
     def test_other_faculty_cannot_see_or_touch_document(self, _):
         client, doc = self._processed_doc()
@@ -752,3 +767,83 @@ class PdfParsingTests(TestCase):
             self.assertIsNot(a, d)
             self.assertEqual(len(built), 3)
         parser.release_document_models()
+
+
+class OutlineSaveVersionTests(TestCase):
+    """Saving an outline that changes nothing students read keeps the content
+    version, so cached lessons and tutor answers survive; a real change bumps it."""
+
+    def setUp(self):
+        from core.testing import assign, client_for, make_faculty, make_published_document, make_subject
+        self.faculty = make_faculty()
+        subject = make_subject(code="OSV")
+        assign(self.faculty, subject)
+        self.doc = make_published_document(subject)
+        self.fc = client_for(self.faculty)
+
+    def _outline(self):
+        res = self.fc.get(f"/api/faculty/documents/{self.doc.id}/outline/")
+        self.assertEqual(res.status_code, 200, res.content)
+        return res.data
+
+    def test_identical_save_keeps_version_and_a_rename_bumps_it(self):
+        from documents.models import Document
+        outline = self._outline()
+        before = Document.objects.get(pk=self.doc.id).content_version
+        res = self.fc.put(f"/api/faculty/documents/{self.doc.id}/outline/", outline, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(Document.objects.get(pk=self.doc.id).content_version, before)
+        outline["chapters"][0]["modules"][0]["title"] = "Renamed module"
+        res = self.fc.put(f"/api/faculty/documents/{self.doc.id}/outline/", outline, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(Document.objects.get(pk=self.doc.id).content_version, before + 1)
+
+    def test_hand_edited_text_survives_the_next_outline_save(self):
+        from learning.models import Module
+        module = Module.objects.filter(chapter__document=self.doc).order_by("order").first()
+        module.source_heading_index = 1
+        module.save(update_fields=["source_heading_index"])
+        res = self.fc.patch(f"/api/faculty/modules/{module.id}/", {"source_text": "Rewritten by faculty."}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        module.refresh_from_db()
+        self.assertIsNone(module.source_heading_index)
+        res = self.fc.put(f"/api/faculty/documents/{self.doc.id}/outline/", self._outline(), format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        module.refresh_from_db()
+        self.assertEqual(module.source_text, "Rewritten by faculty.")
+
+
+@override_settings(MEDIA_ROOT=MEDIA)
+@patch("documents.services.documents.parse_document", side_effect=fake_parse)
+class LegacyWordUploadTests(TestCase):
+    DOC_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512
+
+    def setUp(self):
+        from core.testing import assign, client_for, make_faculty, make_subject
+        self.faculty = make_faculty()
+        self.subject = make_subject(code="LW")
+        assign(self.faculty, self.subject)
+        self.fc = client_for(self.faculty)
+
+    def _upload(self):
+        f = SimpleUploadedFile("old.doc", self.DOC_BYTES, content_type="application/msword")
+        return self.fc.post("/api/faculty/documents/", {"subject_id": str(self.subject.id), "file": f}, format="multipart")
+
+    def test_doc_refused_with_the_fix_when_the_server_cannot_convert(self, _):
+        with patch("documents.services.parser.legacy_doc_support", return_value=(False, "LibreOffice is not installed")):
+            res = self._upload()
+        self.assertEqual(res.status_code, 400, res.content)
+        self.assertEqual(res.data["error"]["code"], "LEGACY_WORD_UNSUPPORTED")
+        self.assertIn(".docx", res.data["error"]["message"])
+
+    def test_doc_accepted_when_the_server_can_convert(self, _):
+        with patch("documents.services.parser.legacy_doc_support", return_value=(True, "")):
+            res = self._upload()
+        self.assertEqual(res.status_code, 201, res.content)
+
+    def test_support_check_needs_libreoffice(self, _):
+        from documents.services import parser
+        with patch("shutil.which", return_value=None):
+            ok, reason = parser.legacy_doc_support()
+        self.assertFalse(ok)
+        self.assertTrue(reason)

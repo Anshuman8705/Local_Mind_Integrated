@@ -17,6 +17,13 @@ from .services import users as user_service
 from .services.excel_import import import_users
 
 
+def _issued(user):
+    """The one-time password, returned once in the response that created it.
+    Null in shared mode, where the account starts on INITIAL_USER_PASSWORD."""
+    return {"initial_password": getattr(user, "issued_password", None),
+            "initial_password_mode": user_service.initial_password_mode()}
+
+
 class _RoleScopedMixin:
     role: str = ""
 
@@ -59,7 +66,7 @@ class UserListCreateView(_RoleScopedMixin, ListAPIView):
             ),
             request=request,
         )
-        return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+        return Response({**UserSerializer(user).data, **_issued(user)}, status=status.HTTP_201_CREATED)
 
 
 class UserDetailView(_RoleScopedMixin, APIView):
@@ -115,8 +122,12 @@ class UserResetPasswordView(_RoleScopedMixin, APIView):
 
     def post(self, request, user_id):
         user = get_or_404(self.queryset(), pk=user_id)
-        user_service.reset_password_to_initial(request.user, user, request)
-        return Response({"detail": "Password reset to the onboarding password; the user must change it at next login."})
+        user = user_service.reset_password_to_initial(request.user, user, request)
+        issued = _issued(user)
+        detail = ("Password reset to a new one-time password; the user must change it at next login."
+                  if issued["initial_password"] else
+                  "Password reset to the onboarding password; the user must change it at next login.")
+        return Response({"detail": detail, **issued})
 
 
 class UserImportTemplateView(_RoleScopedMixin, APIView):
@@ -150,7 +161,7 @@ class UserImportView(_RoleScopedMixin, APIView):
         serializer = ImportUsersSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         report = import_users(request.user, serializer.validated_data["file"], self.role, request)
-        return Response(report.as_dict())
+        return Response({**report.as_dict(), "initial_password_mode": user_service.initial_password_mode()})
 
 
 def role_views(role):

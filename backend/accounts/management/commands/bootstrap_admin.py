@@ -27,3 +27,8 @@ class Command(BaseCommand):
             user.must_change_password = False
             user.save(update_fields=["password", "must_change_password"])
         self.stdout.write(self.style.SUCCESS(f"Created admin {email} (must_change_password={user.must_change_password})."))
+        issued = getattr(user, "issued_password", None)
+        if issued and not opts.get("password"):
+            # Unique mode: this is the only place the first admin's password
+            # appears. It works once and must be changed at first login.
+            self.stdout.write(f"One-time password for {email}: {issued}")

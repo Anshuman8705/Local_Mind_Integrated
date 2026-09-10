@@ -3,6 +3,7 @@
 Manual creation (admin UI) and Excel import both call these functions so the
 rules cannot drift apart.
 """
+import secrets
 from dataclasses import dataclass, field
 
 from django.conf import settings
@@ -48,7 +49,35 @@ def _validate_new_user(data: NewUser):
         raise ValidationFailed(details=errors)
 
 
-def initial_password():
+# No 0/O, 1/l/I: the password is read off a screen or a printed sheet.
+_PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+
+
+def initial_password_mode() -> str:
+    mode = settings.LOCALMIND.get("INITIAL_PASSWORD_MODE", "shared")
+    return mode if mode in ("unique", "shared") else "shared"
+
+
+def generate_one_time_password(user=None) -> str:
+    """Three groups of four from a 53-character alphabet (about 68 bits),
+    checked against the configured password validators."""
+    from django.contrib.auth import password_validation
+    from django.core.exceptions import ValidationError as DjangoValidationError
+
+    while True:
+        groups = ["".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(4)) for _ in range(3)]
+        candidate = "-".join(groups)
+        try:
+            password_validation.validate_password(candidate, user)
+            return candidate
+        except DjangoValidationError:
+            continue
+
+
+def initial_password(user=None):
+    """The password a new or reset account starts on."""
+    if initial_password_mode() == "unique":
+        return generate_one_time_password(user)
     return settings.LOCALMIND["INITIAL_USER_PASSWORD"]
 
 
@@ -59,10 +88,11 @@ def create_user(actor, data: NewUser, request=None):
     if User.objects.filter(email=data.email).exists():
         raise Conflict("A user with this email already exists.", code="USER_EXISTS", details={"email": data.email})
 
+    password = initial_password()
     try:
         user = User.objects.create_user(
             email=data.email,
-            password=initial_password(),
+            password=password,
             role=data.role,
             full_name=data.full_name,
             must_change_password=True,
@@ -70,6 +100,9 @@ def create_user(actor, data: NewUser, request=None):
         )
     except IntegrityError:
         raise Conflict("A user with this email already exists.", code="USER_EXISTS")
+    # Held on the instance for this request only, so the caller can show it
+    # once. It is never stored, logged or audited.
+    user.issued_password = password if initial_password_mode() == "unique" else None
 
     _apply_profile(user, data.profile)
 
@@ -160,8 +193,11 @@ def reactivate_user(actor, user, request=None):
 
 @transaction.atomic
 def reset_password_to_initial(actor, user, request=None):
-    """Admin-triggered reset: back to onboarding password, forced change again."""
-    user.set_password(initial_password())
+    """Admin-triggered reset: a new onboarding password, forced change again.
+    Returns the user with ``issued_password`` set in unique mode."""
+    password = initial_password(user)
+    user.set_password(password)
+    user.issued_password = password if initial_password_mode() == "unique" else None
     user.must_change_password = True
     user.save(update_fields=["password", "must_change_password", "updated_at"])
     _revoke_all_tokens(user)

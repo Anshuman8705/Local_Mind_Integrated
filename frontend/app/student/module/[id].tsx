@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { AppState, Platform, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Platform, ScrollView, Text, View } from "react-native";
 import { student } from "@/api/endpoints";
 import type { Message, TeachResponse } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, colors, pct, space } from "@/ui";
+import { LessonView } from "@/ui/LessonView";
 
 type Tab = "read" | "lesson" | "ask";
 
@@ -60,7 +61,7 @@ export default function ModuleScreen() {
           {tab === "ask" ? <AskTab moduleId={id} /> : (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
               <View style={{ flex: 1, minWidth: 320, maxWidth: 840, gap: space.md }}>
-                {tab === "read" ? <Card><P>{mod.data.source_text}</P></Card> : <LessonTab moduleId={id} />}
+                {tab === "read" ? <Card><P>{mod.data.source_text}</P></Card> : <LessonTab moduleId={id} onRead={() => setTab("read")} />}
               </View>
               <View style={{ width: 300, flexGrow: 1, minWidth: 260, maxWidth: 360, gap: space.md }}>
                 <Card>
@@ -103,26 +104,54 @@ export default function ModuleScreen() {
   );
 }
 
-function LessonTab({ moduleId }: { moduleId: string }) {
+/** How often the Lesson tab looks again while a lesson is being prepared. */
+const LESSON_POLL_MS = 8000;
+
+function LessonTab({ moduleId, onRead }: { moduleId: string; onRead: () => void }) {
   const q = useAsync(() => student.teach(moduleId), [moduleId]);
   const d: TeachResponse | null = q.data;
+  // Lessons are generated in the background. While this one is queued the tab
+  // checks back by itself, quietly (no spinner over what is already shown).
+  const { setData } = q;
+  useEffect(() => {
+    if (d?.status !== "preparing") return;
+    const t = setTimeout(async () => {
+      try { setData(await student.teach(moduleId)); } catch { /* the next focus or retry will show the error */ }
+    }, LESSON_POLL_MS);
+    return () => clearTimeout(t);
+  }, [d, moduleId, setData]);
+  const ahead = d?.queue_position && d.queue_position > 1 ? d.queue_position - 1 : 0;
   return (
     <>
       <ErrorBanner message={q.error} onRetry={q.reload} />
-      {q.loading ? <Loading /> : null}
-      {d ? (
+      {q.loading && !d ? <Loading /> : null}
+      {d?.status === "preparing" ? (
+        <Card>
+          <Row style={{ gap: space.md }}>
+            <ActivityIndicator color={colors.primary} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <H2>Your lesson is being prepared</H2>
+              <P muted small>
+                {d.queue_position === 0
+                  ? "The tutor is writing it now."
+                  : ahead
+                    ? `The tutor is working through ${ahead} other lesson${ahead === 1 ? "" : "s"} first.`
+                    : "It is next in line."}{" "}
+                It appears here by itself; there is no need to refresh.
+              </P>
+            </View>
+          </Row>
+          <Button title="Read the Module Meanwhile" icon="book-outline" small variant="secondary" onPress={onRead} />
+        </Card>
+      ) : null}
+      {d?.lesson ? (
         <>
-          {d.generator === "fallback" ? <Notice tone="warning" message="The AI tutor is unavailable right now, so this lesson is a plain summary of the source text." /> : null}
-          <Card>
-            <H2>{d.lesson.title}</H2>
-            <P muted small>Learning objectives</P>
-            {d.lesson.learning_objectives.map((o, i) => <P key={i}>• {o}</P>)}
-          </Card>
-          {d.lesson.sections.map((s, i) => (
-            <Card key={i}><H2>{s.heading}</H2><P>{s.explanation}</P>{s.source_reference ? <P muted small>Source: {s.source_reference}</P> : null}</Card>
-          ))}
-          {d.lesson.key_terms.length ? <Card><H2>Key terms</H2>{d.lesson.key_terms.map((t, i) => <P key={i}><Text style={{ fontWeight: "700" }}>{t.term}</Text> — {t.definition}</P>)}</Card> : null}
-          <Card><H2>Summary</H2><P>{d.lesson.summary}</P></Card>
+          {d.status === "unavailable" ? (
+            <Notice tone="warning" message={d.retry_scheduled
+              ? "The tutor's lesson for this module is not ready yet, so this is a plain version made from the source text. The full lesson is being retried and will replace this."
+              : "The tutor's lesson for this module is not available, so this is a plain version made from the source text."} />
+          ) : null}
+          <LessonView lesson={d.lesson} />
         </>
       ) : null}
     </>

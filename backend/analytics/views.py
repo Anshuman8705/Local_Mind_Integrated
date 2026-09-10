@@ -18,7 +18,7 @@ class StudentOverviewView(_Base):
     permission_classes = [IsStudent]
 
     def get(self, request):
-        return Response(svc.student_overview(request.user, self.window()))
+        return Response(svc.student_overview(request.user, self.window(), released_only=True))
 
 
 class StudentSubjectView(_Base):
@@ -26,7 +26,7 @@ class StudentSubjectView(_Base):
 
     def get(self, request, subject_id):
         subject = svc.resolve_subject(request.user, subject_id)
-        return Response(svc.student_subject_detail(request.user, subject, self.window()))
+        return Response(svc.student_subject_detail(request.user, subject, self.window(), released_only=True))
 
 
 class StudentSessionsView(_Base):

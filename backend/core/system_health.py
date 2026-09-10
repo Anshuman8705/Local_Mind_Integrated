@@ -95,7 +95,11 @@ def check_document_processing() -> dict:
         return _component("document_processing", MISSING,
                           f"Docling layout models not found in {folder}; the first PDF would try to download them. Run `python manage.py fetch_model --docling`.",
                           artifacts=str(folder), local_artifacts=False)
-    return _component("document_processing", READY, f"docling installed, layout models local ({folder})", artifacts=str(folder), local_artifacts=True)
+    from documents.services.parser import legacy_doc_support
+    doc_ok, doc_reason = legacy_doc_support()
+    legacy = "legacy .doc uploads accepted" if doc_ok else f"legacy .doc uploads refused ({doc_reason})"
+    return _component("document_processing", READY, f"docling installed, layout models local ({folder}); {legacy}",
+                      artifacts=str(folder), local_artifacts=True, legacy_doc=doc_ok)
 
 
 def check_web_client() -> dict:

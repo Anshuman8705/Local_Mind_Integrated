@@ -144,6 +144,8 @@ AI_PROVIDER=llamacpp
 SERVE_WEB=true
 SERVE_MEDIA=true
 INITIAL_USER_PASSWORD=Welcome@LocalMind1
+# Nothing sits in front of the launcher, so no forwarded-for header is trusted.
+TRUSTED_PROXY_COUNT=0
 # AI monitor (on by default; see Part 11 for the judge model and tuning)
 AI_MONITOR_ENABLED=true
 AI_MONITOR_MODE=async
@@ -228,7 +230,7 @@ The console prints `LocalMind is running at http://<your-lan-ip>:8000`. Any devi
 | Email | `admin@localmind.local` (or what you passed to `--admin-email`) |
 | Password | `Welcome@LocalMind1` (the `INITIAL_USER_PASSWORD` in `.env`) |
 
-You will be forced to change the password before anything else works. Every user you create later also gets `INITIAL_USER_PASSWORD` and must change it at first login.
+You will be forced to change the password before anything else works. Every user you create later also gets `INITIAL_USER_PASSWORD` and must change it at first login. Accounts created while `INITIAL_PASSWORD_MODE=unique` was set can be put back on that password with `python manage.py reset_onboarding_passwords` (only accounts that have not chosen their own password are touched).
 
 ### 2.9 Verify
 
@@ -237,7 +239,7 @@ curl http://127.0.0.1:8000/api/health/
 curl "http://127.0.0.1:8000/api/health/?full=1"      # per-component readiness table
 ```
 
-Look for `"ai": {"ready": true}` and, in the full view, `offline_mode: READY`. The full view also has an `ai_monitor` row (judge readiness and evaluation backlog). Interactive API docs are at `http://127.0.0.1:8000/api/docs/`.
+Look for `"ai": {"ready": true}` and, in the full view, `offline_mode: READY`. The full view also has an `ai_monitor` row (judge readiness and evaluation backlog). Run these on the server itself: from any other machine `/api/health/` gives only the up/down summary, and administrators get the full report at `/api/admin/ai/status/`. Interactive API docs (`/api/docs/`) are served only with `DJANGO_DEBUG=true` or `API_DOCS_ENABLED=true`; the schema is also in `backend/openapi.yaml`.
 
 ```bash
 cd backend
@@ -458,6 +460,7 @@ DJANGO_ALLOWED_HOSTS=localmind.yourschool.edu
 DATABASE_URL=postgres://localmind:<password>@localhost:5432/localmind
 MEDIA_ROOT=/opt/localmind/media
 INITIAL_USER_PASSWORD=<change me>
+TRUSTED_PROXY_COUNT=1
 AI_PROVIDER=llamacpp
 SERVE_WEB=true
 ```
@@ -487,7 +490,7 @@ sudo systemctl status localmind
 sudo journalctl -u localmind -f
 ```
 
-The unit runs `migrate` and `check_ai` as `ExecStartPre`, then gunicorn on `127.0.0.1:8000` with 3 workers. On an 8 GB machine reduce to `--workers 1` or `2` (each worker loads its own copy of the model).
+The unit runs `migrate` and `check_ai` as `ExecStartPre`, then gunicorn on `127.0.0.1:8000` with 1 worker and 8 threads. Each worker loads its own copy of the model, so add workers only on a host with RAM for another copy (about 1.8 GB each); the Docker image reads `GUNICORN_WORKERS` and `GUNICORN_THREADS` for the same choice.
 
 ### 5.5 nginx reverse proxy
 
@@ -497,7 +500,7 @@ sudo cp /opt/localmind/app/deploy/nginx.conf /etc/nginx/sites-available/localmin
 sudo ln -s /etc/nginx/sites-available/localmind /etc/nginx/sites-enabled/
 ```
 
-Edit the copied file: change `proxy_pass http://api:8000;` to `proxy_pass http://127.0.0.1:8000;` (both occurrences) and `alias /srv/static/;` to `alias /opt/localmind/app/backend/staticfiles/;`. Then:
+Edit the copied file: change `proxy_pass http://api:8000;` to `proxy_pass http://127.0.0.1:8000;` (all three occurrences) and `alias /srv/static/;` to `alias /opt/localmind/app/backend/staticfiles/;`. Then:
 
 ```bash
 sudo nginx -t
@@ -528,7 +531,8 @@ sudo systemctl restart localmind
 Run from `backend/` with the venv active.
 
 ```bash
-python manage.py test                                    # unit suite on SQLite (287 tests; 52 cover the AI monitor)
+pip install -r requirements-dev.txt                      # test-only: reportlab + pypdfium2 for the PDF parser tests
+python manage.py test                                    # unit suite on SQLite (315 tests; 52 cover the AI monitor)
 DATABASE_URL=postgres://user:pw@host:5432/db python manage.py test   # same suite on PostgreSQL (role needs CREATEDB)
 python manage.py makemigrations --check --dry-run        # migrations in sync
 DJANGO_SECRET_KEY=<key> DJANGO_DEBUG=false python manage.py check --deploy --fail-level ERROR
@@ -630,6 +634,9 @@ npm run ios
 
 ```bash
 python manage.py requeue_stuck_documents           # re-run documents abandoned mid-processing
+python manage.py generate_lessons --status          # lessons queued, generating, ready, failed
+python manage.py generate_lessons --queue           # queue every module without a current lesson (after an upgrade)
+python manage.py generate_lessons --run --limit 10  # generate in this process instead of the web worker
 python manage.py requeue_stuck_documents --dry-run
 python manage.py flushexpiredtokens                # trim JWT blacklist
 python manage.py monitor_ai --purge                # apply AI-monitor retention (open incidents kept)
@@ -645,8 +652,8 @@ python manage.py bootstrap_admin --email x@y.edu   # another admin (idempotent)
 Health endpoints:
 
 ```bash
-curl http://<host>:8000/api/health/
-curl "http://<host>:8000/api/health/?full=1"
+curl http://<host>:8000/api/health/                  # up/down summary, from anywhere
+curl "http://127.0.0.1:8000/api/health/?full=1"      # component report, on the server itself
 # admin token required:
 curl -H "Authorization: Bearer <token>" "http://<host>:8000/api/admin/ai/status/?refresh=1"
 ```

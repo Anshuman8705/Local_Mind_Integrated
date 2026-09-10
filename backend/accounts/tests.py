@@ -407,3 +407,179 @@ class ImportIgnoresUnknownColumnsTests(TestCase):
         self.assertEqual(res.status_code, 400, res.content)
         self.assertEqual(res.data["error"]["code"], "MISSING_HEADERS")
         self.assertEqual(sorted(res.data["error"]["details"]["missing"]), ["email", "name"])
+
+
+from django.core.cache import cache
+from django.test import RequestFactory, override_settings
+
+
+def _localmind(**overrides):
+    from django.conf import settings
+    return {**settings.LOCALMIND, **overrides}
+
+
+@override_settings(LOCALMIND=_localmind(INITIAL_PASSWORD_MODE="unique"))
+class UniqueInitialPasswordTests(TestCase):
+    """Unique mode: no two accounts share an onboarding password, and the
+    shared INITIAL_USER_PASSWORD opens nothing."""
+
+    def setUp(self):
+        cache.clear()
+        self.admin = make_admin(email="admin@example.edu")
+        self.ac = client_for(self.admin)
+
+    def test_created_account_gets_its_own_one_time_password(self):
+        a = self.ac.post("/api/admin/students/", {"email": "a@example.edu", "full_name": "A"}, format="json")
+        b = self.ac.post("/api/admin/students/", {"email": "b@example.edu", "full_name": "B"}, format="json")
+        self.assertEqual(a.status_code, 201, a.content)
+        self.assertEqual(a.data["initial_password_mode"], "unique")
+        self.assertTrue(a.data["initial_password"])
+        self.assertNotEqual(a.data["initial_password"], b.data["initial_password"])
+        self.assertEqual(login(client_for(), "student", "a@example.edu", INITIAL).status_code, 401)
+        ok = login(client_for(), "student", "a@example.edu", a.data["initial_password"])
+        self.assertEqual(ok.status_code, 200, ok.content)
+        self.assertTrue(ok.data["must_change_password"])
+        # The password is never written to the audit log.
+        self.assertFalse(AuditLog.objects.filter(summary__icontains=a.data["initial_password"]).exists())
+
+    def test_import_returns_each_password_once(self):
+        wb = _workbook(["name", "email"], [["One", "one@example.edu"], ["Two", "two@example.edu"]])
+        res = self.ac.post("/api/admin/students/import/", {"file": wb}, format="multipart")
+        self.assertEqual(res.status_code, 200, res.content)
+        rows = res.data["created_users"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len({r["initial_password"] for r in rows}), 2)
+        for r in rows:
+            self.assertEqual(login(client_for(), "student", r["email"], r["initial_password"]).status_code, 200)
+
+    def test_reset_issues_a_new_one_time_password(self):
+        stu = make_student(email="s@example.edu")
+        res = self.ac.post(f"/api/admin/students/{stu.id}/reset-password/", {}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res.data["initial_password"])
+        self.assertEqual(login(client_for(), "student", stu.email, STRONG).status_code, 401)
+        self.assertEqual(login(client_for(), "student", stu.email, res.data["initial_password"]).status_code, 200)
+
+
+class SharedInitialPasswordStillWorksTests(TestCase):
+    def test_shared_mode_returns_no_password(self):
+        admin = make_admin(email="admin@example.edu")
+        res = client_for(admin).post("/api/admin/students/", {"email": "c@example.edu", "full_name": "C"}, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertIsNone(res.data["initial_password"])
+        self.assertEqual(res.data["initial_password_mode"], "shared")
+
+
+@override_settings(LOCALMIND=_localmind(LOGIN_MAX_FAILURES=3, LOGIN_LOCKOUT_MINUTES=15))
+class LoginLockoutTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.student = make_student(email="stu@example.edu")
+
+    def test_account_locks_after_repeated_failures_even_with_the_right_password(self):
+        for _ in range(3):
+            self.assertEqual(login(client_for(), "student", self.student.email, "wrong-password").status_code, 401)
+        res = login(client_for(), "student", self.student.email, STRONG)
+        self.assertEqual(res.status_code, 429, res.content)
+        self.assertEqual(res.data["error"]["code"], "TOO_MANY_ATTEMPTS")
+
+    def test_lockout_is_keyed_by_email_not_by_existence(self):
+        for _ in range(3):
+            login(client_for(), "student", "nobody@example.edu", "x")
+        res = login(client_for(), "student", "nobody@example.edu", "x")
+        self.assertEqual(res.status_code, 429)
+        # Another account is unaffected.
+        self.assertEqual(login(client_for(), "student", self.student.email, STRONG).status_code, 200)
+
+    def test_a_successful_login_resets_the_count(self):
+        for _ in range(2):
+            login(client_for(), "student", self.student.email, "wrong-password")
+        self.assertEqual(login(client_for(), "student", self.student.email, STRONG).status_code, 200)
+        for _ in range(2):
+            login(client_for(), "student", self.student.email, "wrong-password")
+        self.assertEqual(login(client_for(), "student", self.student.email, STRONG).status_code, 200)
+
+    def test_rotating_x_forwarded_for_does_not_escape_the_lock(self):
+        for i in range(3):
+            client_for().post("/api/auth/login/student/", {"email": self.student.email, "password": "bad"},
+                              format="json", HTTP_X_FORWARDED_FOR=f"10.0.0.{i}")
+        res = client_for().post("/api/auth/login/student/", {"email": self.student.email, "password": STRONG},
+                                format="json", HTTP_X_FORWARDED_FOR="10.9.9.9")
+        self.assertEqual(res.status_code, 429)
+
+
+class ClientAddressTests(TestCase):
+    def _request(self, xff=None, remote="192.0.2.10"):
+        meta = {"REMOTE_ADDR": remote}
+        if xff is not None:
+            meta["HTTP_X_FORWARDED_FOR"] = xff
+        return RequestFactory().get("/", **meta)
+
+    def test_without_a_proxy_the_header_is_ignored(self):
+        from core.utils import client_ip
+        with override_settings(REST_FRAMEWORK={**__import__("django.conf").conf.settings.REST_FRAMEWORK, "NUM_PROXIES": 0}):
+            self.assertEqual(client_ip(self._request("203.0.113.5")), "192.0.2.10")
+            self.assertEqual(client_ip(self._request("not-an-ip")), "192.0.2.10")
+
+    def test_behind_one_proxy_the_last_hop_is_the_client(self):
+        from core.utils import client_ip
+        with override_settings(REST_FRAMEWORK={**__import__("django.conf").conf.settings.REST_FRAMEWORK, "NUM_PROXIES": 1}):
+            # A client-written first entry is not believed.
+            self.assertEqual(client_ip(self._request("6.6.6.6, 198.51.100.7")), "198.51.100.7")
+            self.assertEqual(client_ip(self._request("garbage")), "192.0.2.10")
+
+    def test_default_setting_does_not_trust_forwarded_for(self):
+        from django.conf import settings
+        self.assertEqual(settings.REST_FRAMEWORK["NUM_PROXIES"], 0)
+
+
+class PasswordChangeRevokesOtherSessionsTests(TestCase):
+    def test_refresh_token_from_before_the_change_stops_working(self):
+        cache.clear()
+        stu = make_student(email="stu@example.edu")
+        old = login(client_for(), "student", stu.email, STRONG).data
+        other = login(client_for(), "student", stu.email, STRONG).data
+        c = bearer(client_for(), other["access"])
+        res = c.post("/api/auth/password/change/", {"current_password": STRONG, "new_password": "An0ther-Str0ng-Pass!"}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(client_for().post("/api/auth/refresh/", {"refresh": old["refresh"]}, format="json").status_code, 401)
+        # The session that changed the password carries on with its new pair.
+        self.assertEqual(client_for().post("/api/auth/refresh/", {"refresh": res.data["refresh"]}, format="json").status_code, 200)
+
+
+class SharedPasswordIsTheDefaultTests(TestCase):
+    def test_default_mode_is_shared_everywhere(self):
+        from accounts.services.users import initial_password_mode
+        self.assertEqual(initial_password_mode(), "shared")
+        admin = make_admin(email="admin2@example.edu")
+        ac = client_for(admin)
+        created = ac.post("/api/admin/students/", {"email": "new@example.edu", "full_name": "New"}, format="json")
+        self.assertIsNone(created.data["initial_password"])
+        self.assertEqual(login(client_for(), "student", "new@example.edu", INITIAL).status_code, 200)
+        wb = _workbook(["name", "email"], [["Imported", "imp@example.edu"]])
+        ac.post("/api/admin/students/import/", {"file": wb}, format="multipart")
+        self.assertEqual(login(client_for(), "student", "imp@example.edu", INITIAL).status_code, 200)
+        stu = make_student(email="chosen@example.edu")
+        reset = ac.post(f"/api/admin/students/{stu.id}/reset-password/", {}, format="json")
+        self.assertIsNone(reset.data["initial_password"])
+        self.assertEqual(login(client_for(), "student", stu.email, INITIAL).status_code, 200)
+
+
+class ResetOnboardingPasswordsCommandTests(TestCase):
+    def test_only_accounts_still_on_an_onboarding_password_are_reset(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        stuck = make_student(email="stuck@example.edu", password="xY7-unknown-one-time", must_change=True)
+        chosen = make_student(email="chosen@example.edu")  # has its own password
+        on_shared = make_student(email="shared@example.edu", password=INITIAL, must_change=True)
+        out = StringIO()
+        call_command("reset_onboarding_passwords", "--dry-run", stdout=out)
+        self.assertIn("would reset: stuck@example.edu", out.getvalue())
+        self.assertEqual(login(client_for(), "student", stuck.email, INITIAL).status_code, 401)
+        call_command("reset_onboarding_passwords", stdout=StringIO())
+        self.assertEqual(login(client_for(), "student", stuck.email, INITIAL).status_code, 200)
+        self.assertEqual(login(client_for(), "student", chosen.email, STRONG).status_code, 200)
+        self.assertEqual(login(client_for(), "student", on_shared.email, INITIAL).status_code, 200)
+        self.assertTrue(AuditLog.objects.filter(action="user.password_reset_to_shared", target_id=str(stuck.id)).exists())

@@ -22,8 +22,11 @@ def student_documents(student, subject=None):
 
 
 def student_module_queryset(student):
-    """Modules in published documents of subjects the student is actively enrolled in."""
+    """Modules in published documents of subjects the student is actively
+    enrolled in. A module without source text is never part of a student's
+    world (the only such modules left are kept for records and hidden)."""
     return Module.objects.filter(
+        source_missing=False,
         chapter__document__status=DocumentStatus.PUBLISHED,
         chapter__document__subject__status="active",
         chapter__document__subject__enrollments__student=student,
@@ -57,10 +60,16 @@ def record_module_view(student, module):
 
 
 @transaction.atomic
-def record_quiz_outcome(student, module, percentage, passed):
+def record_quiz_outcome(student, module, percentage, passed, count_attempt=True):
+    """Write one quiz result into the student's progress for a module.
+
+    Callers only do this once the result is visible to the student (see
+    ``assessments.services.assessments.apply_outcome``). ``count_attempt`` is
+    False when the same attempt was recorded before and is being re-graded."""
     progress, _ = ModuleProgress.objects.select_for_update().get_or_create(student=student, module=module)
     now = timezone.now()
-    progress.quiz_attempts += 1
+    if count_attempt:
+        progress.quiz_attempts += 1
     progress.best_quiz_percentage = max(progress.best_quiz_percentage or 0.0, percentage)
     if progress.started_at is None:
         progress.started_at = now
@@ -74,7 +83,16 @@ def record_quiz_outcome(student, module, percentage, passed):
     return progress
 
 
+def settle_student_results(student):
+    """Record quiz outcomes whose scheduled release time has passed. Scheduled
+    release has no scheduler, so every student-facing progress read settles
+    first. One indexed query when there is nothing to do."""
+    from assessments.services.assessments import settle_released_outcomes
+    return settle_released_outcomes(student)
+
+
 def progress_map(student, modules):
+    settle_student_results(student)
     return {p.module_id: p for p in ModuleProgress.objects.filter(student=student, module__in=modules)}
 
 
@@ -116,16 +134,9 @@ def open_modules_for_publish(actor, modules, reason, target=None, request=None):
         target = modules[0].chapter.document
     audit.record(actor, "module.opened_on_publish", target,
                  {"reason": reason, "count": opened, "modules": [str(i) for i in module_ids]}, request)
-    # Opening a module is the moment its lesson becomes worth having ready: the
-    # first student to press Lesson would otherwise wait for the model. One
-    # background worker walks the queue, so publishing a whole book does not
-    # start forty generations at once.
-    if not settings.TESTING:
-        try:
-            from tutor.services import enqueue_prewarm
-            enqueue_prewarm(module_ids)
-        except Exception:  # prewarming is an optimisation, never a blocker
-            logger.warning("Could not queue lesson prewarming for %s modules", len(module_ids))
+    # Lessons are already queued when the book is processed and whenever a
+    # module's text changes (tutor/lessons.py), so opening a module does not
+    # need to start anything.
     return opened
 
 

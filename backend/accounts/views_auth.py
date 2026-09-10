@@ -1,6 +1,9 @@
 import logging
+from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -19,6 +22,20 @@ from .services.passwords import change_password
 logger = logging.getLogger("localmind.auth")
 
 ROLE_FROM_PATH = {"admin": Role.ADMIN, "faculty": Role.FACULTY, "student": Role.STUDENT}
+
+
+def recent_login_failures(email: str) -> int:
+    """Failed logins for this email inside the lockout window, counted after
+    its most recent successful login. Read from the audit log, which every
+    worker shares, so the limit holds with several gunicorn workers."""
+    from audit.models import AuditLog
+
+    cfg = settings.LOCALMIND
+    since = timezone.now() - timedelta(minutes=cfg.get("LOGIN_LOCKOUT_MINUTES", 15))
+    last_ok = (AuditLog.objects.filter(action="auth.login", actor_email=email, created_at__gte=since)
+               .order_by("-created_at").values_list("created_at", flat=True).first())
+    return AuditLog.objects.filter(action="auth.login_failed", summary__email=email,
+                                   created_at__gte=last_ok or since).count()
 
 
 def _tokens_for(user):
@@ -44,6 +61,18 @@ class RoleLoginView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
         password = serializer.validated_data["password"]
+
+        # Per-account lockout. The IP throttle alone lets one machine try a
+        # whole class list of accounts, and lets many machines try one.
+        limit = settings.LOCALMIND.get("LOGIN_MAX_FAILURES", 10)
+        if limit and recent_login_failures(email) >= limit:
+            audit.record(None, "auth.login_locked", None, {"email": email, "role": role}, request)
+            raise APIError(
+                "Too many failed sign-in attempts for this account. Wait a few minutes and try again, "
+                "or ask an administrator to reset the password.",
+                code="TOO_MANY_ATTEMPTS", status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                details={"retry_after_minutes": settings.LOCALMIND.get("LOGIN_LOCKOUT_MINUTES", 15)},
+            )
 
         user = authenticate(request, username=email, password=password)
         if user is None or user.role != expected_role:

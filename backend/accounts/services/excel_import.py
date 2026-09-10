@@ -216,7 +216,9 @@ def import_users(actor, file_obj, role, request=None) -> ImportReport:
                     request=request,
                 )
             report.created += 1
-            report.created_users.append({"row": row.row_number, "id": str(user.id), "email": user.email})
+            report.created_users.append({"row": row.row_number, "id": str(user.id), "email": user.email,
+                                         "full_name": user.full_name,
+                                         "initial_password": getattr(user, "issued_password", None)})
         except Conflict:
             report.already_existing += 1
             report.errors.append({"row": row.row_number, "email": data["email"], "errors": ["User already exists."]})

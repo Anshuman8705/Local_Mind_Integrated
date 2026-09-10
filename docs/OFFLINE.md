@@ -93,7 +93,8 @@ machine as the targets is the reliable path.
 ## System health
 
 `GET /api/admin/ai/status/?refresh=1` (admin only) and `GET /api/health/?full=1`
-(public, for the launcher and monitoring) return `system.components`, one
+(administrators, or requests from the server itself; everyone else gets the
+up/down summary) return `system.components`, one
 entry per dependency: backend, database, storage, ai_runtime, ai_model,
 document_processing, web_client and offline_mode, each READY / ERROR /
 MISSING with a one-line reason and the command that fixes it. The admin
@@ -141,8 +142,9 @@ still fails after a large PDF.
 
 On a modern laptop CPU a 10-question quiz takes 30 to 90 seconds, a tutor
 answer 5 to 20 seconds. Each gunicorn worker is a separate process with its
-own copy of the model, so keep workers to 1 or 2 on an 8 GB machine and let
-threads carry the concurrency; the launcher uses one process with 8 waitress
+own copy of the model, so the shipped Dockerfile and systemd unit use one
+worker with 8 threads, and a second worker only makes sense with RAM for
+another model copy; the launcher uses one process with 8 waitress
 threads. Faculty generating a quiz while a student asks the tutor will queue
 for a few seconds, which the frontend already tolerates.
 

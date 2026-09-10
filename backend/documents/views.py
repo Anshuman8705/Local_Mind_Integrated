@@ -53,11 +53,18 @@ class DocumentListUploadView(ListAPIView):
         return Response(DocumentSerializer(document).data, status=status.HTTP_201_CREATED)
 
 
+def _detail(user, document_id):
+    """The document with its outline and each module's lesson loaded in a
+    handful of queries; the book screen polls this while lessons generate."""
+    document = _doc(user, document_id)
+    return Document.objects.select_related("subject", "uploaded_by").prefetch_related("chapters__modules__lesson").get(pk=document.pk)
+
+
 class DocumentDetailView(APIView):
     permission_classes = [IsAdminOrFaculty]
 
     def get(self, request, document_id):
-        return Response(DocumentDetailSerializer(_doc(request.user, document_id)).data)
+        return Response(DocumentDetailSerializer(_detail(request.user, document_id)).data)
 
     def delete(self, request, document_id):
         """Permanent delete. Replaces the old archive action in the workspace."""
@@ -112,16 +119,20 @@ class OutlineView(APIView):
 
     def get(self, request, document_id):
         document = _doc(request.user, document_id)
+        chapters = document.chapters.prefetch_related("modules__lesson")
         return Response({"document_id": str(document.id), "document_title": document.title, "status": document.status,
                          "outline_source": document.outline_source, "headings": document.extracted_headings,
-                         "chapters": ChapterSerializer(document.chapters.all(), many=True).data})
+                         "chapters": ChapterSerializer(chapters, many=True).data})
 
     def put(self, request, document_id):
         document = _doc(request.user, document_id)
         serializer = OutlineInSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         document = svc.replace_outline(request.user, document, serializer.validated_data, request)
-        return Response(DocumentDetailSerializer(_doc(request.user, document_id)).data)
+        # What the save dropped because it had no source text, so the screen
+        # can say so instead of modules silently vanishing.
+        report = getattr(document, "outline_report", None) or {}
+        return Response({**DocumentDetailSerializer(_detail(request.user, document_id)).data, "outline_report": report})
 
 
 class ChapterEditView(APIView):
@@ -144,6 +155,48 @@ class ChapterAvailabilityView(APIView):
         serializer.is_valid(raise_exception=True)
         modules = svc.set_chapter_availability(request.user, chapter, serializer.validated_data["availability"], request)
         return Response(ModuleSerializer(modules, many=True).data)
+
+
+class ModuleLessonView(APIView):
+    """GET: the module's lesson and where it is in the queue, for faculty to
+    preview. POST: generate it again (for example after a poor result)."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def _module(self, request, module_id):
+        return get_or_404(Module.objects.filter(chapter__document__in=_docs_for(request.user))
+                          .select_related("chapter__document__subject"), pk=module_id)
+
+    def get(self, request, module_id):
+        from tutor import lessons
+        return Response(lessons.detail_for_faculty(self._module(request, module_id)))
+
+    def post(self, request, module_id):
+        from audit import services as audit
+        from tutor import lessons
+        module = self._module(request, module_id)
+        if not lessons.has_text(module):
+            raise APIError("This module has no source text, so there is nothing to build a lesson from.",
+                           code="EMPTY_SOURCE_TEXT", status_code=400)
+        lessons.request_lessons([module], force=True, reason="faculty.regenerate")
+        audit.record(request.user, "lesson.regenerate_requested", module, {}, request)
+        return Response(lessons.detail_for_faculty(module), status=status.HTTP_202_ACCEPTED)
+
+
+class DocumentLessonsView(APIView):
+    """POST: queue lessons for every module of a book that lacks a current one
+    (``{"force": true}`` regenerates all of them). Returns the book's counts."""
+
+    permission_classes = [IsAdminOrFaculty]
+
+    def post(self, request, document_id):
+        from audit import services as audit
+        from tutor import lessons
+        document = _doc(request.user, document_id)
+        force = str(request.data.get("force", "")).lower() in ("1", "true", "yes")
+        queued = lessons.request_for_document(document, force=force, reason="faculty.generate_all")
+        audit.record(request.user, "lessons.generate_requested", document, {"queued": queued, "force": force}, request)
+        return Response({"queued": queued, **lessons.summary_for_document(document)}, status=status.HTTP_202_ACCEPTED)
 
 
 class ModuleEditView(APIView):

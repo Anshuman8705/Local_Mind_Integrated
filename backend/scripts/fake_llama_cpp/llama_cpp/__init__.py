@@ -30,6 +30,11 @@ class Llama:
 
     def create_chat_completion(self, messages, response_format=None, temperature=0.0, max_tokens=None, **kwargs):
         _state["calls"] += 1
+        delay_ms = int(os.environ.get("FAKE_LLAMA_DELAY_MS", "0"))
+        if delay_ms:
+            # Stand in for a slow CPU generation, to exercise queueing and priority.
+            import time
+            time.sleep(delay_ms / 1000)
         schema = (response_format or {}).get("schema") or {}
         if _state["fail_next"] > 0:
             _state["fail_next"] -= 1

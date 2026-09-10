@@ -74,6 +74,19 @@ class AssignmentSubmission(TimeStampedUUIDModel):
     def __str__(self):
         return f"{self.student.email} -> {self.assignment.title} #{self.attempt_number}"
 
+    @staticmethod
+    def visible_q(prefix: str = "", now=None):
+        """Query form of ``results_visible`` for student-facing aggregates."""
+        from django.db.models import Q
+        from django.utils import timezone
+
+        now = now or timezone.now()
+        a = f"{prefix}assignment__"
+        return (Q(**{f"{a}results_release": ResultsRelease.IMMEDIATE})
+                | Q(**{f"{prefix}results_released_at__isnull": False})
+                | Q(**{f"{a}results_released_at__isnull": False})
+                | Q(**{f"{a}results_release": ResultsRelease.SCHEDULED, f"{a}results_release_at__lte": now}))
+
     @property
     def results_visible(self):
         """Whether the student may see the score and feedback on this one."""

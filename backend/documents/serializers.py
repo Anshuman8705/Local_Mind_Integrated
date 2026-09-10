@@ -6,11 +6,20 @@ from .models import Document
 
 class ModuleSerializer(serializers.ModelSerializer):
     chapter_id = serializers.UUIDField(read_only=True)
+    lesson_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Module
         fields = ["id", "chapter_id", "title", "order", "source_heading_index", "source_text", "source_missing",
-                  "start_page", "end_page", "is_user_edited", "availability", "opened_at", "created_at", "updated_at"]
+                  "start_page", "end_page", "is_user_edited", "availability", "opened_at", "lesson_status",
+                  "created_at", "updated_at"]
+
+    def get_lesson_status(self, module) -> str:
+        """ready | pending | generating | failed | none (the module has no text)."""
+        from tutor import lessons
+        # A missing reverse one-to-one raises an AttributeError subclass, so
+        # getattr's default covers both "prefetched and absent" and "not loaded".
+        return lessons.state_for(module, getattr(module, "lesson", None))
 
 
 class ModuleBriefSerializer(serializers.ModelSerializer):
@@ -76,12 +85,20 @@ class DocumentSerializer(serializers.ModelSerializer):
 class DocumentDetailSerializer(DocumentSerializer):
     chapters = ChapterSerializer(many=True, read_only=True)
     missing_source_modules = serializers.SerializerMethodField()
+    lessons = serializers.SerializerMethodField()
 
     class Meta(DocumentSerializer.Meta):
-        fields = DocumentSerializer.Meta.fields + ["extracted_headings", "chapters", "missing_source_modules"]
+        fields = DocumentSerializer.Meta.fields + ["extracted_headings", "chapters", "missing_source_modules", "lessons"]
 
     def get_missing_source_modules(self, doc):
+        """Modules kept without text only because student work refers to them;
+        they are hidden from students. Every other empty module is removed."""
         return [str(m.id) for m in Module.objects.filter(chapter__document=doc, source_missing=True)]
+
+    def get_lessons(self, doc) -> dict:
+        """total / ready / pending / generating / failed over modules with text."""
+        from tutor import lessons
+        return lessons.summary_for_document(doc)
 
 
 class UploadSerializer(serializers.Serializer):

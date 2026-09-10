@@ -35,7 +35,7 @@ class StudentSubjectDocumentsView(APIView):
         docs = services.student_documents(request.user, subject).prefetch_related("chapters__modules")
         out = []
         for doc in docs:
-            modules = [m for ch in doc.chapters.all() for m in ch.modules.all()]
+            modules = [m for ch in doc.chapters.all() for m in ch.modules.all() if not m.source_missing]
             rows = services.progress_map(request.user, modules)
             completed = sum(1 for m in modules if rows.get(m.id) and rows[m.id].status == ProgressStatus.COMPLETED)
             out.append({"id": str(doc.id), "title": doc.title, "subject_id": str(doc.subject_id), "published_at": doc.published_at,
@@ -51,11 +51,13 @@ class StudentDocumentView(APIView):
 
     def get(self, request, document_id):
         doc = get_or_404(services.student_documents(request.user).prefetch_related("chapters__modules"), pk=document_id)
-        modules = [m for ch in doc.chapters.all() for m in ch.modules.all()]
+        modules = [m for ch in doc.chapters.all() for m in ch.modules.all() if not m.source_missing]
         rows = services.progress_map(request.user, modules)
         chapters = []
         for ch in doc.chapters.all():
-            ch_modules = list(ch.modules.all())
+            ch_modules = [m for m in ch.modules.all() if not m.source_missing]
+            if not ch_modules:
+                continue
             chapters.append({"id": str(ch.id), "title": ch.title, "order": ch.order,
                              "status": services.chapter_status(rows, ch_modules),
                              "modules": [_module_payload(m, rows.get(m.id), include_source=False) for m in ch_modules]})
@@ -70,6 +72,7 @@ class StudentModuleView(APIView):
 
     def get(self, request, module_id):
         module = services.resolve_accessible_module(request.user, module_id)
+        services.settle_student_results(request.user)
         progress = services.record_module_view(request.user, module)
         payload = _module_payload(module, progress, include_source=True)
         payload["chapter_title"] = module.chapter.title

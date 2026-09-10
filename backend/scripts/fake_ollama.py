@@ -18,7 +18,8 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODELS = ["qwen3:1.7b"]
-_state = {"calls": 0, "fail_next": 0, "offline": 0}
+# delay_ms slows every chat reply, to exercise queueing and priority.
+_state = {"calls": 0, "fail_next": 0, "offline": 0, "delay_ms": 0}
 
 
 def _instance(schema: dict, hint: str, path: str = "") -> object:
@@ -65,10 +66,39 @@ def _outline_from_prompt(prompt: str) -> dict | None:
     return {"document_title": "Generated outline", "chapters": chapters}
 
 
+def _quiz_reply(schema: dict, prompt: str) -> dict:
+    """Questions shaped like a real model's: readable wording about the TOPIC,
+    four distinct plain options and a quote copied from the section, so the
+    application's wording and grounding checks accept them."""
+    topic = (re.search(r"^TOPIC: (.+)$", prompt, re.MULTILINE) or [None, "this topic"])[1].strip()
+    section = re.search(r'TEXTBOOK SECTION:\n"""(.*?)"""', prompt, re.DOTALL)
+    words = (section.group(1) if section else topic).split()
+    quote = " ".join(words[:8])
+    props = schema.get("properties", {})
+    tag = _state["calls"]
+    out = {}
+    if "mcq_questions" in props:
+        n = props["mcq_questions"].get("minItems", 1)
+        out["mcq_questions"] = [{
+            "question": f"Which statement about {topic} is correct (set {tag}, item {i + 1})?",
+            "options": [f"{topic}: statement {k} of set {tag}.{i + 1}" for k in "ABCD"],
+            "answer": "A", "explanation": f"The first statement describes {topic} correctly.", "quote": quote,
+        } for i in range(n)]
+    if "subjective_questions" in props:
+        n = props["subjective_questions"].get("minItems", 1)
+        out["subjective_questions"] = [{
+            "question": f"Explain the main idea of {topic} in your own words (set {tag}, item {i + 1}).",
+            "rubric": "Names the main idea; gives one supporting detail.", "quote": quote,
+        } for i in range(n)]
+    return out
+
+
 def reply_for(body: dict) -> dict:
     schema = body.get("format") or {}
     prompt = "\n".join(m.get("content", "") for m in body.get("messages", []))
     _state["calls"] += 0
+    if {"mcq_questions", "subjective_questions"} & set(schema.get("properties", {})):
+        return _quiz_reply(schema, prompt)
     data = _instance(schema, f"{body.get('model', '')} #{_state['calls']}")
     if "chapters" in schema.get("properties", {}):
         outline = _outline_from_prompt(prompt)
@@ -122,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/api/chat":
             return self._json(404, {"error": "not found"})
         _state["calls"] += 1
+        if _state["delay_ms"]:
+            import time
+            time.sleep(_state["delay_ms"] / 1000)
         if body.get("model") not in MODELS:
             return self._json(404, {"error": f"model '{body.get('model')}' not found"})
         if _state["fail_next"] > 0:

@@ -99,6 +99,40 @@ def rows(d):
     return d["results"] if isinstance(d, dict) and "results" in d else d
 
 
+def fake_calls():
+    """How many chat calls the fake Ollama has served (None against a real model)."""
+    if not FAKE:
+        return None
+    with urllib.request.urlopen(FAKE.rstrip("/") + "/_state", timeout=5) as r:
+        return json.loads(r.read())["calls"]
+
+
+def wait_for_lessons(document_id, tok, timeout=None):
+    """Lessons are generated in the background; poll the book until none are
+    queued or being written. Returns the final lesson counts."""
+    timeout = timeout or (90 if FAKE else 1800)
+    deadline = time.time() + timeout
+    summary = {}
+    while time.time() < deadline:
+        _, detail = call("GET", f"/faculty/documents/{document_id}/", tok=tok)
+        summary = detail.get("lessons") or {}
+        if summary and summary.get("pending", 0) + summary.get("generating", 0) == 0:
+            return summary
+        time.sleep(1)
+    return summary
+
+
+def wait_for_lesson_state(module_id, tok, wanted, timeout=60):
+    deadline = time.time() + timeout
+    d = {}
+    while time.time() < deadline:
+        _, d = call("GET", f"/faculty/modules/{module_id}/lesson/", tok=tok)
+        if d.get("status") in wanted:
+            return d
+        time.sleep(1)
+    return d
+
+
 def err(d):
     return (d.get("error") or {}).get("code") if isinstance(d, dict) else None
 
@@ -343,6 +377,8 @@ for _ in range(60):
     time.sleep(1)
 check("processing finished", d.get("status") == "under_review", d.get("error_message") or d.get("status"))
 check("outline came from the AI", d.get("outline_source") == "ai" if FAKE else d.get("outline_source") in ("ai", "source_hierarchy"), d.get("outline_source"))
+lesson_counts = d.get("lessons") or {}
+check("processing queued a lesson for every module", lesson_counts.get("total") == d.get("module_count") and lesson_counts.get("total", 0) > 0, lesson_counts)
 
 s, d = call("GET", f"/faculty/documents/{doc}/outline/", tok=ftok)
 check("outline has chapters, modules and headings", s == 200 and len(d["chapters"]) == 2 and d.get("headings"), d.get("chapters") and len(d["chapters"]))
@@ -357,11 +393,14 @@ for c in outline["chapters"]:
                                "modules": [{"id": m["id"], "title": m["title"], "source_heading_index": m.get("source_heading_index")} for m in c["modules"]]})
 edited["chapters"][0]["modules"][0]["title"] = "Process Management (edited)"
 removed = edited["chapters"][0]["modules"].pop()
+edited["chapters"][0]["modules"].append({"title": "SYS module with no text", "source_heading_index": None, "source_text": ""})
 s, d = call("PUT", f"/faculty/documents/{doc}/outline/", edited, tok=ftok)
 check("outline PUT edits in place and deletes omitted module", s == 200, d)
+check("a module saved without text is removed and reported", [m["title"] for m in (d.get("outline_report") or {}).get("removed_empty_modules", [])] == ["SYS module with no text"], d.get("outline_report"))
 s, d = call("GET", f"/faculty/documents/{doc}/outline/", tok=ftok)
 titles = [m["title"] for c in d["chapters"] for m in c["modules"]]
 check("rename persisted, deleted module gone", "Process Management (edited)" in titles and removed["title"] not in titles, titles)
+check("the textless module never appears in the outline", "SYS module with no text" not in titles, titles)
 s, d = call("PUT", f"/faculty/documents/{doc}/outline/", {"chapters": []}, tok=ftok)
 check("empty outline rejected", s == 400 and err(d) == "EMPTY_OUTLINE", d)
 s, d = call("PUT", f"/faculty/documents/{doc}/outline/", {"chapters": [{"title": "", "modules": []}]}, tok=ftok)
@@ -371,6 +410,8 @@ s, d = call("GET", f"/faculty/documents/{doc}/", tok=ftok)
 version_before = d.get("content_version")
 s, d = call("PATCH", f"/faculty/modules/{first_mod['id']}/", {"source_text": first_mod["source_text"] + "\n\nAn added sentence for the tutor."}, tok=ftok)
 check("module source edit", s == 200, d)
+s, d = call("PATCH", f"/faculty/modules/{first_mod['id']}/", {"source_text": "   "}, tok=ftok)
+check("emptying a module's text is refused", s == 400 and err(d) == "EMPTY_SOURCE_TEXT", d)
 s, d = call("GET", f"/faculty/documents/{doc}/", tok=ftok)
 check("content_version bumped by edit", d.get("content_version", 0) > (version_before or 0), (version_before, d.get("content_version")))
 
@@ -396,6 +437,13 @@ s, d = call("POST", f"/faculty/chapters/{chapter1['id']}/availability/", {"avail
 check("open whole chapter", s == 200, d)
 open_mod = mods[0]
 locked_mod = chapter2["modules"][0]
+# Every lesson is generated in the background before anything below changes
+# the fake model's behaviour (fail_next, offline), so those tests see only
+# their own calls.
+lesson_counts = wait_for_lessons(doc, ftok)
+check("every lesson generated in the background", lesson_counts.get("total", 0) > 0 and lesson_counts.get("ready") == lesson_counts.get("total"), lesson_counts)
+s, d = call("GET", f"/faculty/modules/{open_mod['id']}/lesson/", tok=ftok)
+check("faculty can preview a module's lesson", s == 200 and d.get("status") == "ready" and (d.get("lesson") or {}).get("sections"), d)
 
 section("Faculty: quizzes")
 s, d = call("POST", "/faculty/quizzes/", {"title": "bad", "questions": []}, tok=ftok)
@@ -414,18 +462,25 @@ s, d = call("POST", "/faculty/quizzes/generate/", {"module_id": open_mod["id"], 
 check("AI quiz generated", s == 201 and d.get("generator") == ("ai" if FAKE else d.get("generator")) and len(d["questions"]) == 4, d)
 ai_quiz = d["id"]
 check("generated questions have distinct A-D options", all(len({o["text"] for o in q["options"]}) == 4 for q in d["questions"] if q["type"] == "mcq"), d["questions"][0])
+blob = json.dumps(d["questions"]).lower()
+check("no placeholder options and no talk of the source text", "placeholder" not in blob and "source text" not in blob and "option a" not in blob, d["questions"][0])
+s, d = call("POST", "/faculty/quizzes/generate/", {"module_ids": [chapter1["modules"][0]["id"], chapter1["modules"][1]["id"]], "num_mcqs": 4}, tok=ftok)
+picked = {chapter1["modules"][0]["id"], chapter1["modules"][1]["id"]}
+from_modules = {q.get("source_module_id") for q in d.get("questions", [])}
+check("selection quiz uses only the chosen modules, each of them", s == 201 and from_modules == picked, (s, from_modules, picked))
 s, d = call("POST", "/faculty/quizzes/generate/", {"chapter_id": chapter1["id"], "num_mcqs": 2}, tok=ftok)
 check("chapter quiz generated", s == 201 and d.get("kind") == "chapter", d)
 s, d = call("POST", "/faculty/quizzes/generate/", {"module_id": open_mod["id"], "num_mcqs": 0, "num_subjective": 0}, tok=ftok)
 check("zero counts -> INVALID_COUNTS", s == 400 and err(d) == "INVALID_COUNTS", d)
 
 if FAKE:
-    fake_control(fail_next=2)  # one call + one retry both bad -> fallback
+    _, before = call("GET", f"/faculty/quizzes/?subject={subject}", tok=ftok)
+    fake_control(fail_next=20)  # every reply unusable
     s, d = call("POST", "/faculty/quizzes/generate/", {"module_id": open_mod["id"], "num_mcqs": 2}, tok=ftok)
-    check("bad model output twice -> fallback draft", s == 201 and d.get("generator") == "fallback" and d.get("generation_warning"), d)
-    fb_quiz = d["id"]
-    s, d = call("POST", f"/faculty/quizzes/{fb_quiz}/status/", {"status": "published"}, tok=ftok)
-    check("placeholder quiz cannot be published", s in (400, 409) and err(d) == "PLACEHOLDER_QUESTIONS", d)
+    check("unusable model output -> clear error, no placeholder draft", s == 503 and err(d) == "QUIZ_GENERATION_FAILED", d)
+    fake_control(fail_next=0)
+    _, after = call("GET", f"/faculty/quizzes/?subject={subject}", tok=ftok)
+    check("nothing was created by the failed generation", len(rows(after)) == len(rows(before)), (len(rows(before)), len(rows(after))))
     fake_control(fail_next=1)
     s, d = call("POST", "/faculty/quizzes/generate/", {"module_id": open_mod["id"], "num_mcqs": 2}, tok=ftok)
     check("bad output once is recovered by the retry", s == 201 and d.get("generator") == "ai", d)
@@ -477,11 +532,13 @@ s, d = call("POST", "/auth/heartbeat/", {"session_id": ssess}, tok=stok)
 check("student heartbeat", s == 200, d)
 
 section("Student: tutor")
+calls_before = fake_calls()
+s, d = call("GET", f"/student/modules/{open_mod['id']}/teach/", tok=stok)
+check("lesson is served from storage", s == 200 and d.get("status") == "ready" and d.get("generator") == "ai" and (d.get("lesson") or {}).get("sections"), d)
+first_lesson = d.get("lesson")
 s, d = call("POST", f"/student/modules/{open_mod['id']}/teach/", tok=stok)
-check("teach returns structured lesson", s == 200 and d["lesson"].get("sections") and d.get("generator") == ("ai" if FAKE else d.get("generator")), d)
-check("teach not cached on first call", d.get("cached") is False, d)
-s, d = call("POST", f"/student/modules/{open_mod['id']}/teach/", tok=stok)
-check("teach cached on second call", s == 200 and d.get("cached") is True, d)
+check("the same lesson on every read (POST still accepted)", s == 200 and d.get("lesson") == first_lesson, d.get("status"))
+check("reading lessons never calls the model", calls_before is None or fake_calls() == calls_before, (calls_before, fake_calls()))
 s, d = call("POST", f"/student/modules/{locked_mod['id']}/teach/", tok=stok)
 check("teach on locked module refused", s == 403, d)
 s, d = call("POST", f"/student/modules/{open_mod['id']}/ask/", {"question": ""}, tok=stok)
@@ -586,8 +643,18 @@ s, d = call("GET", f"/faculty/analytics/students/{student_id}/", tok=otok)
 check("student analytics refused without shared subject", s == 404, d)
 
 section("Lifecycle: edit while published, unpublish, archive")
-s, d = call("PUT", f"/faculty/documents/{doc}/outline/", edited, tok=ftok)
+# Save the outline as it stands now. (This used to resend the snapshot taken
+# before the module's text was edited, which reverted that edit, a real change
+# that correctly retired the cached lesson the outage section relies on.)
+s, current = call("GET", f"/faculty/documents/{doc}/outline/", tok=ftok)
+s, d = call("GET", f"/faculty/documents/{doc}/", tok=ftok)
+version_before_save = d.get("content_version")
+s, d = call("PUT", f"/faculty/documents/{doc}/outline/", current, tok=ftok)
 check("published book stays editable", s == 200 and d["status"] == "published", d)
+s, d = call("GET", f"/faculty/documents/{doc}/", tok=ftok)
+check("saving an unchanged outline keeps the content version", version_before_save is not None and d.get("content_version") == version_before_save, (version_before_save, d.get("content_version")))
+s, d = call("GET", f"/faculty/documents/{doc}/outline/", tok=ftok)
+check("hand-edited module text survives an outline save", any("An added sentence for the tutor." in (m.get("source_text") or "") for c in d["chapters"] for m in c["modules"]), [m["title"] for c in d["chapters"] for m in c["modules"]])
 s, d = call("POST", f"/faculty/documents/{doc}/unpublish/", tok=ftok)
 check("unpublish", s == 200 and d["status"] == "unpublished", d)
 s, d = call("GET", f"/student/subjects/{subject}/documents/", tok=stok)
@@ -650,12 +717,19 @@ if FAKE:
     check("ask -> 503 AI_UNAVAILABLE with reason", s == 503 and err(d) == "AI_UNAVAILABLE" and d["error"]["details"].get("reason") == "unavailable", d)
     s, d = call("GET", f"/student/conversations/", tok=s2tok)
     check("failed question is still recorded in the thread", s == 200 and rows(d), d)
-    s, d = call("POST", f"/student/modules/{open_mod['id']}/teach/", tok=s2tok)
-    check("teach serves cached ai lesson while down", s == 200 and d.get("generator") == "ai" and d.get("cached") is True, d)
-    s, d = call("POST", f"/student/modules/{chapter1['modules'][1]['id']}/teach/", tok=s2tok)
-    check("uncached teach falls back to source lesson", s == 200 and d.get("generator") == "fallback" and d.get("ai_error") == "unavailable", d)
+    s, d = call("GET", f"/student/modules/{open_mod['id']}/teach/", tok=s2tok)
+    check("stored lesson still served while the model is down", s == 200 and d.get("status") == "ready" and d.get("generator") == "ai", d)
+    # Faculty edit a module while the model is down: its new lesson cannot be
+    # generated, so students get a plain lesson from the text meanwhile.
+    outage_mod = chapter1["modules"][1]
+    s, d = call("PATCH", f"/faculty/modules/{outage_mod['id']}/", {"source_text": (outage_mod.get("source_text") or "") + "\n\nEdited during the outage."}, tok=ftok)
+    check("module edited during outage", s == 200, d)
+    d = wait_for_lesson_state(outage_mod["id"], ftok, ("failed",))
+    check("its lesson fails and a retry is scheduled", d.get("status") == "failed" and d.get("next_attempt_at"), d)
+    s, d = call("GET", f"/student/modules/{outage_mod['id']}/teach/", tok=s2tok)
+    check("student gets a plain lesson from the text meanwhile", s == 200 and d.get("status") == "unavailable" and d.get("generator") == "fallback" and d.get("retry_scheduled") is True, d)
     s, d = call("POST", "/faculty/quizzes/generate/", {"module_id": open_mod["id"], "num_mcqs": 2}, tok=ftok)
-    check("quiz generation falls back with warning", s == 201 and d.get("generator") == "fallback" and "unavailable" in (d.get("generation_warning") or ""), d)
+    check("quiz generation refuses cleanly while the model is down", s == 503 and err(d) == "QUIZ_GENERATION_FAILED", d)
     s, d = call("POST", "/faculty/assignments/generate/", {"module_id": open_mod["id"], "max_score": 10}, tok=ftok)
     check("assignment generation falls back", s == 201 and d.get("generator") == "fallback", d)
     s, d = call("POST", f"/student/quiz-attempts/{attempt2}/remediation/", tok=stok)
@@ -676,6 +750,12 @@ if FAKE:
     check("ai status recovers", s == 200 and d.get("ready") is True, d)
     s, d = call("POST", f"/faculty/quiz-attempts/{pend_attempt}/re-evaluate/", {}, tok=ftok)
     check("re-evaluate with ai back re-runs grading", s == 200 and d.get("status") == "evaluated", d)
+    s, d = call("POST", f"/faculty/modules/{outage_mod['id']}/lesson/", {}, tok=ftok)
+    check("faculty ask for the failed lesson again", s == 202 and d.get("status") in ("pending", "generating", "ready"), d)
+    d = wait_for_lesson_state(outage_mod["id"], ftok, ("ready", "failed"))
+    check("lesson generated once the model is back", d.get("status") == "ready", d)
+    s, d = call("GET", f"/student/modules/{outage_mod['id']}/teach/", tok=s2tok)
+    check("student now gets the tutor's lesson", s == 200 and d.get("status") == "ready", d.get("status"))
 
 # ============================================================ throttling =====
 section("Rate limiting (login, run last)")

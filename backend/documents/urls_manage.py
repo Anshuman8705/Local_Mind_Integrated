@@ -11,8 +11,10 @@ urlpatterns = [
     path("documents/<uuid:document_id>/publish/", views.PublishView.as_view(), name="documents-publish"),
     path("documents/<uuid:document_id>/unpublish/", views.UnpublishView.as_view(), name="documents-unpublish"),
     path("documents/<uuid:document_id>/archive/", views.ArchiveView.as_view(), name="documents-archive"),
+    path("documents/<uuid:document_id>/lessons/", views.DocumentLessonsView.as_view(), name="documents-lessons"),
     path("chapters/<uuid:chapter_id>/", views.ChapterEditView.as_view(), name="chapters-edit"),
     path("chapters/<uuid:chapter_id>/availability/", views.ChapterAvailabilityView.as_view(), name="chapters-availability"),
     path("modules/<uuid:module_id>/", views.ModuleEditView.as_view(), name="modules-edit"),
     path("modules/<uuid:module_id>/availability/", views.ModuleAvailabilityView.as_view(), name="modules-availability"),
+    path("modules/<uuid:module_id>/lesson/", views.ModuleLessonView.as_view(), name="modules-lesson"),
 ]

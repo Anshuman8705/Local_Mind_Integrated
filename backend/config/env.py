@@ -15,7 +15,21 @@ def _load_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        os.environ.setdefault(key.strip(), _clean_value(value))
+
+
+def _clean_value(raw: str) -> str:
+    """``KEY=value   # note`` is how SETUP_README shows settings, and a pasted
+    line used to keep the comment as part of the value (so
+    ``AI_MONITOR_ENABLED=true  # master switch`` read as false). A ``#`` after
+    whitespace starts a comment unless the value is quoted."""
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    for i, ch in enumerate(value):
+        if ch == "#" and i > 0 and value[i - 1] in " \t":
+            return value[:i].rstrip()
+    return value
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent

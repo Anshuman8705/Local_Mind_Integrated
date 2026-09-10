@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { admin } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { Button, Card, Chip, Empty, ErrorBanner, H1, H2, Input, Notice, P, Row, Screen, space } from "@/ui";
+import { OneTimeCredentials, type IssuedCredential } from "@/ui/OneTimeCredentials";
 
 /** Two fields side by side on a wide screen, stacked on a narrow one. */
 function Pair({ children }: { children: React.ReactNode }) {
@@ -23,12 +24,21 @@ export default function NewUser() {
   const subjects = useAsync(() => admin.subjects({ status: "active" }), []);
   const set = (k: string) => (v: string) => setF((x) => ({ ...x, [k]: v }));
   const faculty = kind === "faculty";
+  const [issued, setIssued] = useState<{ row: IssuedCredential; notice: string } | null>(null);
   const create = useAction(async () => {
     const profileKeys = faculty ? ["employee_id", "department", "designation", "phone"] : ["roll_number", "program", "batch", "phone"];
     const profile = Object.fromEntries(profileKeys.filter((k) => f[k]).map((k) => [k, f[k]]));
     const u = await admin.createUser(kind, { email: f.email?.trim().toLowerCase(), full_name: f.full_name?.trim(), profile, ...(faculty && subjectIds.length ? { subject_ids: subjectIds } : {}) });
-    // Back to the People list (which reloads on focus) with a confirmation.
-    router.replace({ pathname: "/admin/users", params: { kind, notice: `${faculty ? "Faculty member" : "Student"} ${u.full_name} created.` } });
+    const notice = `${faculty ? "Faculty member" : "Student"} ${u.full_name} created.`;
+    if (u.initial_password) {
+      // The one-time password exists only in this response: stay here and show
+      // it, and clear the form so a second account can be added straight away.
+      setIssued({ row: { full_name: u.full_name, email: u.email, initial_password: u.initial_password }, notice });
+      setF({}); setSubjectIds([]);
+      return;
+    }
+    // Shared mode: back to the People list (which reloads on focus) with a confirmation.
+    router.replace({ pathname: "/admin/users", params: { kind, notice } });
   });
   return (
     <Screen>
@@ -39,6 +49,11 @@ export default function NewUser() {
           <Chip label="Faculty" selected={faculty} onPress={() => setKind("faculty")} />
         </Row>
       </Row>
+
+      {issued ? (
+        <OneTimeCredentials title={`One-time password for ${issued.row.full_name}`} rows={[issued.row]}
+          onDone={() => router.replace({ pathname: "/admin/users", params: { kind, notice: issued.notice } })} />
+      ) : null}
 
       {/* Six fields in one column ran past the fold on a laptop, so they sit
           two to a row and stack again on a narrow screen. Nothing runs the

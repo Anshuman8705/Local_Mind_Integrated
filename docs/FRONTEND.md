@@ -18,7 +18,7 @@ The client is an Expo app (`frontend/`). This page lists every screen and the en
 | Subjects | `(student)/` | `GET /student/subjects/` |
 | Subject: books + stats | `(student)/subject/[id]` | `GET /student/subjects/{id}/documents/`, `GET /student/analytics/subjects/{id}/` |
 | Book tree | `(student)/document/[id]` | `GET /student/documents/{id}/` |
-| Module: read / lesson / ask | `(student)/module/[id]` | `GET /student/modules/{id}/`, `POST .../time/`, `POST .../teach/`, `POST .../ask/`, `GET /student/quizzes/?module=` |
+| Module: read / lesson / ask | `(student)/module/[id]` | `GET /student/modules/{id}/`, `POST .../time/`, `GET .../teach/` (polled while the lesson is being prepared), `POST .../ask/`, `GET /student/quizzes/?module=` |
 | Quizzes + recent results | `(student)/quizzes` | `GET /student/quizzes/`, `GET /student/scores/` |
 | Take quiz | `(student)/quiz/[id]` | `POST /student/quizzes/{id}/attempts/`, `POST /student/quiz-attempts/{id}/submit/` |
 | Result + remediation | `(student)/attempt/[id]` | `GET /student/quiz-attempts/{id}/`, `POST .../remediation/` |

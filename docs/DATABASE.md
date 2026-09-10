@@ -108,7 +108,7 @@ Indexed on (`subject`, `status`).
 
 ### learning_module
 
-`chapter` FK Chapter CASCADE, `title`, `order` (unique per chapter), `source_heading_index`, `source_text`, `source_missing` (true when no section could be resolved; blocks publish and open), `start_page`, `end_page`, `is_user_edited`, `availability` (`locked`, `open`; indexed), `opened_by` FK User SET_NULL, `opened_at`.
+`chapter` FK Chapter CASCADE, `title`, `order` (unique per chapter), `source_heading_index`, `source_text`, `source_missing` (true only for a textless module kept because student work refers to it; hidden from students; every other textless module is removed), `start_page`, `end_page`, `is_user_edited`, `availability` (`locked`, `open`; indexed), `opened_by` FK User SET_NULL, `opened_at`.
 
 ### learning_moduleprogress
 
@@ -156,7 +156,7 @@ Unique on (`assignment`, `student`, `attempt_number`). `content` text, `submitte
 
 ### tutor_modulelesson
 
-Cached structured lesson, unique on (`module`, `content_version`): `lesson` JSON, `generator` (`ai`, `fallback`), `model_name`. Shared across students because it depends only on source text.
+One row per module (`module` one-to-one, CASCADE), and the row is also the background job: `status` (`pending`, `generating`, `ready`, `failed`; indexed with `next_attempt_at`), `source_hash` (SHA-256 of the module text the lesson is for), `lesson` JSON (null until ready), `generator`, `model_name`, `attempts`, `last_error`, `requested_at`, `claimed_at`, `generated_at`, `next_attempt_at`, `version` (bumped on every state change; workers claim and finish with conditional updates on it). Shared across students because it depends only on source text.
 
 ### tutor_conversation and tutor_message
 
@@ -194,7 +194,7 @@ One row per `issue_type` (unique): `enabled`, `min_confidence`, `min_severity`, 
 
 ## Invariants the services enforce
 
-A subject that is archived accepts no new documents, quizzes, assignments, assignments of faculty or enrollments. A document may only be published when every module has non-empty source text and `source_missing` is false. Once published, its chapter and module set is fixed; text may still change. A module referenced by any assessment, assignment, progress row or conversation cannot be deleted through the outline editor. An assessment with attempts is never edited in place; a new version is created. An attempt is written once at submission; later evaluation only fills evaluation fields. Session durations and attempt timings are never accepted from a client.
+A subject that is archived accepts no new documents, quizzes, assignments, assignments of faculty or enrollments. A module never exists without source text unless student work refers to it (then it is flagged and hidden); a document may only be published with at least one module that has text. Once published, its chapter and module set is fixed; text may still change. A module referenced by any assessment, assignment, progress row or conversation cannot be deleted through the outline editor. An assessment with attempts is never edited in place; a new version is created. An attempt is written once at submission; later evaluation only fills evaluation fields. Session durations and attempt timings are never accepted from a client.
 
 ## Retention
 

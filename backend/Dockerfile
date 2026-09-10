@@ -23,4 +23,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
 # check_ai gates on the configured AI provider being ready (embedded GGUF present, or Ollama with models pulled).
 COPY --chown=localmind:localmind deploy-entrypoint.sh /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "4", "--timeout", "300"]
+# One worker: each gunicorn worker is a process with its own copy of the model
+# (about 1.8 GB with its context), and the lesson pre-warm queue, the AI
+# monitor queue and the tutor answer cache live in that process. Threads carry
+# the concurrency; model calls are serialised by the provider lock anyway.
+# Raise GUNICORN_WORKERS only on a host with RAM for another model copy.
+ENV GUNICORN_WORKERS=1 GUNICORN_THREADS=8
+CMD ["sh", "-c", "exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS} --threads ${GUNICORN_THREADS} --timeout 300"]

@@ -1,10 +1,33 @@
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";
-import { View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { DialogHost, Loading, colors } from "@/ui";
+
+/**
+ * Shown instead of a blank white page when a screen throws while rendering.
+ * Without this, any render error unmounted the whole app on the web. Built
+ * from plain React Native pieces only, so it cannot fail for the same reason
+ * the screen did, and it shows the error text so a report can say what broke.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: "#080F13" }} contentContainerStyle={{ padding: 24, gap: 12, maxWidth: 720, alignSelf: "center", width: "100%" }}>
+      <Text style={{ color: "#F4F7F8", fontSize: 22, fontWeight: "800" }}>This screen ran into a problem</Text>
+      <Text style={{ color: "#8FA3AE", fontSize: 15, lineHeight: 22 }}>
+        Nothing was lost. Try again, or go back and open the page once more. If it keeps happening, send the message below to your administrator.
+      </Text>
+      <Text selectable style={{ color: "#F3B51B", fontSize: 13, fontFamily: "monospace" }}>{error?.message || String(error)}</Text>
+      <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+        <Pressable onPress={retry} style={{ backgroundColor: "#25D0AA", paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8 }}>
+          <Text style={{ color: "#06231D", fontWeight: "700" }}>Try Again</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
+  );
+}
 
 function Gate({ children }: { children: React.ReactNode }) {
   const { ready, user, mustChangePassword } = useAuth();

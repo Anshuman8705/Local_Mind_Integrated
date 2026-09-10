@@ -19,5 +19,10 @@ def change_password(user, current_password, new_password, request=None):
     user.set_password(new_password)
     user.mark_password_changed()
     user.save(update_fields=["password", "must_change_password", "password_changed_at", "updated_at"])
+    # Sign out every other session: whoever knew the old password (the
+    # onboarding one, or a leaked one) keeps nothing. The caller issues a fresh
+    # token pair for this session straight after.
+    from .users import _revoke_all_tokens
+    _revoke_all_tokens(user)
     audit.record(user, "user.password_changed", user, {}, request)
     return user

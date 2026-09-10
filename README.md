@@ -29,14 +29,15 @@ database and opens a browser. The Expo dev workflow (`npx expo start`) and
 To keep using a local Ollama daemon instead, set `AI_PROVIDER=ollama` in `.env`
 and `ollama pull qwen3:1.7b`.
 
-Interactive API docs are at `http://127.0.0.1:8000/api/docs/` and the raw OpenAPI 3 schema at `/api/schema/`. Health check at `/api/health/`.
+Interactive API docs are at `http://127.0.0.1:8000/api/docs/` and the raw OpenAPI 3 schema at `/api/schema/` in development (`DJANGO_DEBUG=true`) or when `API_DOCS_ENABLED=true`; the same schema is committed as `backend/openapi.yaml`. Health check at `/api/health/` (summary for everyone; the component report with `?full=1` for administrators and requests from the server itself).
 
-Every account is created with the configured `INITIAL_USER_PASSWORD` and must change it at first login before any other endpoint responds.
+Every account is created with the configured `INITIAL_USER_PASSWORD` and must change it at first login before any other endpoint responds (`INITIAL_PASSWORD_MODE=unique` gives each account its own one-time password instead).
 
 ## Tests
 
 ```bash
-python manage.py test                                    # SQLite, 287 tests
+pip install -r requirements-dev.txt                      # reportlab + pypdfium2 for the PDF parser tests
+python manage.py test                                    # SQLite, 315 tests
 DATABASE_URL=postgres://user:pw@host:5432/db python manage.py test   # same suite on PostgreSQL
 ```
 

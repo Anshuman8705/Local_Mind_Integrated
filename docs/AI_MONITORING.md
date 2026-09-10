@@ -89,7 +89,7 @@ Q4 model and keep gunicorn at one worker. With Ollama, set
 `AI_MONITOR_OLLAMA_MODEL=qwen2.5:7b-instruct` and `ollama pull` it.
 
 `check_ai` does not load the judge; `manage.py monitor_ai --status` and the
-`ai_monitor` row in `/api/health/?full=1` report its readiness.
+`ai_monitor` row in `/api/health/?full=1` (administrators, or on the server itself) report its readiness.
 
 ## Settings
 

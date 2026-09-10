@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from django.db import transaction
+from django.db.models import Q
 
 from ai.gateway import gateway
 from core.exceptions import Conflict, ValidationFailed
@@ -182,6 +183,21 @@ def _fill_from_section(target, data, lookup):
         target.source_text = ""
 
 
+def _resolved_text(existing, data, lookup) -> str:
+    """The text a module or chapter will carry after ``_fill_from_section``,
+    worked out without touching the instance. Same precedence: a resolvable
+    heading, then explicit text, then what an existing row already has."""
+    idx = data.get("source_heading_index")
+    section = lookup.get(int(idx)) if idx is not None and str(idx).lstrip("-").isdigit() else None
+    if section:
+        return section.get("source_text", "") or ""
+    if "source_text" in data and data.get("source_text") is not None:
+        return str(data.get("source_text") or "")
+    if existing is not None and existing.pk and existing.source_text:
+        return existing.source_text
+    return ""
+
+
 @transaction.atomic
 def persist_outline(document, outline, sections, user_edited=False):
     """Create or reconcile Chapter/Module rows from an outline.
@@ -189,6 +205,14 @@ def persist_outline(document, outline, sections, user_edited=False):
     Rows whose id appears in the outline are updated in place so that
     assessments, progress and conversations keep pointing at the same module.
     Rows omitted from the outline are deleted only if nothing references them.
+
+    A module with no source text never becomes part of the book: a new one is
+    not created, and an existing one whose text resolves to nothing is removed.
+    The single exception is a module that quizzes, assignments or student work
+    already refer to, which cannot be deleted; it is kept with
+    ``source_missing`` set and is hidden from students. A chapter left with no
+    modules is removed with them. Returns a report of what was dropped so the
+    caller can tell the person who saved.
     """
     chapters_data = outline.get("chapters") or []
     if not chapters_data:
@@ -197,7 +221,51 @@ def persist_outline(document, outline, sections, user_edited=False):
 
     existing_chapters = {str(c.id): c for c in document.chapters.all()}
     existing_modules = {str(m.id): m for m in Module.objects.filter(chapter__document=document)}
-    kept_chapter_ids, kept_module_ids = set(), set()
+    report = {"removed_empty_modules": [], "hidden_empty_modules": [], "removed_empty_chapters": []}
+
+    # Decide what survives before writing anything, so chapter and module
+    # orders stay contiguous and an outline with no text at all is refused
+    # without half-applying it.
+    plan = []
+    for c_pos, cdata in enumerate(chapters_data, start=1):
+        title = clean_title(cdata.get("title"))
+        if not title:
+            raise ValidationFailed(f"Chapter {c_pos} needs a title.", code="MISSING_TITLE")
+        kept = []
+        for m_pos, mdata in enumerate(cdata.get("modules") or [], start=1):
+            mtitle = clean_title(mdata.get("title"))
+            if not mtitle:
+                raise ValidationFailed(f'Module {m_pos} in "{title}" needs a title.', code="MISSING_TITLE")
+            existing = existing_modules.get(str(mdata.get("id") or ""))
+            if _resolved_text(existing, mdata, lookup).strip():
+                kept.append((mdata, mtitle, existing, False))
+            elif existing is not None and _module_is_referenced(existing):
+                kept.append((mdata, mtitle, existing, True))
+                report["hidden_empty_modules"].append({"id": str(existing.id), "title": mtitle, "chapter": title})
+            else:
+                report["removed_empty_modules"].append({"id": str(existing.id) if existing else None, "title": mtitle, "chapter": title})
+        existing_chapter = existing_chapters.get(str(cdata.get("id") or ""))
+        if not kept and not user_edited:
+            # Processing only: a planned chapter whose modules all came out
+            # empty (or that the planner gave no modules) still has its own
+            # text, which becomes its single module, as the heading-based
+            # outline already does for a chapter with no sub-headings. A person
+            # editing the outline gets exactly the modules they kept.
+            chapter_text = _resolved_text(existing_chapter, cdata, lookup)
+            if chapter_text.strip():
+                kept.append(({"title": title, "source_heading_index": cdata.get("source_heading_index"), "source_text": chapter_text},
+                             title, None, False))
+                report["removed_empty_modules"] = [m for m in report["removed_empty_modules"] if m["chapter"] != title or m["id"]]
+        if not kept and not (existing_chapter is not None and _chapter_has_own_references(existing_chapter)):
+            report["removed_empty_chapters"].append({"id": str(existing_chapter.id) if existing_chapter else None, "title": title})
+            continue
+        plan.append((cdata, title, existing_chapter, kept))
+
+    if not any(not hidden for _, _, _, kept in plan for *_rest, hidden in kept):
+        raise ValidationFailed(
+            "None of the modules in this outline has source text. A module needs text from the book, or text "
+            "typed in, before it can be kept.", code="NO_SOURCE_TEXT",
+            details={"removed_empty_modules": [m["title"] for m in report["removed_empty_modules"]]})
 
     # Two-pass ordering avoids unique(order) collisions while reordering.
     for c in existing_chapters.values():
@@ -205,11 +273,9 @@ def persist_outline(document, outline, sections, user_edited=False):
     for m in existing_modules.values():
         Module.objects.filter(pk=m.pk).update(order=m.order + 100000)
 
-    for c_order, cdata in enumerate(chapters_data, start=1):
-        title = clean_title(cdata.get("title"))
-        if not title:
-            raise ValidationFailed(f"Chapter {c_order} needs a title.", code="MISSING_TITLE")
-        chapter = existing_chapters.get(str(cdata.get("id") or "")) or Chapter(document=document)
+    kept_chapter_ids, kept_module_ids = set(), set()
+    for c_order, (cdata, title, existing_chapter, kept) in enumerate(plan, start=1):
+        chapter = existing_chapter or Chapter(document=document)
         chapter.title = title
         chapter.order = c_order
         chapter.is_user_edited = user_edited or chapter.is_user_edited
@@ -217,15 +283,9 @@ def persist_outline(document, outline, sections, user_edited=False):
         chapter.save()
         kept_chapter_ids.add(str(chapter.id))
 
-        for m_order, mdata in enumerate(cdata.get("modules") or [], start=1):
-            mtitle = clean_title(mdata.get("title"))
-            if not mtitle:
-                raise ValidationFailed(f'Module {m_order} in "{title}" needs a title.', code="MISSING_TITLE")
-            module = existing_modules.get(str(mdata.get("id") or ""))
-            if module is None:
-                module = Module(chapter=chapter)
-            else:
-                module.chapter = chapter
+        for m_order, (mdata, mtitle, existing, hidden) in enumerate(kept, start=1):
+            module = existing if existing is not None else Module(chapter=chapter)
+            module.chapter = chapter
             module.title = mtitle
             module.order = m_order
             module.is_user_edited = user_edited or module.is_user_edited
@@ -234,30 +294,58 @@ def persist_outline(document, outline, sections, user_edited=False):
             module.save()
             kept_module_ids.add(str(module.id))
 
+    dropped_empty = {m["id"] for m in report["removed_empty_modules"] if m["id"]}
     for mid, module in existing_modules.items():
         if mid not in kept_module_ids:
-            if _module_is_referenced(module):
+            if mid not in dropped_empty and _module_is_referenced(module):
                 raise Conflict(f'Module "{module.title}" has student activity and cannot be removed; unpublish and archive instead.',
                                code="MODULE_IN_USE", details={"module_id": mid})
             module.delete()
     for cid, chapter in existing_chapters.items():
         if cid not in kept_chapter_ids:
+            if _chapter_is_referenced(chapter):
+                raise Conflict(f'Chapter "{chapter.title}" has a quiz or assignment built on it and cannot be removed.',
+                               code="CHAPTER_IN_USE", details={"chapter_id": cid})
             chapter.delete()
 
     document.title = clean_title(outline.get("document_title")) or document.title
     document.save(update_fields=["title", "updated_at"])
+    return report
 
 
 def _module_is_referenced(module):
+    """Anything that would lose meaning, or fail, if the module were deleted:
+    progress, a quiz or assignment written on it (directly or as one of several
+    chosen modules), or a tutor conversation a student had about it."""
+    if not module.pk:
+        return False
     if module.progress.exists():
         return True
-    try:
-        from assessments.models import Assessment
-        if Assessment.objects.filter(module=module).exists():
-            return True
-    except Exception:  # app not yet migrated in early phases
-        pass
-    return False
+    from assessments.models import Assessment
+    from assignments.models import Assignment
+    from tutor.models import Conversation
+
+    return (Assessment.objects.filter(Q(module=module) | Q(source_modules=module)).exists()
+            or Assignment.objects.filter(Q(module=module) | Q(source_modules=module)).exists()
+            or Conversation.objects.filter(module=module).exists())
+
+
+def _chapter_has_own_references(chapter):
+    """A chapter-level quiz or assignment points at the chapter itself, and the
+    database protects it from deletion."""
+    if not chapter.pk:
+        return False
+    from assessments.models import Assessment
+    from assignments.models import Assignment
+
+    return Assessment.objects.filter(chapter=chapter).exists() or Assignment.objects.filter(chapter=chapter).exists()
+
+
+def _chapter_is_referenced(chapter):
+    """Own references, or a referenced module still inside it."""
+    if _chapter_has_own_references(chapter):
+        return True
+    return any(_module_is_referenced(m) for m in chapter.modules.all())
 
 
 def missing_source_modules(document):

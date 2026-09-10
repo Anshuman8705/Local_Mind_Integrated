@@ -21,24 +21,13 @@ class TutorTests(TestCase):
         self.module = Module.objects.get(title="Process Management")
         self.sc = client_for(self.student)
 
-    def test_teach_falls_back_to_source_when_ai_down(self):
+    def test_teach_shows_a_plain_lesson_when_ai_is_off(self):
         res = self.sc.post(f"/api/student/modules/{self.module.id}/teach/")
         self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.data["status"], "unavailable")
         self.assertEqual(res.data["generator"], "fallback")
         self.assertIn("Processes are programs", res.data["lesson"]["sections"][0]["explanation"])
-        self.assertFalse(ModuleLesson.objects.exists())
-
-    @patch("tutor.services.gateway")
-    def test_teach_uses_server_source_and_caches(self, gw):
-        lesson = {"title": "T", "learning_objectives": ["a", "b"], "sections": [{"heading": "h", "explanation": "e", "source_reference": "s"}] * 2, "key_terms": [], "summary": "s"}
-        gw.return_value.generate.return_value = AIResult(ok=True, data=lesson, model="m")
-        res = self.sc.post(f"/api/student/modules/{self.module.id}/teach/")
-        self.assertEqual(res.data["generator"], "ai")
-        self.assertFalse(res.data["cached"])
-        self.assertIn("Processes are programs", gw.return_value.generate.call_args.kwargs["user_prompt"])
-        res = client_for(self.student).post(f"/api/student/modules/{self.module.id}/teach/")
-        self.assertTrue(res.data["cached"])
-        self.assertEqual(gw.return_value.generate.call_count, 1)
+        self.assertFalse(ModuleLesson.objects.filter(status="ready").exists())
 
     def test_ask_returns_structured_503_when_ai_down(self):
         res = self.sc.post(f"/api/student/modules/{self.module.id}/ask/", {"question": "What is a process?"}, format="json")

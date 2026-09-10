@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { admin, manage } from "@/api/endpoints";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { Badge, Button, Card, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, Stat, confirmDeleteAsync, fmtSeconds, pct, space } from "@/ui";
+import { OneTimeCredentials, type IssuedCredential } from "@/ui/OneTimeCredentials";
 
 export default function UserScreen() {
   const { id, kind: k } = useLocalSearchParams<{ id: string; kind?: string }>();
@@ -14,7 +15,17 @@ export default function UserScreen() {
   const [reason, setReason] = useState("");
   useEffect(() => { if (q.data) setF({ full_name: q.data.full_name, ...(q.data.profile ?? {}) } as Record<string, string>); }, [q.data]);
   const save = useAction(async () => { const { full_name, ...profile } = f; await admin.updateUser(kind, id, { full_name, profile }); await q.reload(); });
-  const act = useAction(async (a: "reactivate" | "reset-password") => { await admin.userAction(kind, id, a); await q.reload(); });
+  const [issued, setIssued] = useState<IssuedCredential | null>(null);
+  const act = useAction(async (a: "reactivate" | "reset-password") => {
+    if (a === "reset-password") {
+      const r = await admin.resetPassword(kind, id);
+      // Unique mode returns the new one-time password; it is not retrievable later.
+      if (r.initial_password && q.data) setIssued({ full_name: q.data.full_name, email: q.data.email, initial_password: r.initial_password });
+    } else {
+      await admin.userAction(kind, id, a);
+    }
+    await q.reload();
+  });
   // Deleting an account takes its enrolments, attempts, submissions and
   // progress with it, so the warning spells that out and names the person.
   const remove = useAction(async () => {
@@ -40,6 +51,7 @@ export default function UserScreen() {
         <>
           <Row style={{ justifyContent: "space-between" }}><H1>{u.full_name}</H1><Badge value={u.status} /></Row>
           <P muted>{u.email} · {u.role}{u.must_change_password ? " · still on initial password" : ""}</P>
+          {issued ? <OneTimeCredentials title="New one-time password" rows={[issued]} onDone={() => setIssued(null)} /> : null}
           {analytics.data ? <Row><Stat label="modules done" value={`${analytics.data.modules.completed}/${analytics.data.modules.total}`} /><Stat label="quiz average" value={pct(analytics.data.quizzes.average_percentage)} /><Stat label="app time" value={fmtSeconds(analytics.data.time.session_seconds)} /></Row> : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
           <Card style={{ flex: 1, minWidth: 320, maxWidth: 620 }}>

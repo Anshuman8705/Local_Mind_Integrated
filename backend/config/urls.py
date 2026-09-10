@@ -32,9 +32,17 @@ urlpatterns = [
     path("api/admin/", include("analytics.urls_admin")),
     path("api/admin/", include("ai_monitor.urls_admin")),
     path("api/faculty/", include("ai_monitor.urls_faculty")),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 ]
+
+if settings.API_DOCS_ENABLED:
+    # The live schema lists every endpoint, parameter and error code, and the
+    # Swagger page loads its scripts from a CDN, so neither is served in
+    # production unless an operator asks for it. backend/openapi.yaml is the
+    # same schema, committed.
+    urlpatterns += [
+        path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+        path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    ]
 
 if settings.DEBUG or settings.SERVE_MEDIA:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

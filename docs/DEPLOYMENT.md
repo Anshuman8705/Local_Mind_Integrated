@@ -49,7 +49,7 @@ python manage.py collectstatic --noinput     # only for the Django admin site an
 python manage.py bootstrap_admin --email admin@example.edu
 ```
 
-The bootstrap admin receives the configured initial password and must change it at first login.
+The bootstrap admin receives the configured initial password and must change it at first login. (With `INITIAL_PASSWORD_MODE=unique` it gets a one-time password instead, printed once by `bootstrap_admin`; under Docker Compose read it from `docker compose logs api`.)
 
 Then prepare the model host and prove it works end to end:
 
@@ -62,7 +62,7 @@ For a release rehearsal run `python scripts/system_test.py https://<host>` again
 
 ## Running
 
-Use gunicorn with a small number of workers. Document processing runs on a thread in the worker that accepted the request, so give workers a generous timeout for the (rare) inline case and prefer the background default:
+Use gunicorn with one worker and several threads. Each worker is a separate process that loads its own copy of the model, and the lesson pre-warm queue, the AI monitor queue and the tutor answer cache are per process, so a second worker costs another model's worth of RAM and splits those queues. Document processing runs on a thread in the worker that accepted the request, so give workers a generous timeout for the (rare) inline case and prefer the background default:
 
 ```
 [Unit]
@@ -74,20 +74,20 @@ User=localmind
 WorkingDirectory=/opt/localmind/app/backend
 EnvironmentFile=/opt/localmind/app/backend/.env
 ExecStart=/opt/localmind/app/backend/.venv/bin/gunicorn config.wsgi:application \
-    --bind 127.0.0.1:8000 --workers 3 --threads 4 --timeout 300
+    --bind 127.0.0.1:8000 --workers 1 --threads 8 --timeout 300
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-With more than one worker, two things follow. First, a document being processed is locked by a database row lock, so two workers will not process the same book. Second, background threads live inside the worker process; if gunicorn recycles a worker mid-processing the document is left in `processing`. After `PROCESSING_STALE_MINUTES` (default 30) that document is considered abandoned: faculty can call `process/` again and it is re-claimed, and `python manage.py requeue_stuck_documents` re-runs every such document. Install `deploy/localmind-maintenance.service` and `.timer` (or rely on the `maintenance` container in compose) so this happens every 15 minutes without anyone noticing; the same job runs `flushexpiredtokens` to keep the JWT blacklist table small. For heavier use, replace the thread with a task queue (`documents.services.documents.run_processing(document_id)` is the unit of work).
+If you do run more than one worker, two things follow. First, a document being processed is locked by a database row lock, so two workers will not process the same book. Second, background threads live inside the worker process; if gunicorn recycles a worker mid-processing the document is left in `processing`. After `PROCESSING_STALE_MINUTES` (default 30) that document is considered abandoned: faculty can call `process/` again and it is re-claimed, and `python manage.py requeue_stuck_documents` re-runs every such document. Install `deploy/localmind-maintenance.service` and `.timer` (or rely on the `maintenance` container in compose) so this happens every 15 minutes without anyone noticing; the same job runs `flushexpiredtokens` to keep the JWT blacklist table small. For heavier use, replace the thread with a task queue (`documents.services.documents.run_processing(document_id)` is the unit of work).
 
 Reverse proxy: forward `/api/` to gunicorn with `X-Forwarded-Proto` set, cap request bodies at `MAX_UPLOAD_MB`, and serve `/static/` from `STATIC_ROOT` if you use the admin site or Swagger UI. `/media/` need not be exposed at all; nothing in the client flow fetches raw files.
 
 ## Health and monitoring
 
-`GET /api/health/` returns `{"status": "ok", "service": "LocalMind", "database": "ok", "ai": {...}}` after a real database round trip and is safe to poll; the `ai` block (`enabled`, `reachable`, `ready`, `tutor_model`, `outline_model`, `error`) comes from a probe of Ollama's `/api/tags` cached for `AI_HEALTH_CACHE_SECONDS`. `status` stays `ok` while Ollama is down because reading, quizzes and grading keep working through their fallbacks; alert on `ai.ready == false` instead. `GET /api/health/?full=1` adds the component table, including `ai_monitor` (mode, judge readiness, pending backlog); that component does not affect the overall status, so a missing judge model never reports the platform as down. Administrators see the same probe as a banner at the top of their dashboard (`GET /api/admin/ai/status/?refresh=1` forces a fresh check).
+`GET /api/health/` returns `{"status": "ok", "service": "LocalMind", "database": "ok", "ai": {...}}` after a real database round trip and is safe to poll. From other machines the `ai` block is the summary `enabled`, `provider`, `reachable`, `ready`; administrators (bearer token) and requests from the server itself also get `tutor_model`, `outline_model`, `error` and provider details, and only they receive the `?full=1` component report. Behind a proxy this depends on `TRUSTED_PROXY_COUNT` being right: set to 0 behind a same-host nginx, every request would look local. The `ai` block comes from a probe of Ollama's `/api/tags` cached for `AI_HEALTH_CACHE_SECONDS`. `status` stays `ok` while Ollama is down because reading, quizzes and grading keep working through their fallbacks; alert on `ai.ready == false` instead. `GET /api/health/?full=1` adds the component table, including `ai_monitor` (mode, judge readiness, pending backlog); that component does not affect the overall status, so a missing judge model never reports the platform as down. Administrators see the same probe as a banner at the top of their dashboard (`GET /api/admin/ai/status/?refresh=1` forces a fresh check).
 
 Gateway log lines have the shape `AI <purpose> ok model=qwen3:1.7b attempt=1 latency_ms=...` on success and `AI <purpose> attempt 1/2 rejected: invalid_schema (...)` when a retry fires. A steady stream of `attempt 2/2` lines means the model is struggling with a particular prompt size; `latency_ms` climbing toward `OLLAMA_TIMEOUT_SECONDS` means the host is saturated. Application logs go to stdout in the format `time level logger: message`; `django.request` warnings cover 4xx, errors cover 5xx, and `localmind.api` logs every unexpected exception with the view name. Watch for `AI_UNAVAILABLE` rates and `error_code: timeout` in gateway logs as the signal that the model host is overloaded.
 

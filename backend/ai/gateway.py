@@ -354,13 +354,27 @@ def validate_against_schema(instance, schema) -> list[str]:
     return _validate(instance, schema)
 
 
+# Interactive model calls in flight in this process (a tutor question, quiz
+# generation, grading). Background work such as lesson generation checks this
+# between jobs and waits, so a student's request is never stuck behind a queue
+# of lessons for longer than the one already running.
+_foreground_lock = threading.Lock()
+_foreground_calls = 0
+
+
+def foreground_busy() -> bool:
+    return _foreground_calls > 0
+
+
 class AIGateway:
     def __init__(self, provider: AIProvider | None = None):
         self.provider = provider or get_provider()
 
     def generate(self, *, task: str, system_prompt: str, user_prompt: str, schema: dict,
                  model_kind: str | None = None, temperature: float | None = None, timeout: int | None = None,
-                 source_chars: int = 0, retrieved_chunks: int = 0, model: str | None = None) -> AIResult:
+                 source_chars: int = 0, retrieved_chunks: int = 0, model: str | None = None,
+                 background: bool = False, max_tokens: int | None = None,
+                 retry_codes: set | frozenset | None = None) -> AIResult:
         """Run one model call for a named task.
 
         The task decides the token ceiling, the context window and the sampling
@@ -370,12 +384,40 @@ class AIGateway:
         which is the number that matters when a call is slow. `model` names
         a specific model (Ollama tag) and overrides the kind lookup; the
         AI monitor uses it to run its judge on a different model than the
-        tutor.
+        tutor. `background=True` marks work nobody is waiting on; everything
+        else counts as interactive for `foreground_busy()`. `max_tokens` sets
+        this call's output ceiling (still capped by the task's profile value);
+        `retry_codes` narrows which failures are retried (a caller that splits
+        a truncated request itself does not want the same request repeated).
         """
+        global _foreground_calls
+        if background:
+            return self._generate(task=task, system_prompt=system_prompt, user_prompt=user_prompt, schema=schema,
+                                  model_kind=model_kind, temperature=temperature, timeout=timeout,
+                                  source_chars=source_chars, retrieved_chunks=retrieved_chunks, model=model,
+                                  max_tokens=max_tokens, retry_codes=retry_codes)
+        with _foreground_lock:
+            _foreground_calls += 1
+        try:
+            return self._generate(task=task, system_prompt=system_prompt, user_prompt=user_prompt, schema=schema,
+                                  model_kind=model_kind, temperature=temperature, timeout=timeout,
+                                  source_chars=source_chars, retrieved_chunks=retrieved_chunks, model=model,
+                                  max_tokens=max_tokens, retry_codes=retry_codes)
+        finally:
+            with _foreground_lock:
+                _foreground_calls -= 1
+
+    def _generate(self, *, task, system_prompt, user_prompt, schema, model_kind, temperature, timeout,
+                  source_chars, retrieved_chunks, model, max_tokens=None, retry_codes=None) -> AIResult:
+        from dataclasses import replace
+
         from ai.config import task_config
 
         cfg = settings.AI
         budget = task_config(task)
+        if max_tokens:
+            budget = replace(budget, max_tokens=max(32, min(int(max_tokens), budget.max_tokens)))
+        retryable = RETRYABLE if retry_codes is None else set(retry_codes)
         model = model or model_for(model_kind or ("outline" if task == "outline" else "tutor"))
         temperature = budget.temperature if temperature is None else temperature
         timeout = timeout or cfg["TIMEOUT_SECONDS"]
@@ -407,7 +449,7 @@ class AIGateway:
                             task, model, attempt, result.latency_ms, source_chars, retrieved_chunks, budget.max_tokens,
                             result.prompt_tokens, result.completion_tokens, result.tokens_per_sec or "?")
                 return result
-            if result.error_code not in RETRYABLE:
+            if result.error_code not in retryable:
                 break
             logger.warning("AI %s attempt %d/%d rejected: %s (%s)", task, attempt, max_attempts, result.error_code, result.error)
 

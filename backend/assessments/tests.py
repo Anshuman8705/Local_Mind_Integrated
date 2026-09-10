@@ -67,15 +67,11 @@ class AuthoringTests(Base):
         prompt = gw.return_value.generate.call_args.kwargs["user_prompt"]
         self.assertIn("Processes are programs in execution", prompt)
 
-    def test_generation_falls_back_when_ai_unavailable_and_blocks_publish(self):
+    def test_generation_without_ai_creates_nothing_instead_of_placeholders(self):
         res = self.fc.post("/api/faculty/quizzes/generate/", {"module_id": str(self.module.id), "num_mcqs": 2, "num_subjective": 1}, format="json")
-        self.assertEqual(res.status_code, 201, res.content)
-        self.assertEqual(res.data["generator"], "fallback")
-        self.assertIn("disabled", res.data["generation_warning"])
-        self.assertEqual(len(res.data["questions"]), 3)
-        pub = self.fc.post(f"/api/faculty/quizzes/{res.data['id']}/status/", {"status": "published"}, format="json")
-        self.assertEqual(pub.status_code, 409)
-        self.assertEqual(pub.data["error"]["code"], "PLACEHOLDER_QUESTIONS")
+        self.assertEqual(res.status_code, 503, res.content)
+        self.assertEqual(res.data["error"]["code"], "QUIZ_GENERATION_FAILED")
+        self.assertFalse(Assessment.objects.exists())
 
     def test_chapter_quiz_uses_all_module_text(self):
         res = self.fc.post("/api/faculty/quizzes/", {"chapter_id": str(self.chapter.id), "questions": [MCQ]}, format="json")
@@ -252,30 +248,14 @@ class GenerationRulesTests(TestCase):
             normalize_questions([q])
         self.assertIn("distinct", str(ctx.exception.details))
 
-    def test_fallback_is_deterministic_across_calls(self):
-        from assessments.services.generation import fallback_questions
-        text = "Processes are programs in execution. Threads share the address space of their process. Scheduling decides which runs next."
-        self.assertEqual(fallback_questions(text, "T", 2, 1), fallback_questions(text, "T", 2, 1))
-
     @patch("assessments.services.generation.gateway")
-    def test_ai_questions_repeating_previous_quiz_are_dropped(self, gw):
-        from assessments.services.generation import generate_questions
-        mk = lambda text: {"question": text, "options": [{"key": k, "text": f"opt {k}"} for k in "ABCD"], "correct_answer": "B", "explanation": "e", "source_reference": "s"}
-        gw.return_value.generate.return_value = AIResult(ok=True, data={"mcq_questions": [mk("What is a process?"), mk("What is a thread?")]})
-        questions, generator, note = generate_questions("Processes are programs in execution.", "T", num_mcqs=2, previous_questions=["what is a process?"])
-        self.assertEqual(generator, "ai")
-        self.assertEqual([q["question"] for q in questions], ["What is a thread?"])
-        self.assertEqual(questions[0]["id"], "q1")
-        self.assertIn("repeated", note)
-
-    @patch("assessments.services.generation.gateway")
-    def test_ai_output_that_only_repeats_falls_back(self, gw):
-        from assessments.services.generation import generate_questions
-        mk = lambda text: {"question": text, "options": [{"key": k, "text": f"opt {k}"} for k in "ABCD"], "correct_answer": "B", "explanation": "e", "source_reference": "s"}
-        gw.return_value.generate.return_value = AIResult(ok=True, data={"mcq_questions": [mk("What is a process?")]})
-        _, generator, note = generate_questions("Processes are programs in execution. " * 3, "T", num_mcqs=1, previous_questions=["What is a process?"])
-        self.assertEqual(generator, "fallback")
-        self.assertIn("repeated", note)
+    def test_ai_output_that_only_repeats_is_refused(self, gw):
+        from assessments.services.generation import QuizGenerationFailed, generate_questions
+        mk = {"question": "What is a process?", "options": ["Round robin", "Paging", "TCP", "Segmentation"], "answer": "A", "explanation": "e", "quote": "s"}
+        gw.return_value.generate.return_value = AIResult(ok=True, data={"mcq_questions": [mk]})
+        module = Module(title="Processes", source_text="Processes are programs in execution. " * 5)
+        with self.assertRaises(QuizGenerationFailed):
+            generate_questions([module], num_mcqs=1, previous_questions=[{"question": "What is a process?"}])
 
     @patch("assessments.services.evaluation.gateway")
     def test_evaluator_marks_incorrect_when_model_lists_missing_points(self, gw):
@@ -459,3 +439,106 @@ class ResultsReleaseTests(Base):
         self._attempt(quiz)
         res = self.sc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {}, format="json")
         self.assertIn(res.status_code, (403, 404))
+
+
+class HeldResultsDoNotLeakTests(ResultsReleaseTests):
+    """A held score must not reach the student by any other route: the
+    analytics overview, the subject analytics, the module's progress row, or
+    the remediation endpoint (which names the wrong answers)."""
+
+    def _wrong_attempt(self, quiz):
+        start = self.sc.post(f"/api/student/quizzes/{quiz.id}/attempts/", {}, format="json")
+        attempt_id = start.data["attempt_id"]
+        self.sc.post(f"/api/student/quiz-attempts/{attempt_id}/submit/",
+                     {"submitted_answers": {q["id"]: "D" for q in start.data["questions"]}}, format="json")
+        return attempt_id
+
+    def test_overview_and_subject_analytics_exclude_held_results(self):
+        quiz = self.manual_quiz(results_release="held")
+        self._wrong_attempt(quiz)
+        overview = self.sc.get("/api/student/analytics/overview/").data
+        self.assertEqual(overview["quizzes"]["attempts"], 1)
+        self.assertIsNone(overview["quizzes"]["average_percentage"])
+        self.assertEqual(overview["quizzes"]["passed"], 0)
+        self.assertEqual(overview["modules"]["needs_review"], 0)
+        detail = self.sc.get(f"/api/student/analytics/subjects/{self.subject.id}/").data
+        self.assertIsNone(detail["quiz_average"])
+        row = next(m for m in detail["modules"] if m["module_id"] == str(self.module.id))
+        self.assertIsNone(row["best_quiz_percentage"])
+        # Faculty looking at the same student still see the real figure.
+        fac = self.fc.get(f"/api/faculty/analytics/students/{self.student.id}/")
+        self.assertEqual(fac.status_code, 200, fac.content)
+        self.assertEqual(fac.data["quizzes"]["average_percentage"], 0.0)
+
+    def test_module_progress_waits_for_release_then_counts_once(self):
+        quiz = self.manual_quiz(results_release="held")
+        attempt_id = self._wrong_attempt(quiz)
+        progress = self.sc.get(f"/api/student/modules/{self.module.id}/").data["progress"]
+        self.assertNotEqual(progress["status"], "needs_review")
+        self.assertIsNone(progress["best_quiz_percentage"])
+        self.fc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {}, format="json")
+        progress = self.sc.get(f"/api/student/modules/{self.module.id}/").data["progress"]
+        self.assertEqual(progress["status"], "needs_review")
+        self.assertEqual(progress["best_quiz_percentage"], 0.0)
+        self.assertEqual(progress["quiz_attempts"], 1)
+        # A faculty override on an already-recorded attempt updates progress
+        # without counting the attempt a second time.
+        attempt = AssessmentAttempt.objects.get(pk=attempt_id)
+        overrides = {row["question_id"]: {"score_awarded": 1} for row in attempt.detailed_results}
+        res = self.fc.post(f"/api/faculty/quiz-attempts/{attempt_id}/re-evaluate/", {"overrides": overrides}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        progress = ModuleProgress.objects.get(student=self.student, module=self.module)
+        self.assertEqual(progress.quiz_attempts, 1)
+        self.assertEqual(progress.status, "completed")
+
+    def test_scheduled_release_settles_progress_on_read(self):
+        later = timezone.now() + timedelta(hours=2)
+        quiz = self.manual_quiz(results_release="scheduled", results_release_at=later.isoformat())
+        self._wrong_attempt(quiz)
+        self.assertIsNone(self.sc.get(f"/api/student/modules/{self.module.id}/").data["progress"]["best_quiz_percentage"])
+        Assessment.objects.filter(pk=quiz.id).update(results_release_at=timezone.now() - timedelta(minutes=1))
+        progress = self.sc.get(f"/api/student/modules/{self.module.id}/").data["progress"]
+        self.assertEqual(progress["best_quiz_percentage"], 0.0)
+        self.assertEqual(progress["quiz_attempts"], 1)
+
+    def test_remediation_refused_while_held_and_allowed_after_release(self):
+        quiz = self.manual_quiz(results_release="held")
+        attempt_id = self._wrong_attempt(quiz)
+        res = self.sc.post(f"/api/student/quiz-attempts/{attempt_id}/remediation/")
+        self.assertEqual(res.status_code, 403, res.content)
+        self.assertEqual(res.data["error"]["code"], "RESULTS_NOT_RELEASED")
+        self.fc.post(f"/api/faculty/quizzes/{quiz.id}/release-results/", {}, format="json")
+        res = self.sc.post(f"/api/student/quiz-attempts/{attempt_id}/remediation/")
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(len(res.data["items"]), 2)
+
+    def test_immediate_quiz_still_records_progress_at_submit(self):
+        quiz = self.manual_quiz()
+        self._wrong_attempt(quiz)
+        progress = ModuleProgress.objects.get(student=self.student, module=self.module)
+        self.assertEqual(progress.status, "needs_review")
+        self.assertEqual(progress.quiz_attempts, 1)
+
+
+class RemediationSourceTests(Base):
+    def test_remediation_on_a_selection_spanning_chapters(self):
+        from learning.models import Chapter
+        chapter2 = Chapter.objects.create(document=self.doc, title="Chapter 2", order=2, source_heading_index=9)
+        files = Module.objects.create(chapter=chapter2, title="Files", order=1, source_heading_index=10,
+                                      source_text="A file system stores files in directories.", availability="open")
+        res = self.fc.post("/api/faculty/quizzes/", {"module_ids": [str(self.module.id), str(files.id)],
+                                                     "questions": [MCQ, MCQ2]}, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        quiz = Assessment.objects.get(pk=res.data["id"])
+        self.assertIsNone(quiz.chapter_id)
+        self.fc.post(f"/api/faculty/quizzes/{quiz.id}/status/", {"status": "published"}, format="json")
+        start = self.start(quiz)
+        attempt_id = start.data["attempt_id"]
+        self.submit(attempt_id, {q["id"]: "D" for q in start.data["questions"]})
+        with patch("tutor.services.gateway") as gw:
+            gw.return_value.generate.return_value = AIResult(ok=False, error_code="unavailable")
+            res = self.sc.post(f"/api/student/quiz-attempts/{attempt_id}/remediation/")
+            self.assertEqual(res.status_code, 200, res.content)
+            prompt = gw.return_value.generate.call_args.kwargs["user_prompt"]
+        self.assertIn("file system", prompt)
+        self.assertIn("scheduler", prompt)

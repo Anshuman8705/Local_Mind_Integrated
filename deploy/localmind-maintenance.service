@@ -9,4 +9,3 @@ EnvironmentFile=/opt/localmind/app/backend/.env
 ExecStart=/opt/localmind/app/backend/.venv/bin/python manage.py requeue_stuck_documents
 ExecStart=/opt/localmind/app/backend/.venv/bin/python manage.py flushexpiredtokens
 ExecStart=/opt/localmind/app/backend/.venv/bin/python manage.py monitor_ai --purge
-ExecStart=/opt/localmind/app/backend/.venv/bin/python manage.py monitor_ai --purge
