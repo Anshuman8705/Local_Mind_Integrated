@@ -207,3 +207,28 @@ class ShortModulesTests(Base):
         call_command("generate_auto_quizzes", "--remove-short", stdout=out)
         self.assertIn("kept (has attempts)", out.getvalue())
         self.assertTrue(Assessment.objects.filter(pk=quiz.pk).exists())
+
+
+class FacultyReleasesFromTheQuizScreenTests(Base):
+    def test_quiz_carries_its_incident_and_faculty_can_release_it(self):
+        auto_quiz.request_quizzes([self.flagged])
+        run_quizzes()
+        quiz = self.quiz_for(self.flagged)
+        detail = self.fc.get(f"/api/faculty/quizzes/{quiz.id}/").data
+        self.assertTrue(detail["held_for_review"])
+        self.assertTrue(detail["hold_incident_id"])
+        res = self.fc.post(f"/api/faculty/monitor/incidents/{detail['hold_incident_id']}/review/", {"action": "false_positive"}, format="json")
+        self.assertEqual(res.status_code, 200, res.content)
+        after = self.fc.get(f"/api/faculty/quizzes/{quiz.id}/").data
+        self.assertFalse(after["held_for_review"])
+        self.assertIsNone(after["hold_incident_id"])
+        self.assertEqual(after["status"], "published")
+
+    def test_another_faculty_member_cannot_release_it(self):
+        auto_quiz.request_quizzes([self.flagged])
+        run_quizzes()
+        incident_id = self.fc.get(f"/api/faculty/quizzes/{self.quiz_for(self.flagged).id}/").data["hold_incident_id"]
+        other = make_faculty(email="other-faculty@example.edu")
+        res = client_for(other).post(f"/api/faculty/monitor/incidents/{incident_id}/review/", {"action": "false_positive"}, format="json")
+        self.assertIn(res.status_code, (403, 404))
+        self.assertTrue(self.quiz_for(self.flagged).held_for_review)

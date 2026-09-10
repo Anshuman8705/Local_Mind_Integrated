@@ -197,12 +197,108 @@ class ExistingBookTests(TestCase):
         report = tidy_existing_document(self.doc)
         self.assertTrue(Module.objects.filter(pk=box.pk).exists())
         self.assertIn("Do You Know?", report["kept_in_use"])
-        self.assertEqual([m["title"] for m in report["merged"]], ["Q U E S T I O N S"])
+        self.assertEqual([m["title"] for m in report["merged"]], ["QUESTIONS"])
 
     def test_command(self):
         out = StringIO()
         call_command("tidy_book", "--document", str(self.doc.id), "--dry-run", stdout=out)
-        self.assertIn("merge: 'Q U E S T I O N S' into the end of", out.getvalue())
+        self.assertIn("merge: 'QUESTIONS' into the end of", out.getvalue())
         self.assertEqual(Module.objects.count(), 4)
         call_command("tidy_book", "--document", str(self.doc.id), stdout=StringIO())
         self.assertEqual(Module.objects.count(), 2)
+
+
+class RealTextbookTests(TestCase):
+    """The headings Docling extracted from NCERT Class 10 Science chapter 5
+    (jesc105.pdf) on a real install, with each section's text length."""
+
+    @staticmethod
+    def fixture():
+        import json
+        from pathlib import Path
+        return json.loads((Path(__file__).parent / "test_data" / "jesc105_headings.json").read_text(encoding="utf-8"))["headings"]
+
+    def test_every_overprinted_title_in_the_chapter_is_repaired(self):
+        repaired = {h["title"]: tidy_heading_title(h["title"]) for h in self.fixture()}
+        self.assertEqual(repaired["5.1  WHA 5.1  WHAT  ARE  LIFE  PROCESSES? T  ARE  LIFE  PROCESSES?"], "5.1 WHAT ARE LIFE PROCESSES?")
+        self.assertEqual(repaired["5.3  RESPIR 5.3  RESPIRA ATION TION"], "5.3 RESPIRATION")
+        self.assertEqual(repaired["5.4  TR 5.4  TRANSPORT ANSPORTA ATION TION"], "5.4 TRANSPORTATION")
+        self.assertEqual(repaired["5.5  EX 5.5  EXCRETION CRETION"], "5.5 EXCRETION")
+        self.assertEqual(repaired["E X E R C I S"], "EXERCISES")
+        self.assertEqual(repaired["Blood  pressure"], "Blood pressure")
+        self.assertEqual(tidy_heading_title("Bye Bye"), "Bye Bye", "short repeated words are left alone")
+
+    def test_a_fresh_upload_of_the_chapter_gives_its_real_sections(self):
+        from .services.outline import source_hierarchy_outline, tidy_outline
+        sections = [{"index": h["index"], "level": h["level"], "title": h["title"], "source_text": "x" * h["text_chars"],
+                     "own_text": "x" * h["text_chars"], "start_page": h["start_page"], "end_page": h["start_page"]}
+                    for h in self.fixture()]
+        outline, report = tidy_outline(source_hierarchy_outline("jesc105.pdf", sections), sections)
+        lookup = {s["index"]: s for s in sections}
+
+        def text(m):
+            return m["source_text"] if m.get("source_heading_index") is None else lookup[m["source_heading_index"]]["source_text"]
+
+        titles = [m["title"] for c in outline["chapters"] for m in c["modules"] if text(m).strip()]
+        self.assertEqual(titles, [
+            "5.1 WHAT ARE LIFE PROCESSES?", "How do living things get their food?", "5.2.1 Autotrophic Nutrition",
+            "5.2.2 Heterotrophic Nutrition", "5.2.3 How do Organisms obtain their Nutrition?", "5.2.4 Nutrition in Human Beings",
+            "5.3 RESPIRATION", "5.4.1 Transportation in Human Beings", "Our pump - the heart", "Oxygen enters the blood in the lungs",
+            "Blood pressure", "Lymph", "5.4.2 Transportation in Plants", "Transport of water", "Transport of food and other substances",
+            "5.5 EXCRETION", "5.5.1 Excretion in Human Beings", "Artificial kidney (Hemodialysis)", "5.5.2 Excretion in Plants",
+            "Organ donation", "What you have learnt"])
+        respiration = next(m for c in outline["chapters"] for m in c["modules"] if m["title"] == "5.3 RESPIRATION")
+        for box in ("## Activity 5.5", "## Activity 5.6", "## More to Know!", "## Do You Know?", "## QUESTIONS"):
+            self.assertIn(box, respiration["source_text"])
+        self.assertNotIn("Activity 5.4", " ".join(m["title"] for c in outline["chapters"] for m in c["modules"]))
+
+
+class AdoptMissingHeadingTests(TestCase):
+    def setUp(self):
+        self.faculty = make_faculty()
+        self.subject = make_subject(code="ADOPT")
+        assign(self.faculty, self.subject)
+        self.doc = make_published_document(self.subject, modules=(
+            ("5.2.4 Nutrition in Human Beings", MID), ("Activity 5.4 Activity 5.4", "Take some freshly prepared lime water. " * 10),
+            ("Activity 5.5 Activity 5.5", "Take some fruit juice or sugar solution and add some yeast. " * 60),
+            ("Do You Know?", "Smoking is injurious to health.")))
+        # One chapter per heading, as a PDF with all headings at one level gives,
+        # and the section heading "5.3 RESPIRATION" at index 1 had no text.
+        headings = [{"index": 0, "level": 2, "title": "5.2.4 Nutrition in Human Beings"},
+                    {"index": 1, "level": 2, "title": "5.3  RESPIR 5.3  RESPIRA ATION TION"},
+                    {"index": 2, "level": 2, "title": "Activity  5.4 Activity  5.4"},
+                    {"index": 3, "level": 2, "title": "Activity  5.5 Activity  5.5"},
+                    {"index": 4, "level": 2, "title": "Do You Know?"}]
+        self.doc.extracted_headings = headings
+        self.doc.save(update_fields=["extracted_headings"])
+        chapter = Chapter.objects.get(document=self.doc)
+        for pos, module in enumerate(Module.objects.filter(chapter=chapter).order_by("order")):
+            ch = chapter if pos == 0 else Chapter.objects.create(document=self.doc, title=module.title, order=pos + 1)
+            module.chapter = ch
+            module.source_heading_index = [0, 2, 3, 4][pos]
+            module.save()
+
+    def test_boxes_go_to_the_section_whose_heading_was_dropped(self):
+        report = tidy_existing_document(self.doc)
+        self.assertEqual(report["adopted"], [{"heading": "5.3 RESPIRATION", "module": "Activity 5.4 Activity 5.4"}])
+        titles = list(Module.objects.filter(chapter__document=self.doc).order_by("chapter__order").values_list("title", flat=True))
+        self.assertEqual(titles, ["5.2.4 Nutrition in Human Beings", "5.3 RESPIRATION"])
+        home = Module.objects.get(title="5.3 RESPIRATION")
+        self.assertTrue(home.source_text.startswith("## Activity 5.4"))
+        self.assertIn("## Activity 5.5", home.source_text)
+        self.assertIn("## Do You Know?", home.source_text)
+        self.assertEqual(home.chapter.title, "5.3 RESPIRATION")
+        self.assertNotIn("lime water", Module.objects.get(title="5.2.4 Nutrition in Human Beings").source_text)
+
+    def test_command_labels_each_change(self):
+        out = StringIO()
+        call_command("tidy_book", "--document", str(self.doc.id), "--dry-run", stdout=out)
+        text = out.getvalue()
+        self.assertIn("new section home: 'Activity 5.4 Activity 5.4' becomes '5.3 RESPIRATION'", text)
+        self.assertIn("rename chapter and module:", text)
+        self.assertEqual(text.count("rename chapter and module: 'Activity 5.4 Activity 5.4'"), 1)
+
+    def test_running_it_twice_changes_nothing_the_second_time(self):
+        tidy_existing_document(self.doc)
+        again = tidy_existing_document(self.doc, dry_run=True)
+        self.assertEqual((again["merged"], again["renamed"], again["adopted"]), ([], [], []))

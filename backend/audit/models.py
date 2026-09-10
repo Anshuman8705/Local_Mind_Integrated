@@ -21,6 +21,7 @@ class AuditLog(TimeStampedUUIDModel):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
     class Meta:
+        db_table = "audit_log"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["target_type", "target_id"])]
 

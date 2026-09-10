@@ -690,7 +690,7 @@ s, d = call("POST", "/auth/logout/", {"refresh": srefresh, "session_id": ssess},
 check("student logout", s in (200, 204), d)
 s, d = call("POST", "/auth/refresh/", {"refresh": srefresh})
 check("refresh after logout refused", s == 401, d)
-s, d = call("GET", f"/admin/analytics/users/{student_id}/sessions/", tok=atok)
+s, d = call("GET", f"/faculty/analytics/users/{student_id}/sessions/", tok=atok)  # administrators use the one content/analytics route set
 sess_rows = d.get("sessions", []) if s == 200 else []
 check("admin sees closed session with logout reason", any(r.get("ended_by") == "logout" for r in sess_rows), sess_rows[:2])
 s, d = call("POST", f"/admin/faculty/{faculty_id}/discontinue/", tok=atok)
@@ -731,7 +731,7 @@ if FAKE:
     check("health stays ok while ai is down", s == 200 and d["status"] == "ok" and d["ai"]["ready"] is False, d)
     s, d = call("POST", f"/student/modules/{open_mod['id']}/ask/", {"question": "Anything?"}, tok=s2tok)
     check("ask -> 503 AI_UNAVAILABLE with reason", s == 503 and err(d) == "AI_UNAVAILABLE" and d["error"]["details"].get("reason") == "unavailable", d)
-    s, d = call("GET", f"/student/conversations/", tok=s2tok)
+    s, d = call("GET", "/student/conversations/", tok=s2tok)
     check("failed question is still recorded in the thread", s == 200 and rows(d), d)
     s, d = call("GET", f"/student/modules/{open_mod['id']}/teach/", tok=s2tok)
     check("stored lesson still served while the model is down", s == 200 and d.get("status") == "ready" and d.get("generator") == "ai", d)

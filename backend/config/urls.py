@@ -5,7 +5,6 @@ from django.urls import include, path, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
     path("api/health/", include("core.urls")),
     path("api/meta/", include("core.urls_meta")),
     path("api/auth/", include("accounts.urls_auth")),
@@ -13,9 +12,10 @@ urlpatterns = [
     path("api/admin/", include("accounts.urls_admin")),
     path("api/admin/", include("academics.urls_admin")),
     path("api/admin/", include("audit.urls")),
-    path("api/admin/", include("documents.urls_manage")),
-    path("api/admin/", include("assessments.urls_manage")),
-    path("api/admin/", include("assignments.urls_manage")),
+    # Content work (books, quizzes, assignments, their analytics) has one home,
+    # /api/faculty/, for faculty and administrators alike; the permission
+    # classes admit both roles. It used to be mounted a second time under
+    # /api/admin/, which nothing used and doubled what had to be secured.
     path("api/faculty/", include("academics.urls_faculty")),
     path("api/faculty/", include("documents.urls_manage")),
     path("api/faculty/", include("assessments.urls_manage")),
@@ -28,11 +28,13 @@ urlpatterns = [
     path("api/student/", include("activity.urls_student")),
     path("api/student/", include("analytics.urls_student")),
     path("api/faculty/", include("analytics.urls_manage")),
-    path("api/admin/", include("analytics.urls_manage")),
     path("api/admin/", include("analytics.urls_admin")),
     path("api/admin/", include("ai_monitor.urls_admin")),
     path("api/faculty/", include("ai_monitor.urls_faculty")),
 ]
+
+if settings.DJANGO_ADMIN_URL:
+    urlpatterns.insert(0, path(settings.DJANGO_ADMIN_URL, admin.site.urls))
 
 if settings.API_DOCS_ENABLED:
     # The live schema lists every endpoint, parameter and error code, and the

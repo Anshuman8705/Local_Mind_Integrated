@@ -12,6 +12,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True, default="")
     question_count = serializers.IntegerField(read_only=True)
     attempt_count = serializers.SerializerMethodField()
+    hold_incident_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Assessment
@@ -19,10 +20,24 @@ class AssessmentSerializer(serializers.ModelSerializer):
                   "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at", "version", "supersedes",
                   "created_by_name", "published_at", "closed_at", "question_count", "attempt_count", "created_at", "updated_at",
                   "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count",
-                  "auto_generated", "checked_at", "held_for_review", "hold_reason"]
+                  "auto_generated", "checked_at", "held_for_review", "hold_reason", "hold_incident_id"]
+
+    def get_hold_incident_id(self, a) -> str | None:
+        """The AI monitor incident a held automatic quiz is waiting on, so the
+        quiz screen can release it as a false alarm. Only looked up for held
+        quizzes."""
+        if not a.held_for_review:
+            return None
+        from ai_monitor.models import Incident
+
+        from .services.auto_quiz import HOLD_SEVERITIES, HOLD_STATUSES
+        incident = (Incident.objects.filter(evaluation__assessment=a, severity__in=HOLD_SEVERITIES, status__in=HOLD_STATUSES)
+                    .order_by("-created_at").values_list("id", flat=True).first())
+        return str(incident) if incident else None
 
     def get_attempt_count(self, a) -> int:
-        return a.attempts.count()
+        counted = getattr(a, "listed_attempt_count", None)
+        return counted if counted is not None else a.attempts.count()
 
     def get_source_module_ids(self, a) -> list:
         return [str(m.id) for m in a.source_modules.all()]

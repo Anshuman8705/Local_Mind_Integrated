@@ -7,7 +7,6 @@ Date filtering uses an optional (since, until) pair of aware datetimes and
 applies to time-stamped facts (attempts, submissions, sessions, events).
 Structural facts such as enrollment counts are point-in-time.
 """
-from datetime import datetime, timedelta
 
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.utils import timezone
@@ -18,7 +17,7 @@ from accounts.models import User
 from activity.models import ActivityEvent, ApplicationSession
 from assessments.models import Assessment, AssessmentAttempt
 from assignments.models import Assignment, AssignmentSubmission
-from core.exceptions import Forbidden, NotFound, ValidationFailed
+from core.exceptions import NotFound, ValidationFailed
 from core.utils import get_or_404
 from documents.models import Document
 from learning.models import Module, ModuleProgress

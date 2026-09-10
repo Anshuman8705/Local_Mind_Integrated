@@ -81,6 +81,8 @@ export interface Quiz {
   auto_generated?: boolean;
   /** An automatic quiz the AI monitor flagged: kept as a draft until faculty publish it or clear the incident. */
   held_for_review?: boolean; hold_reason?: string; checked_at?: string | null;
+  /** The AI monitor incident a held quiz waits on (faculty and admin views). */
+  hold_incident_id?: string | null;
   /** Returned by generation only: what fell short of the request, or null. */
   generation_warning?: string | null;
   results_release?: "immediate" | "held" | "scheduled";

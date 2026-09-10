@@ -65,6 +65,7 @@ class DocumentChunk(TimeStampedUUIDModel):
     terms = models.JSONField(default=dict, blank=True)
 
     class Meta:
+        db_table = "module_text_chunks"
         ordering = ["module", "order"]
         indexes = [models.Index(fields=["module", "content_version"], name="documents_d_module__f0d97f_idx")]
         constraints = [
@@ -121,6 +122,7 @@ class Document(TimeStampedUUIDModel):
     objects = DocumentQuerySet.as_manager()
 
     class Meta:
+        db_table = "books"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["subject", "status"])]
 

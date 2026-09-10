@@ -3,10 +3,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.permissions import IsStudent
-from core.utils import get_or_404
 
 from . import services as svc
-from .models import Message
 
 
 def _msg(m):

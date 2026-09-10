@@ -15,6 +15,7 @@ class Chapter(TimeStampedUUIDModel):
     is_user_edited = models.BooleanField(default=False)
 
     class Meta:
+        db_table = "chapters"
         ordering = ["order"]
         constraints = [models.UniqueConstraint(fields=["document", "order"], name="uniq_chapter_order_per_document")]
 
@@ -49,6 +50,7 @@ class Module(TimeStampedUUIDModel):
     opened_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "modules"
         ordering = ["chapter__order", "order"]
         constraints = [models.UniqueConstraint(fields=["chapter", "order"], name="uniq_module_order_per_chapter")]
 
@@ -84,6 +86,7 @@ class ModuleProgress(TimeStampedUUIDModel):
     overridden_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
+        db_table = "module_progress"
         constraints = [models.UniqueConstraint(fields=["student", "module"], name="uniq_progress_per_student_module")]
         indexes = [models.Index(fields=["student", "status"])]
 

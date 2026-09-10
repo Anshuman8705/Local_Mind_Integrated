@@ -1,15 +1,12 @@
 """AssessmentService: lifecycle, attempts, grading, scoping."""
-from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Max
 from django.utils import timezone
 
 from academics.models import faculty_manages_subject
 from audit import services as audit
 from core.exceptions import Conflict, Forbidden, NotFound, ValidationFailed
-from documents.models import DocumentStatus
 from learning import services as learning
 from learning.models import Chapter, Module
 
@@ -482,12 +479,26 @@ def release_results(actor, assessment, attempt_id=None, request=None):
     return count
 
 
+def with_list_counts(queryset):
+    """Annotate what the quiz list shows for each quiz, so a page of quizzes
+    is one query instead of two more per quiz."""
+    from django.db.models import Count, Q
+    return queryset.annotate(
+        listed_attempt_count=Count("attempts", distinct=True),
+        listed_unreleased_count=Count("attempts", distinct=True, filter=Q(attempts__results_released_at__isnull=True)
+                                      & ~Q(attempts__status=AttemptStatus.IN_PROGRESS)),
+    )
+
+
 def pending_release_count(assessment):
     """Submitted attempts whose owner cannot yet see the outcome."""
     if assessment.results_release == ResultsRelease.IMMEDIATE or assessment.results_released_at:
         return 0
     if assessment.results_release == ResultsRelease.SCHEDULED and assessment.results_release_at and timezone.now() >= assessment.results_release_at:
         return 0
+    counted = getattr(assessment, "listed_unreleased_count", None)
+    if counted is not None:
+        return counted
     return assessment.attempts.filter(results_released_at__isnull=True).exclude(status=AttemptStatus.IN_PROGRESS).count()
 
 

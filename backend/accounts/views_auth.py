@@ -13,7 +13,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from audit import services as audit
-from core.exceptions import APIError, ValidationFailed
+from core.exceptions import APIError
 
 from .models import AccountStatus, Role
 from .serializers import ChangePasswordSerializer, LoginSerializer, RefreshSerializer, UserSerializer

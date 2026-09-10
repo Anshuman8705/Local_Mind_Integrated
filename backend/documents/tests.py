@@ -174,8 +174,9 @@ class DocumentLifecycleTests(TestCase):
     def test_student_cannot_upload(self, _):
         res = client_for(self.student).post("/api/faculty/documents/", {"subject_id": str(self.subject.id), "file": pdf_upload()}, format="multipart")
         self.assertEqual(res.status_code, 403)
+        # Content routes live only under /api/faculty/ now; /api/admin/documents/ does not exist.
         res = client_for(self.student).post("/api/admin/documents/", {"subject_id": str(self.subject.id), "file": pdf_upload()}, format="multipart")
-        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.status_code, 404)
 
     def test_faculty_cannot_upload_to_unassigned_subject(self, _):
         res = self.upload(subject=self.other_subject)
@@ -283,9 +284,10 @@ class DocumentLifecycleTests(TestCase):
 
     def test_admin_sees_all_documents(self, _):
         client, doc = self._processed_doc()
-        res = client_for(self.admin).get("/api/admin/documents/")
+        # Administrators manage content through the same routes as faculty.
+        res = client_for(self.admin).get("/api/faculty/documents/")
         self.assertEqual(len(res.data["results"]), 1)
-        self.assertEqual(client_for(self.admin).post(f"/api/admin/documents/{doc.id}/publish/").status_code, 200)
+        self.assertEqual(client_for(self.admin).post(f"/api/faculty/documents/{doc.id}/publish/").status_code, 200)
 
     @override_settings(LOCALMIND={**__import__("django.conf").conf.settings.LOCALMIND, "FACULTY_CAN_PUBLISH": False})
     def test_publish_can_be_restricted_to_admin(self, _):

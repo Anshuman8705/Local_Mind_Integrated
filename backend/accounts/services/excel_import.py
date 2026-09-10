@@ -14,7 +14,7 @@ from django.db import transaction
 from audit import services as audit
 from core.exceptions import APIError, Conflict, ValidationFailed
 
-from ..models import Role, User
+from ..models import Role
 from .users import NewUser, create_user, normalize_email
 
 REQUIRED_HEADERS = {"name", "email"}

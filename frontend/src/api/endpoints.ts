@@ -62,6 +62,9 @@ export const manage = {
     api<T.Document & { outline_report?: T.OutlineReport }>(`/faculty/documents/${id}/outline/`, { method: "PUT", body: { chapters, document_title } }),
   moduleLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`),
   regenerateLesson: (id: string) => api<T.LessonDetail>(`/faculty/modules/${id}/lesson/`, { method: "POST", body: {} }),
+  /** Faculty-side incident review (their own subjects), used to release a held quiz as a false alarm. */
+  reviewIncident: (id: string, action: "false_positive" | "confirm", note = "") =>
+    api<unknown>(`/faculty/monitor/incidents/${id}/review/`, { method: "POST", body: { action, note } }),
   regenerateAutoQuiz: (moduleId: string) => api<{ module_id: string; quiz_status: string }>(`/faculty/modules/${moduleId}/auto-quiz/`, { method: "POST", body: {} }),
   generateAutoQuizzes: (documentId: string) => api<{ queued: number }>(`/faculty/documents/${documentId}/auto-quizzes/`, { method: "POST", body: {} }),
   generateLessons: (documentId: string, force = false) =>

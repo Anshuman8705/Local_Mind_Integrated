@@ -11,7 +11,7 @@ from django.utils import timezone
 from academics.models import SubjectStatus, faculty_manages_subject
 from audit import services as audit
 from core.exceptions import Conflict, Forbidden, ValidationFailed
-from learning.models import Chapter, Module, ModuleAvailability
+from learning.models import Module, ModuleAvailability
 
 from ..models import Document, DocumentStatus, EDITABLE_STATUSES, REPROCESSABLE_STATUSES
 from . import outline as outline_service

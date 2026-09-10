@@ -1,4 +1,3 @@
-import { useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { manage } from "@/api/endpoints";

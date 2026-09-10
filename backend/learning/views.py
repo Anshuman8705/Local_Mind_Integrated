@@ -7,7 +7,7 @@ from core.permissions import IsStudent
 from core.utils import get_or_404
 
 from . import services
-from .models import Module, ModuleAvailability, ProgressStatus
+from .models import ProgressStatus
 
 
 def _module_payload(module, progress, include_source):
@@ -32,11 +32,12 @@ class StudentSubjectDocumentsView(APIView):
 
     def get(self, request, subject_id):
         subject = get_or_404(Subject.objects.visible_to(request.user), pk=subject_id)
-        docs = services.student_documents(request.user, subject).prefetch_related("chapters__modules")
+        docs = list(services.student_documents(request.user, subject).prefetch_related("chapters__modules"))
+        # One progress lookup for every module of every book, not one per book.
+        rows = services.progress_map(request.user, [m for doc in docs for ch in doc.chapters.all() for m in ch.modules.all()])
         out = []
         for doc in docs:
             modules = [m for ch in doc.chapters.all() for m in ch.modules.all() if not m.source_missing]
-            rows = services.progress_map(request.user, modules)
             completed = sum(1 for m in modules if rows.get(m.id) and rows[m.id].status == ProgressStatus.COMPLETED)
             out.append({"id": str(doc.id), "title": doc.title, "subject_id": str(doc.subject_id), "published_at": doc.published_at,
                         "content_version": doc.content_version, "chapter_count": len(doc.chapters.all()),

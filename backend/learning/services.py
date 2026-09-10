@@ -1,11 +1,12 @@
 """Student-side content access and progress."""
+import contextvars
 import logging
+from contextlib import contextmanager
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from academics.models import Enrollment, EnrollmentStatus
+from academics.models import EnrollmentStatus
 from core.exceptions import Forbidden, NotFound
 from documents.models import Document, DocumentStatus
 
@@ -83,10 +84,30 @@ def record_quiz_outcome(student, module, percentage, passed, count_attempt=True)
     return progress
 
 
+_settled_in_this_pass = contextvars.ContextVar("settled_in_this_pass", default=None)
+
+
+@contextmanager
+def settle_once():
+    """Within this block each student's results are settled at most once.
+    The offline download runs dozens of student views in one request, and each
+    used to settle again."""
+    token = _settled_in_this_pass.set(set())
+    try:
+        yield
+    finally:
+        _settled_in_this_pass.reset(token)
+
+
 def settle_student_results(student):
     """Record quiz outcomes whose scheduled release time has passed. Scheduled
     release has no scheduler, so every student-facing progress read settles
     first. One indexed query when there is nothing to do."""
+    done = _settled_in_this_pass.get()
+    if done is not None:
+        if student.pk in done:
+            return 0
+        done.add(student.pk)
     from assessments.services.assessments import settle_released_outcomes
     return settle_released_outcomes(student)
 

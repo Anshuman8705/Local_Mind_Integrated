@@ -129,6 +129,7 @@ class Evaluation(TimeStampedUUIDModel):
     duration_ms = models.PositiveIntegerField(default=0)
 
     class Meta:
+        db_table = "ai_checks"
         ordering = ["-created_at"]
         constraints = [models.UniqueConstraint(fields=["interaction_kind", "interaction_id", "evaluator_version"], name="uniq_evaluation_per_interaction_version")]
         indexes = [
@@ -161,6 +162,7 @@ class Incident(TimeStampedUUIDModel):
     resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "ai_incidents"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["status", "severity"]), models.Index(fields=["subject", "status"])]
 
@@ -197,6 +199,7 @@ class Policy(TimeStampedUUIDModel):
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
+        db_table = "ai_incident_rules"
         ordering = ["issue_type"]
         verbose_name_plural = "policies"
 
@@ -215,6 +218,7 @@ class Feedback(TimeStampedUUIDModel):
     note = models.TextField(blank=True)
 
     class Meta:
+        db_table = "ai_check_feedback"
         ordering = ["-created_at"]
 
     def __str__(self):

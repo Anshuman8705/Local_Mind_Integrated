@@ -99,6 +99,7 @@ Boolean variables accept `true`, `1`, `yes`, `on` (case-insensitive); anything e
 |---|---|---|
 | `API_DOCS_ENABLED` | same as `DJANGO_DEBUG` | Serve the live OpenAPI schema (`/api/schema/`) and Swagger UI (`/api/docs/`). Off in production by default: the schema maps every endpoint for anyone who can reach the server, and Swagger UI loads its scripts from a CDN, so it does not work offline anyway. `backend/openapi.yaml` is the committed copy. |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | `1` / `8` | Docker image only. Each worker loads its own copy of the model (about 1.8 GB at the default context) and keeps its own pre-warm queue, monitor queue and answer cache, so add workers only with RAM for another copy. |
+| `DJANGO_ADMIN_URL` | `django-admin/` | Path of Django's own admin site. It is not `/admin/`, which is the LocalMind administrator portal in the web client (reloading `/admin/users` must load the app). Empty turns the Django admin site off; `admin`, `api`, `media`, `static`, `student`, `manage` and `login` are refused. |
 | `SESSION_COOKIE_SECURE` | `true` | Only relevant to the Django admin site. |
 | `CSRF_COOKIE_SECURE` | `true` | Same. |
 | `SECURE_SSL_REDIRECT` | `false` | Set true when Django itself terminates TLS; leave false behind a reverse proxy that already redirects. |

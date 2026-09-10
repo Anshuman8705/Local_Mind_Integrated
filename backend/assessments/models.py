@@ -50,7 +50,7 @@ class Assessment(TimeStampedUUIDModel):
     # A quiz drawn from several chosen modules keeps `chapter` set to the
     # chapter they share (null when they span chapters) and lists every module
     # it was written from here. Module and chapter quizzes leave it empty.
-    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assessments")
+    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assessments", db_table="quiz_modules")
     # Written automatically for its module when the book was processed (see
     # assessments/services/auto_quiz.py), and published automatically when the
     # module is open to students. Faculty can edit, close or delete it like any
@@ -88,6 +88,7 @@ class Assessment(TimeStampedUUIDModel):
     results_released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
+        db_table = "quizzes"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["subject", "status"]), models.Index(fields=["module", "status"])]
 
@@ -152,6 +153,7 @@ class AssessmentAttempt(TimeStampedUUIDModel):
     outcome_recorded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "quiz_attempts"
         ordering = ["-started_at"]
         constraints = [models.UniqueConstraint(fields=["assessment", "student", "attempt_number"], name="uniq_attempt_number")]
         indexes = [models.Index(fields=["student", "status"])]
@@ -201,5 +203,6 @@ class AutoQuizJob(TimeStampedUUIDModel):
     version = models.PositiveIntegerField(default=0)
 
     class Meta:
+        db_table = "auto_quiz_jobs"
         indexes = [models.Index(fields=["status", "next_attempt_at"], name="assess_autoquiz_queue_idx")]
 

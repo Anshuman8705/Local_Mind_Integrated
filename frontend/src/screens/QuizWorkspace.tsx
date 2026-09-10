@@ -147,6 +147,12 @@ function QuizDetail({ id, onChanged, onDeleted, onBack, note }: { id: string; on
     if (res.id !== id) router.replace(`/manage/quiz/${res.id}`); else await q.reload();
   });
   const setStatus = useAction(async (s: string) => { await manage.quizStatus(id, s); onChanged(); await q.reload(); });
+  // A held automatic quiz: marking its incident a false alarm releases it.
+  const releaseHold = useAction(async () => {
+    if (!q.data?.hold_incident_id) return;
+    await manage.reviewIncident(q.data.hold_incident_id, "false_positive", "Released from the quiz screen: questions checked.");
+    await q.reload(); onChanged();
+  });
   const release = useAction(async (attemptId?: string) => {
     const d = q.data;
     if (!d) return;
@@ -224,7 +230,17 @@ function QuizDetail({ id, onChanged, onDeleted, onBack, note }: { id: string; on
         {d.generator === "fallback" ? <Notice tone="warning" message="This older draft was produced without the AI. Placeholder options are marked; rewrite them before publishing." /> : null}
         {note ? <Notice tone="warning" message={`Generated with notes: ${note}. Review the questions, add any that are missing by hand, or generate again.`} /> : null}
         {d.held_for_review ? (
-          <Notice tone="warning" message={`Held for review: ${d.hold_reason || "the AI monitor flagged this automatic quiz"}. Students do not see it. Check the questions against the module (the incident is under AI Monitor), fix anything wrong, then publish it; or mark the incident a false positive to release it as it is.`} />
+          <>
+            <Notice tone="warning" message={`Held for review: ${d.hold_reason || "the AI monitor flagged this automatic quiz"}. Students do not see it. Check the questions against the module. If something is wrong, fix it and publish. If the questions are right, release it as a false alarm; it goes live when its module is open.`} />
+            {d.hold_incident_id ? (
+              <Row>
+                <Button title="Questions Are Right: Release It" icon="checkmark-done-outline" small variant="secondary"
+                  onPress={() => releaseHold.run()} busy={releaseHold.busy} disabled={dirty} />
+                {dirty ? <Hint>Save or discard your edits first.</Hint> : null}
+              </Row>
+            ) : null}
+            <ErrorBanner message={releaseHold.error} />
+          </>
         ) : null}
 
         {tab === "questions" ? <QuestionsTab quiz={d} editable={editable} edit={edit} editQ={editQ} /> : null}

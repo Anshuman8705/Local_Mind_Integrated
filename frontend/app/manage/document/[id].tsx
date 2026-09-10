@@ -725,7 +725,7 @@ function AutoQuizControls({ moduleId, status, quizId }: { moduleId: string; stat
         <Text style={[ws.hint, { flex: 1 }]}>
           {shown === "checking" ? "Written; the AI monitor is checking it before students can see it." :
             busy ? "The automatic quiz for this module is queued; quizzes are written in turn with lessons." :
-            shown === "held" ? "The AI monitor flagged this quiz, so students do not see it. Review the questions, then publish it, or mark the incident a false positive." :
+            shown === "held" ? "The AI monitor flagged this quiz, so students do not see it. Open it to fix and publish it, or release it if the questions are right." :
             shown === "ready" ? "Goes live for students when this module is open. Once students have attempted it, writing it again keeps it as it is; edit it in Quizzes instead." :
             shown === "dismissed" ? "You deleted this module's automatic quiz, so it is not written again unless you ask." :
             shown === "failed" ? "The automatic quiz could not be written; it is retried later, or try now." : ""}

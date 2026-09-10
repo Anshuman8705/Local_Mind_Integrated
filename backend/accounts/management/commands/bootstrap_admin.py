@@ -2,7 +2,7 @@
 already exists. The account is created with must_change_password=True so the
 first login forces a real password, exactly like any user created through
 the admin API."""
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
 from accounts.models import User
 from accounts.services.users import NewUser, create_user

@@ -155,7 +155,7 @@ def split_text(source_text: str, *, target: int = CHUNK_TARGET_CHARS, maximum: i
     page_start = page_end = units[0][2]
 
     def close():
-        nonlocal current, current_len, page_start, page_end
+        nonlocal current, current_len
         if current:
             text = "\n\n".join(current).strip()
             chunks.append({"text": text, "heading": current_heading, "page_start": page_start, "page_end": page_end})

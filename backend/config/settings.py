@@ -141,6 +141,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # whole application: API, media, model and UI. Set WEB_DIST to relocate it or
 # SERVE_WEB=false to leave the UI to nginx.
 WEB_DIST = Path(env_str("WEB_DIST", str(BASE_DIR.parent / "frontend" / "dist"))).resolve()
+
+# Where Django's own admin site lives. Not /admin/: that is the LocalMind
+# administrator portal in the web client, and reloading a page there (say
+# /admin/users) must load the app, not Django's admin login. Empty turns the
+# Django admin site off.
+DJANGO_ADMIN_URL = env_str("DJANGO_ADMIN_URL", "django-admin/").strip().strip("/")
+DJANGO_ADMIN_URL = f"{DJANGO_ADMIN_URL}/" if DJANGO_ADMIN_URL else ""
+if DJANGO_ADMIN_URL.split("/")[0] in ("admin", "api", "media", "static", "student", "manage", "login", "_expo", "assets"):
+    raise RuntimeError(f"DJANGO_ADMIN_URL={DJANGO_ADMIN_URL!r} collides with a path the app uses; pick another, e.g. django-admin/.")
 SERVE_WEB = env_bool("SERVE_WEB", True) and (WEB_DIST / "index.html").exists()
 # Serve /media/ from Django too when there is no reverse proxy in front.
 SERVE_MEDIA = env_bool("SERVE_MEDIA", SERVE_WEB)

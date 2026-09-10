@@ -38,6 +38,7 @@ class ModuleLesson(TimeStampedUUIDModel):
     version = models.PositiveIntegerField(default=0)
 
     class Meta:
+        db_table = "module_lessons"
         indexes = [models.Index(fields=["status", "next_attempt_at"], name="tutor_lesson_queue_idx")]
 
     def __str__(self):
@@ -51,6 +52,7 @@ class Conversation(TimeStampedUUIDModel):
     last_message_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "tutor_conversations"
         ordering = ["-updated_at"]
         indexes = [models.Index(fields=["student", "module"])]
 
@@ -65,4 +67,5 @@ class Message(TimeStampedUUIDModel):
     latency_ms = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
+        db_table = "tutor_messages"
         ordering = ["created_at"]

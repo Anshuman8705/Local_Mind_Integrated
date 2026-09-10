@@ -171,7 +171,7 @@ Rules:
 # into the section they belong to (the one before them in the book).
 
 BOX_TITLE_RE = re.compile(
-    r"^(?:questions?|exercises?|activit(?:y|ies)(?:\s*[\d.]+)?|group\s+activity(?:\s*[\d.]+)?|"
+    r"^(?:questions?|exercis\w*|activit(?:y|ies)(?:\s*[\d.]+)?|group\s+activity(?:\s*[\d.]+)?|"
     r"do\s+you\s+know\??|did\s+you\s+know\??|more\s+to\s+know!?|think\s+it\s+over\??|"
     r"think\s+and\s+act|let\s+us\s+recall|recall|test\s+yourself|try\s+this|fact\s+file|"
     r"intext\s+questions?|check\s+your\s+progress)\s*[.!?:]*$",
@@ -179,8 +179,50 @@ BOX_TITLE_RE = re.compile(
 )
 
 
+def _layered_copy(tokens):
+    """Two copies of one title printed on top of each other, read as one line
+    with their words interleaved ("5.3 RESPIR 5.3 RESPIRA ATION TION" is
+    "5.3 RESPIR|ATION" and "5.3 RESPIRA|TION"). Finds a split of the tokens
+    into two in-order layers that spell the same letters, and returns that
+    title with a space only where both layers agree there is one. None when
+    the tokens are not two copies."""
+    n = len(tokens)
+    if n < 2 or n > 16:
+        return None
+    joined = "".join(tokens)
+    if len(joined) % 2 or len(joined) < 8:
+        return None
+    half = len(joined) // 2
+
+    def boundaries(layer):
+        out, pos = set(), 0
+        for tok in layer[:-1]:
+            pos += len(tok)
+            out.add(pos)
+        return out
+
+    best = None
+    for mask in range(1, 1 << (n - 1)):  # token 0 always opens layer A
+        a = [tokens[0]] + [tokens[i] for i in range(1, n) if not mask & (1 << (i - 1))]
+        b = [tokens[i] for i in range(1, n) if mask & (1 << (i - 1))]
+        if len("".join(a)) != half or "".join(a) != "".join(b):
+            continue
+        cuts = sorted(boundaries(a) & boundaries(b))
+        word = "".join(a)
+        pieces, start = [], 0
+        for cut in cuts:
+            pieces.append(word[start:cut])
+            start = cut
+        pieces.append(word[start:])
+        candidate = " ".join(pieces)
+        # Prefer the reading with the most agreed word breaks.
+        if best is None or len(cuts) > best[0]:
+            best = (len(cuts), candidate)
+    return best[1] if best else None
+
+
 def tidy_heading_title(value) -> str:
-    """Repair letter-spaced, doubled and interleaved heading text."""
+    """Repair letter-spaced and overprinted heading text from textbook PDFs."""
     text = html.unescape(str(value or "")).strip()
     # Words separated by two or more spaces, letters by one: "M O R E  T O  K N O W".
     groups = re.split(r"\s{2,}", text)
@@ -188,21 +230,15 @@ def tidy_heading_title(value) -> str:
     if any(s and len(g.split()) >= 3 for s, g in zip(spaced, groups)):
         groups = ["".join(g.split()) if s else g for s, g in zip(spaced, groups)]
     text = " ".join(" ".join(groups).split())
-    n = len(text)
-    # "Activity 5.3 Activity 5.3"
-    if n >= 3 and n % 2 == 1 and text[n // 2] == " " and text[: n // 2] == text[n // 2 + 1:]:
-        return text[: n // 2]
-    # "5.1 WHA 5.1 WHAT ARE LIFE PROCESSES? T ARE LIFE PROCESSES?" is P + F + S
-    # with P + S == F: a drop-cap copy split around the real title.
-    if n >= 8 and (n - 2) % 2 == 0:
-        size = (n - 2) // 2
-        for cut in range(1, size):
-            if text[cut] != " " or text[cut + 1 + size: cut + 2 + size] != " ":
-                continue
-            prefix, full, suffix = text[:cut], text[cut + 1: cut + 1 + size], text[cut + 2 + size:]
-            if prefix + suffix == full:
-                return full
-    return text
+    # "Activity 5.3 Activity 5.3", "5.1 WHA 5.1 WHAT ARE LIFE PROCESSES? T ARE
+    # LIFE PROCESSES?", "5.4 TR 5.4 TRANSPORT ANSPORTA ATION TION".
+    repaired = _layered_copy(text.split()) or text
+    # Letter-spaced box titles often lose their last letters in extraction
+    # ("E X E R C I S"); give the word back its ending.
+    for word in ("EXERCISES", "QUESTIONS"):
+        if len(repaired) >= 6 and repaired.isupper() and word.startswith(repaired) and repaired != word:
+            return word
+    return repaired
 
 
 _NUMBER_RE = re.compile(r"^(\d+(?:\.\d+)*)\s")
@@ -243,10 +279,13 @@ def plan_merges(items, min_chars, max_chars):
     for it in items:
         by_chapter.setdefault(it["chapter"], []).append(it)
 
+    position = {it["key"]: i for i, it in enumerate(items)}
+
     def opens_next(it):
-        rows = by_chapter[it["chapter"]]
+        # Books whose headings all sit at one level come out as one chapter per
+        # heading, so the next numbered heading is looked for across the book.
         number = _section_number(it["title"])
-        later = rows[rows.index(it) + 1:]
+        later = items[position[it["key"]] + 1:]
         nxt = next((r for r in later if _section_number(r["title"])), None)
         return bool(number and nxt and _section_number(nxt["title"]).startswith(number + "."))
 
@@ -272,7 +311,10 @@ def plan_merges(items, min_chars, max_chars):
 
     def next_real(it):
         rows = by_chapter[it["chapter"]]
-        return next((r for r in rows[rows.index(it) + 1:] if target_ok(r)), None)
+        found = next((r for r in rows[rows.index(it) + 1:] if target_ok(r)), None)
+        if found is None and all_fragments[it["chapter"]]:
+            found = next((r for r in items[position[it["key"]] + 1:] if target_ok(r)), None)
+        return found
 
     merges, done = [], set()
 
@@ -370,6 +412,37 @@ def tidy_outline(outline, sections):
     return outline, report
 
 
+def _adopt_missing_headings(document, modules):
+    """Numbered section headings the book has but no module carries.
+
+    Processing drops a heading with no text of its own, and in a textbook that
+    is usually a section title followed straight away by a box: "5.3
+    RESPIRATION", then "Activity 5.4". Without the heading, the section's boxes
+    would fold into the previous section (respiration into nutrition). The
+    first module after such a heading becomes the section's home instead: it
+    takes the heading's title and the boxes that follow fold into it. Returns
+    {module_pk: {"title": ..., "parents": [...]}}."""
+    headings = {int(h["index"]): h for h in (document.extracted_headings or []) if str(h.get("index", "")).lstrip("-").isdigit()}
+    if not headings:
+        return {}
+    used = {m.source_heading_index for m in modules if m.source_heading_index is not None}
+    # A module that has been edited or tidied before no longer records its
+    # heading index; its title still says which heading it is.
+    present = {tidy_heading_title(m.title).casefold() for m in modules}
+    homes, previous = {}, -1
+    for m in modules:
+        idx = m.source_heading_index
+        if idx is None:
+            continue
+        missing = [tidy_heading_title(headings[i]["title"]) for i in range(previous + 1, idx)
+                   if i in headings and i not in used and _section_number(headings[i]["title"])
+                   and tidy_heading_title(headings[i]["title"]).casefold() not in present]
+        previous = idx
+        if missing and not _section_number(m.title):
+            homes[m.pk] = {"title": missing[-1], "parents": missing[:-1]}
+    return homes
+
+
 def tidy_existing_document(document, *, dry_run=False, actor=None, titles=True):
     """Apply the same tidying to a book that is already in use.
 
@@ -388,37 +461,80 @@ def tidy_existing_document(document, *, dry_run=False, actor=None, titles=True):
 
     cfg = settings.LOCALMIND
     modules = list(Module.objects.filter(chapter__document=document).select_related("chapter").order_by("chapter__order", "order"))
-    report = {"renamed": [], "merged": [], "kept_in_use": [], "chapters_removed": []}
+    report = {"renamed": [], "merged": [], "kept_in_use": [], "chapters_removed": [], "adopted": []}
+    homes = _adopt_missing_headings(document, modules)
     items = []
     for m in modules:
         locked = _module_is_referenced(m)
-        items.append({"key": m.pk, "chapter": m.chapter_id, "title": m.title, "text": m.source_text, "locked": locked})
+        title = homes[m.pk]["title"] if m.pk in homes else m.title
+        items.append({"key": m.pk, "chapter": m.chapter_id, "title": title, "text": m.source_text, "locked": locked})
         if locked and (is_box_title(m.title) or len(m.source_text.strip()) < int(cfg.get("OUTLINE_MERGE_MIN_CHARS", 500))):
             report["kept_in_use"].append(m.title)
     merges = plan_merges(items, int(cfg.get("OUTLINE_MERGE_MIN_CHARS", 500)), int(cfg.get("OUTLINE_MERGE_MAX_CHARS", 12000)))
     by_pk = {m.pk: m for m in modules}
     chapters = {m.chapter_id: m.chapter for m in modules}
+    absorbed = {source for source, _, _ in merges}
+    # A home is only worth creating when something folds into it or it was a
+    # box itself; otherwise the module stays as it was.
+    homes = {pk: h for pk, h in homes.items() if pk not in absorbed and (
+        any(target == pk for _, target, _ in merges) or is_box_title(by_pk[pk].title))}
+    for pk, home in homes.items():
+        report["adopted"].append({"heading": home["title"], "module": by_pk[pk].title})
+
+    def new_title(pk):
+        return homes[pk]["title"] if pk in homes else tidy_heading_title(by_pk[pk].title)
+
     for source, target, mode in merges:
-        report["merged"].append({"title": by_pk[source].title, "into": by_pk[target].title, "position": mode})
+        report["merged"].append({"title": tidy_heading_title(by_pk[source].title), "into": new_title(target), "position": mode})
+    renames = []
     if titles:
-        for obj in list(chapters.values()) + modules:
-            tidy = tidy_heading_title(obj.title)
-            if tidy and tidy != obj.title:
-                report["renamed"].append({"from": obj.title, "to": tidy})
-    if dry_run or not (merges or report["renamed"]):
+        for m in modules:
+            if m.pk in absorbed:
+                continue
+            tidy = new_title(m.pk)
+            if tidy and tidy != m.title:
+                same_chapter = m.chapter.title == m.title and m.chapter.modules.count() == 1
+                renames.append((m, tidy, same_chapter))
+                report["renamed"].append({"from": m.title, "to": tidy, "kind": "chapter and module" if same_chapter else "module"})
+        for chapter in chapters.values():
+            if any(same and m.chapter_id == chapter.pk for m, _, same in renames):
+                continue
+            if all(m.pk in absorbed for m in modules if m.chapter_id == chapter.pk):
+                continue
+            tidy = tidy_heading_title(chapter.title)
+            if tidy and tidy != chapter.title:
+                renames.append((chapter, tidy, False))
+                report["renamed"].append({"from": chapter.title, "to": tidy, "kind": "chapter"})
+    if dry_run or not (merges or renames or homes):
         return report
 
     changed = {}
     with db_transaction.atomic():
-        if titles:
-            for obj in list(chapters.values()) + modules:
-                tidy = tidy_heading_title(obj.title)
-                if tidy and tidy != obj.title:
-                    obj.title = tidy
-                    obj.save(update_fields=["title", "updated_at"])
+        for pk, home in homes.items():
+            module = by_pk[pk]
+            # The box keeps its own heading inside the section it now opens.
+            module.source_text = _joined("", tidy_heading_title(module.title), module.source_text, "append")
+            if home.get("parents"):
+                module.source_text = "\n\n".join(f"## {p}" for p in home["parents"]) + "\n\n" + module.source_text
+            module.save(update_fields=["source_text", "updated_at"])
+            changed[pk] = module
+        for obj, tidy, same_chapter in renames:
+            obj.title = tidy
+            obj.save(update_fields=["title", "updated_at"])
+            if same_chapter:
+                obj.chapter.title = tidy
+                obj.chapter.save(update_fields=["title", "updated_at"])
+        for pk, home in homes.items():
+            module = by_pk[pk]
+            if module.title != home["title"]:
+                if module.chapter.title == module.title and module.chapter.modules.count() == 1:
+                    module.chapter.title = home["title"]
+                    module.chapter.save(update_fields=["title", "updated_at"])
+                module.title = home["title"]
+                module.save(update_fields=["title", "updated_at"])
         for source, target, mode in merges:
             src, dst = by_pk[source], by_pk[target]
-            dst.source_text = _joined(dst.source_text, src.title, src.source_text, mode)
+            dst.source_text = _joined(dst.source_text, tidy_heading_title(src.title), src.source_text, mode)
             dst.source_heading_index = None
             dst.source_missing = False
             pages = [p for p in (dst.end_page, src.end_page) if p]

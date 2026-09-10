@@ -33,7 +33,9 @@ class _RoleScopedMixin:
             qs = qs.annotate(active_subject_count=Count("subject_links", filter=Q(subject_links__status=AssignmentStatus.ACTIVE)))
         if self.role == Role.STUDENT:
             qs = qs.annotate(active_enrollment_count=Count("enrollments", filter=Q(enrollments__status=EnrollmentStatus.ACTIVE)))
-        return qs
+        # Counting joins drop the model's default ordering, and a paged list
+        # with no order can repeat or skip people between pages.
+        return qs.order_by("full_name", "email", "id")
 
 
 class UserListCreateView(_RoleScopedMixin, ListAPIView):

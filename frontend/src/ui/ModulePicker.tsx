@@ -39,7 +39,7 @@ export function ModulePicker({ value, onChange, subjectId, onSubjectChange, disa
   useEffect(() => { if (subjectId && subjectId !== subject) setSubject(subjectId); }, [subjectId, subject]);
 
   const chosen = useMemo(() => new Set(value), [value]);
-  const chapters = outline.data?.chapters ?? [];
+  const chapters = useMemo(() => outline.data?.chapters ?? [], [outline.data]);
   const chapterCount = useMemo(() => {
     const names = new Set<string>();
     chapters.forEach((c) => c.modules.forEach((m) => { if (m.id && chosen.has(m.id)) names.add(c.id ?? c.title); }));

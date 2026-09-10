@@ -21,6 +21,7 @@ class ApplicationSession(TimeStampedUUIDModel):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
     class Meta:
+        db_table = "login_sessions"
         ordering = ["-login_at"]
         indexes = [models.Index(fields=["user", "logout_at"])]
 
@@ -45,4 +46,5 @@ class ActivityEvent(TimeStampedUUIDModel):
     occurred_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
+        db_table = "time_spent"
         indexes = [models.Index(fields=["user", "kind", "occurred_at"])]

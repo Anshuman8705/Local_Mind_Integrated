@@ -71,6 +71,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = ["full_name"]
 
     class Meta:
+        db_table = "users"
         ordering = ["full_name", "email"]
 
     def __str__(self):
@@ -112,6 +113,9 @@ class FacultyProfile(models.Model):
     def __str__(self):
         return f"Faculty profile for {self.user.email}"
 
+    class Meta:
+        db_table = "faculty_profiles"
+
 
 class StudentProfile(models.Model):
     user = models.OneToOneField(User, primary_key=True, on_delete=models.CASCADE, related_name="student_profile")
@@ -122,3 +126,6 @@ class StudentProfile(models.Model):
 
     def __str__(self):
         return f"Student profile for {self.user.email}"
+
+    class Meta:
+        db_table = "student_profiles"

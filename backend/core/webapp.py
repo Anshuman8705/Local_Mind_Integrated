@@ -27,7 +27,10 @@ def _resolve(path: str) -> Path | None:
 
 @csrf_exempt
 def webapp(request, path=""):
-    if path.startswith(("api/", "admin/", "media/", "static/")):
+    # Server-side paths never fall through to the app. /admin/ is not one of
+    # them: it is the administrator portal, a client-side route.
+    reserved = ("api/", "media/", "static/") + ((settings.DJANGO_ADMIN_URL,) if settings.DJANGO_ADMIN_URL else ())
+    if path.startswith(reserved):
         raise Http404
     target = _resolve(path)
     if target is not None:

@@ -214,3 +214,90 @@ class DotenvParsingTests(TestCase):
         self.assertEqual(_clean_value("pa#ss"), "pa#ss")
         self.assertEqual(_clean_value('"has # inside"'), "has # inside")
         self.assertEqual(_clean_value("  60  "), "60")
+
+
+class AdminPortalReloadTests(TestCase):
+    """Reloading /admin/users in the browser used to open Django's admin site,
+    because Django claimed /admin/ before the web client's catch-all."""
+
+    def _with_web_build(self, **extra):
+        import importlib
+        import tempfile
+        from pathlib import Path
+
+        from django.urls import clear_url_caches
+
+        import config.urls
+
+        tmp = tempfile.TemporaryDirectory()
+        dist = Path(tmp.name)
+        (dist / "index.html").write_text("<html>LocalMind app</html>")
+        overrides = _override_settings(SERVE_WEB=True, WEB_DIST=dist, **extra)
+        overrides.enable()
+        clear_url_caches()
+        importlib.reload(config.urls)
+
+        def undo():
+            overrides.disable()
+            clear_url_caches()
+            importlib.reload(config.urls)
+            tmp.cleanup()
+        self.addCleanup(undo)
+
+    def test_reloading_an_administrator_portal_page_loads_the_app(self):
+        self._with_web_build()
+        for path in ("/admin", "/admin/", "/admin/users", "/admin/user/new", "/admin/monitoring"):
+            res = self.client.get(path)
+            self.assertEqual(res.status_code, 200, path)
+            self.assertIn(b"LocalMind app", b"".join(res.streaming_content) if res.streaming else res.content, path)
+
+    def test_django_admin_site_moved_to_its_own_path(self):
+        self._with_web_build()
+        res = self.client.get("/django-admin/")
+        self.assertEqual(res.status_code, 302)
+        self.assertIn("/django-admin/login/", res["Location"])
+
+    def test_django_admin_site_can_be_switched_off(self):
+        self._with_web_build(DJANGO_ADMIN_URL="")
+        res = self.client.get("/django-admin/")
+        self.assertEqual(res.status_code, 200)  # just the app now
+
+
+
+class PagedListsHaveAFixedOrderTests(TestCase):
+    """A paged list without an ORDER BY can show the same row on two pages and
+    skip another. Django warns about it; every list must stay silent."""
+
+    def test_no_paged_list_is_unordered(self):
+        import warnings
+
+        from django.core.paginator import UnorderedObjectListWarning
+        from django.urls import URLPattern, URLResolver, get_resolver
+
+        from core.testing import assign, client_for, enroll, make_admin, make_faculty, make_published_document, make_student, make_subject
+
+        admin, faculty, student = make_admin(), make_faculty(), make_student()
+        subject = make_subject(code="ORDER")
+        assign(faculty, subject)
+        enroll(student, subject)
+        make_published_document(subject, modules=(("M1", "Text. " * 50),))
+        clients = {"api/admin/": client_for(admin), "api/faculty/": client_for(faculty), "api/student/": client_for(student)}
+        paths = []
+
+        def walk(patterns, prefix=""):
+            for p in patterns:
+                if isinstance(p, URLResolver):
+                    walk(p.url_patterns, prefix + str(p.pattern))
+                elif isinstance(p, URLPattern) and "<" not in prefix + str(p.pattern):
+                    paths.append(prefix + str(p.pattern))
+        walk(get_resolver().url_patterns)
+        unordered = []
+        for path in paths:
+            for root, client in clients.items():
+                if path.startswith(root):
+                    with warnings.catch_warnings(record=True) as caught:
+                        warnings.simplefilter("always")
+                        client.get("/" + path)
+                    if any(issubclass(w.category, UnorderedObjectListWarning) for w in caught):
+                        unordered.append(path)
+        self.assertEqual(unordered, [])

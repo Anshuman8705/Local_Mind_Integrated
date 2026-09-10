@@ -1,6 +1,5 @@
 from django.conf import settings
 from django.db import models
-from django.db.models import Q
 
 from accounts.models import Role
 from core.models import TimeStampedUUIDModel
@@ -55,6 +54,7 @@ class Subject(TimeStampedUUIDModel):
     objects = SubjectQuerySet.as_manager()
 
     class Meta:
+        db_table = "subjects"
         ordering = ["code"]
 
     def __str__(self):
@@ -77,6 +77,7 @@ class FacultySubject(TimeStampedUUIDModel):
     discontinued_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "faculty_subjects"
         constraints = [models.UniqueConstraint(fields=["faculty", "subject"], name="uniq_faculty_subject")]
         ordering = ["subject__code"]
 
@@ -95,6 +96,7 @@ class Enrollment(TimeStampedUUIDModel):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
+        db_table = "student_enrollments"
         constraints = [models.UniqueConstraint(fields=["student", "subject"], name="uniq_student_subject")]
         ordering = ["subject__code", "student__full_name"]
 

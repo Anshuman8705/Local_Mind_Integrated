@@ -84,7 +84,7 @@ See `frontend/README.md` and `docs/FRONTEND.md`.
 | `docs/history/MIGRATION.md` | Relationship to the reference codebase and what changed |
 | `docs/FRONTEND_INTEGRATION.md` | What a client must do: login, token handling, sessions, per-role screens |
 | `docs/FRONTEND.md` | The Expo client: every screen and the endpoints behind it |
-| `backend/openapi.yaml` | Generated OpenAPI 3 schema (186 operations) |
+| `backend/openapi.yaml` | Generated OpenAPI 3 schema (150 operations; regenerate with `python manage.py spectacular --file openapi.yaml`) |
 | `backend/samples/` | Excel import templates for faculty and students |
 
 ## Repository layout

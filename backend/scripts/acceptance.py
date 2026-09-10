@@ -67,4 +67,4 @@ s,d=call("GET",f"/faculty/quizzes/{quiz['id']}/attempts/",tok=tok); print("facul
 s,d=call("GET",f"/faculty/assignments/{a['id']}/submissions/",tok=tok); sub=L(d)[0]
 s,d=call("POST",f"/faculty/assignment-submissions/{sub['id']}/evaluate/",{"score":8,"feedback":"Good."},tok=tok); print("evaluate",s,d.get("status") or d)
 s,d=call("GET",f"/faculty/analytics/subjects/{os_id}/students/",tok=tok); r=d["students"][0]; print("cohort row",s,r["quiz_average"],r["learning_seconds"],r["assignment_average"])
-s,d=call("GET",f"/admin/analytics/users/{r['student_id']}/sessions/",tok=atok); print("admin session log",s,d["sessions"][0]["ended_by"],d["sessions"][0]["duration_seconds"])
+s,d=call("GET",f"/faculty/analytics/users/{r['student_id']}/sessions/",tok=atok); print("admin session log",s,d["sessions"][0]["ended_by"],d["sessions"][0]["duration_seconds"])

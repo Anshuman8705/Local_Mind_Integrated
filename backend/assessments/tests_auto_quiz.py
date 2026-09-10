@@ -233,3 +233,18 @@ class AutoQuizEditingTests(Base):
         self.assertIn(res.status_code, (200, 201), res.content)
         self.assertEqual(Assessment.objects.get(pk=quiz.pk).status, "superseded")
         self.assertEqual(Assessment.objects.get(pk=res.data["id"]).questions[0]["question"], questions[0]["question"])
+
+
+class OfflineQuizEntriesMatchTheViewTests(Base):
+    def test_every_per_module_quiz_entry_is_what_the_view_returns(self):
+        mcq = {"type": "mcq", "question": "Where does photosynthesis happen?", "options": [{"key": k, "text": t} for k, t in zip("ABCD", ["Chloroplasts", "Roots", "Stem", "Bark"])], "correct_answer": "A"}
+        for module in (self.m1, self.m1):
+            q = self.fc.post("/api/faculty/quizzes/", {"module_id": str(module.id), "questions": [mcq]}, format="json").data
+            self.fc.post(f"/api/faculty/quizzes/{q['id']}/status/", {"status": "published"}, format="json")
+        chapter_quiz = self.fc.post("/api/faculty/quizzes/", {"chapter_id": str(self.m1.chapter_id), "questions": [mcq]}, format="json").data
+        self.fc.post(f"/api/faculty/quizzes/{chapter_quiz['id']}/status/", {"status": "published"}, format="json")
+        entries = self.sc.get("/api/student/offline/").data["entries"]
+        for module in (self.m1, self.m2):
+            key = f"/student/quizzes/?module={module.id}"
+            self.assertEqual(entries[key], self.sc.get("/api/student/quizzes/", {"module": str(module.id)}).data, key)
+        self.assertEqual(len(entries[f"/student/quizzes/?module={self.m1.id}"]), 2)

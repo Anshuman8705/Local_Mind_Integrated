@@ -17,7 +17,7 @@ class Assignment(TimeStampedUUIDModel):
     module = models.ForeignKey("learning.Module", null=True, blank=True, on_delete=models.PROTECT, related_name="assignments")
     # Every module the brief and rubric were drafted from, when the faculty
     # member chose a set rather than one module or a whole chapter.
-    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assignments")
+    source_modules = models.ManyToManyField("learning.Module", blank=True, related_name="sourced_assignments", db_table="assignment_modules")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
@@ -38,6 +38,7 @@ class Assignment(TimeStampedUUIDModel):
     results_released_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
 
     class Meta:
+        db_table = "assignments"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["subject", "status"])]
 
@@ -68,6 +69,7 @@ class AssignmentSubmission(TimeStampedUUIDModel):
     results_released_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+        db_table = "assignment_submissions"
         ordering = ["-submitted_at"]
         constraints = [models.UniqueConstraint(fields=["assignment", "student", "attempt_number"], name="uniq_submission_attempt")]
 

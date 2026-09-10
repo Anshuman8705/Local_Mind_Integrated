@@ -69,7 +69,7 @@ Discontinue or reactivate any user with `POST /api/admin/{faculty|students}/{id}
 
 Review everything that changed with `GET /api/admin/audit-logs/?action=&target_type=&target_id=&actor=&actor_email=&since=&until=`.
 
-Platform-wide numbers are at `GET /api/admin/analytics/platform/` and `.../platform/subjects/`. Every faculty analytics endpoint is also available under `/api/admin/` with the same shape, unscoped.
+Platform-wide numbers are at `GET /api/admin/analytics/platform/` and `.../platform/subjects/`. Administrators use the faculty analytics endpoints themselves (`/api/faculty/analytics/...`), unscoped. Books, chapters, modules, quizzes, assignments and their analytics have one set of routes, under `/api/faculty/`, which both roles use; they are not repeated under `/api/admin/`.
 
 ## Faculty workflow
 

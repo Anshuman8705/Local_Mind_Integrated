@@ -2,7 +2,44 @@
 
 Every application table extends `TimeStampedUUIDModel`: a UUID primary key `id`, and `created_at` / `updated_at` timestamps. Those three columns are omitted from the field lists below. Foreign keys are named for the model they reference; the column in the database is `<name>_id`. `PROTECT` means the referenced row cannot be deleted while this row exists; `SET_NULL` means the link is cleared; `CASCADE` means this row is deleted with its parent. Deletion is rare in practice because almost everything uses a status column instead.
 
-The schema is identical on SQLite and PostgreSQL. JSON columns are `JSONField`, which maps to `jsonb` on PostgreSQL. Migrations for all thirteen apps are committed; `python manage.py migrate` creates 31 tables (including Django's auth, sessions, content types and the JWT blacklist).
+The schema is identical on SQLite and PostgreSQL. JSON columns are `JSONField`, which maps to `jsonb` on PostgreSQL. Migrations for every app are committed; `python manage.py migrate` creates 39 tables.
+
+## Table names
+
+Every LocalMind table has a short name that says what it holds (set with `Meta.db_table`; migrations `*_short_table_names` renamed the old `app_model` names). The code still uses the model names in the last column.
+
+| Table | What each row is | Model (old table name) |
+|---|---|---|
+| `users` | A person who can sign in: administrator, faculty member or student, with role and status | `accounts.User` (`accounts_user`) |
+| `faculty_profiles` | Extra details of a faculty member: employee id, department, designation, phone | `accounts.FacultyProfile` (`accounts_facultyprofile`) |
+| `student_profiles` | Extra details of a student: roll number, programme, batch, phone | `accounts.StudentProfile` (`accounts_studentprofile`) |
+| `subjects` | A course, e.g. "Class 10 Science" | `academics.Subject` (`academics_subject`) |
+| `faculty_subjects` | Which faculty member teaches which subject | `academics.FacultySubject` (`academics_facultysubject`) |
+| `student_enrollments` | Which student is enrolled in which subject | `academics.Enrollment` (`academics_enrollment`) |
+| `books` | An uploaded book or document of a subject, with processing and publishing status | `documents.Document` (`documents_document`) |
+| `chapters` | A chapter of a book | `learning.Chapter` (`learning_chapter`) |
+| `modules` | A section of a chapter that students read, are tutored on and quizzed on, with its text | `learning.Module` (`learning_module`) |
+| `module_text_chunks` | A module's text cut into searchable pieces for the tutor | `documents.DocumentChunk` (`documents_documentchunk`) |
+| `module_lessons` | The generated lesson of a module and its generation status | `tutor.ModuleLesson` (`tutor_modulelesson`) |
+| `module_progress` | How far one student has got in one module | `learning.ModuleProgress` (`learning_moduleprogress`) |
+| `quizzes` | A quiz with its questions and answers, written by hand or by the AI | `assessments.Assessment` (`assessments_assessment`) |
+| `quiz_modules` | Which modules a multi-module quiz was written from | `Assessment.source_modules` (`assessments_assessment_source_modules`) |
+| `quiz_attempts` | One student's attempt at a quiz: answers, score, result | `assessments.AssessmentAttempt` (`assessments_assessmentattempt`) |
+| `auto_quiz_jobs` | The background job that writes a module's automatic quiz | `assessments.AutoQuizJob` (`assessments_autoquizjob`) |
+| `assignments` | A written assignment with its rubric | `assignments.Assignment` (`assignments_assignment`) |
+| `assignment_modules` | Which modules a multi-module assignment was written from | `Assignment.source_modules` (`assignments_assignment_source_modules`) |
+| `assignment_submissions` | One student's submission and its marks | `assignments.AssignmentSubmission` (`assignments_assignmentsubmission`) |
+| `tutor_conversations` | A student's chat with the tutor about a module | `tutor.Conversation` (`tutor_conversation`) |
+| `tutor_messages` | One question or answer in a tutor chat | `tutor.Message` (`tutor_message`) |
+| `login_sessions` | One sign-in, from login to logout or timeout | `activity.ApplicationSession` (`activity_applicationsession`) |
+| `time_spent` | Seconds a user spent learning, on a quiz, an assignment or the tutor | `activity.ActivityEvent` (`activity_activityevent`) |
+| `audit_log` | Who did what to which record, and when | `audit.AuditLog` (`audit_auditlog`) |
+| `ai_checks` | The AI monitor's check of one tutor answer or AI-written quiz | `ai_monitor.Evaluation` (`ai_monitor_evaluation`) |
+| `ai_incidents` | A problem the AI monitor found, and its review | `ai_monitor.Incident` (`ai_monitor_incident`) |
+| `ai_incident_rules` | When a check becomes an incident, per kind of problem | `ai_monitor.Policy` (`ai_monitor_policy`) |
+| `ai_check_feedback` | A reviewer's verdict on a check (correct, false positive...) | `ai_monitor.Feedback` (`ai_monitor_feedback`) |
+
+Tables that belong to Django and its libraries keep their standard names, because those libraries look them up by name: `auth_permission`, `auth_group`, `auth_group_permissions`, `users_groups`, `users_user_permissions` (permission groups, unused by LocalMind), `django_content_type`, `django_admin_log`, `django_session` (Django's admin site), `django_migrations` (which migrations ran), `token_blacklist_outstandingtoken` and `token_blacklist_blacklistedtoken` (sign-in tokens issued and revoked).
 
 ## Entity relationships
 
@@ -25,7 +62,7 @@ User 1──* AuditLog (actor)
 
 ## accounts
 
-### accounts_user
+### users
 
 Custom user model (`AUTH_USER_MODEL = accounts.User`), email login, no username.
 
@@ -42,13 +79,13 @@ Custom user model (`AUTH_USER_MODEL = accounts.User`), email login, no username.
 | organization_key | varchar | reserved for multi-tenant partitioning; empty today |
 | password, last_login, is_superuser, groups, user_permissions | | Django internals; `is_active` and `is_staff` are properties derived from `status` and `role` |
 
-### accounts_facultyprofile and accounts_studentprofile
+### faculty_profiles and student_profiles
 
 One-to-one with `User` (primary key is `user_id`). Faculty: `employee_id`, `department`, `designation`, `phone`. Student: `roll_number`, `program`, `batch`, `phone`. All optional strings.
 
 ## academics
 
-### academics_subject
+### subjects
 
 | Field | Type | Notes |
 |---|---|---|
@@ -60,23 +97,23 @@ One-to-one with `User` (primary key is `user_id`). Faculty: `employee_id`, `depa
 | discontinued_at, archived_at | datetime, null | |
 | organization_key | varchar | reserved |
 
-### academics_facultysubject
+### faculty_subjects
 
 Unique on (`faculty`, `subject`). `faculty` FK User CASCADE, `subject` FK Subject CASCADE, `status` (`active`, `discontinued`), `assigned_by` FK User SET_NULL, `assigned_at`, `discontinued_at`. Re-assigning reuses the row and sets it active again.
 
-### academics_enrollment
+### student_enrollments
 
 Unique on (`student`, `subject`). `student` FK User CASCADE, `subject` FK Subject CASCADE, `status` (`active`, `discontinued`, `completed`), `enrolled_at`, `discontinued_at`, `completed_at`, `created_by` FK User SET_NULL.
 
 ## audit
 
-### audit_auditlog
+### audit_log
 
 `actor` FK User SET_NULL plus snapshotted `actor_email` and `actor_role` so the row stays meaningful if the user changes; `action` (dotted verb such as `document.publish`), `target_type`, `target_id`, `target_label`, `summary` JSON with password and token keys scrubbed, `ip_address`. Indexed on (`action`, `created_at`) and (`target_type`, `target_id`).
 
 ## documents
 
-### documents_document
+### books
 
 | Field | Type | Notes |
 |---|---|---|
@@ -102,21 +139,21 @@ Indexed on (`subject`, `status`).
 
 ## learning
 
-### learning_chapter
+### chapters
 
 `document` FK Document CASCADE, `title`, `order` (unique per document), `source_heading_index` (null when user-created), `source_text`, `start_page`, `end_page`, `is_user_edited`.
 
-### learning_module
+### modules
 
 `chapter` FK Chapter CASCADE, `title`, `order` (unique per chapter), `source_heading_index`, `source_text`, `source_missing` (true only for a textless module kept because student work refers to it; hidden from students; every other textless module is removed), `start_page`, `end_page`, `is_user_edited`, `availability` (`locked`, `open`; indexed), `opened_by` FK User SET_NULL, `opened_at`.
 
-### learning_moduleprogress
+### module_progress
 
 Unique on (`student`, `module`). `status` (`not_started`, `in_progress`, `completed`, `needs_review`), `started_at`, `completed_at`, `last_viewed_at`, `best_quiz_percentage` float null, `quiz_attempts` int, `learning_seconds` int, `overridden_by` FK User SET_NULL (set when faculty change the status by hand).
 
 ## assessments
 
-### assessments_assessment
+### quizzes
 
 | Field | Type | Notes |
 |---|---|---|
@@ -138,37 +175,37 @@ Unique on (`student`, `module`). `status` (`not_started`, `in_progress`, `comple
 | published_at, closed_at | datetime, null | |
 | content_version_at_creation | int | the document's content_version when questions were generated |
 
-### assessments_assessmentattempt
+### quiz_attempts
 
 Unique on (`assessment`, `student`, `attempt_number`). `assessment` FK PROTECT (an assessment with attempts is never deleted, only superseded or closed), `student` FK CASCADE, `status` (`in_progress`, `submitted`, `pending_evaluation`, `evaluated`), `started_at`, `submitted_at`, `time_taken_seconds` (server computed), `submitted_answers` JSON, `score` float, `total_questions`, `percentage` float, `passed` bool null, `detailed_results` JSON (per question: correct, awarded, feedback), `evaluation_notes` JSON (AI or faculty notes), `evaluated_by` FK User SET_NULL, `evaluated_at`. Rows are never updated after evaluation except through faculty re-evaluation, which is audited.
 
 ## assignments
 
-### assignments_assignment
+### assignments
 
 `subject` FK PROTECT, optional `chapter` and `module` FK PROTECT, `created_by`, `title`, `description`, `instructions`, `rubric` JSON `[{"criterion", "points"}]` summing to `max_score`, `max_score` smallint, `generator`, `status` (`draft`, `published`, `closed`), `available_from`, `due_at`, `allow_late`, `allow_resubmission`, `published_at`, `closed_at`. Indexed on (`subject`, `status`).
 
-### assignments_assignmentsubmission
+### assignment_submissions
 
 Unique on (`assignment`, `student`, `attempt_number`). `content` text, `submitted_at`, `is_late`, `time_spent_seconds` (client-reported, clamped), `status` (`submitted`, `evaluated`, `returned`), `score` float null, `feedback`, `rubric_scores` JSON, `evaluated_by`, `evaluated_at`.
 
 ## tutor
 
-### tutor_modulelesson
+### module_lessons
 
 One row per module (`module` one-to-one, CASCADE), and the row is also the background job: `status` (`pending`, `generating`, `ready`, `failed`; indexed with `next_attempt_at`), `source_hash` (SHA-256 of the module text the lesson is for), `lesson` JSON (null until ready), `generator`, `model_name`, `attempts`, `last_error`, `requested_at`, `claimed_at`, `generated_at`, `next_attempt_at`, `version` (bumped on every state change; workers claim and finish with conditional updates on it). Shared across students because it depends only on source text.
 
-### tutor_conversation and tutor_message
+### tutor_conversations and tutor_messages
 
 A conversation belongs to one student and one module (`title`, `last_message_at`; indexed on student and module). Messages: `role` (`user`, `assistant`), `content`, `grounded` bool, `source_reference`, `model_name`, `latency_ms`. Ordered by `created_at`.
 
 ## activity
 
-### activity_applicationsession
+### login_sessions
 
 `user` FK CASCADE, `login_at`, `last_heartbeat_at`, `logout_at` null, `ended_by` (`logout`, `timeout`, `relogin`), `duration_seconds` (server computed when closed), `user_agent`, `ip_address`. Indexed on (`user`, `logout_at`).
 
-### activity_activityevent
+### time_spent
 
 `user` FK CASCADE, `kind` (`learning`, `quiz`, `assignment`, `tutor`; indexed), optional `subject` and `module` FK SET_NULL, `reference_id` (attempt, submission or conversation id as text), `seconds`, `occurred_at` (indexed). Indexed on (`user`, `kind`, `occurred_at`).
 
@@ -176,19 +213,19 @@ A conversation belongs to one student and one module (`title`, `last_message_at`
 
 The AI Monitoring & Guard tables. They point at the rows they judge with `SET_NULL` links so deleting a conversation or a quiz keeps the monitoring history.
 
-### ai_monitor_evaluation
+### ai_checks
 
 One row per (`interaction_kind`, `interaction_id`, `evaluator_version`), unique. `interaction_kind` is `tutor_answer` or `quiz`; `message` FK `tutor.Message` and `assessment` FK `assessments.Assessment` (SET_NULL); `user` (the student who asked or the faculty member who generated), `subject`, `module` (SET_NULL); `app_model_name` (indexed). Bounded excerpts `prompt_excerpt` and `response_excerpt` (4,000 characters), `evidence_json` (list of `{kind, ref, id?, text, truncated?}` passages), `validators_json` (list of `{name, passed, issue_type, severity, confidence, detail, evidence}`). Judge fields: `judge_invoked`, `judge_reason` (`suspicious`, `undecided`, `sampled`, `forced`), `judge_json` (normalised verdict), `judge_model`, `judge_latency_ms`, `judge_error`. Decision: `verdict` (`pass`, `issue`, `abstain`), `issue_type`, `severity` (`low` to `critical`), `confidence` (0 to 1), `reason`, `recommended_action`, `stage` (`done`, `failed`), `error`, `duration_ms`. Indexed on (`verdict`, `severity`), (`subject`, `created_at`), (`app_model_name`, `created_at`).
 
-### ai_monitor_incident
+### ai_incidents
 
 `evaluation` one-to-one CASCADE; `user`, `subject`, `assigned_to`, `resolved_by` FK SET_NULL; `issue_type`, `severity` (copied from the evaluation, possibly bumped by recurrence); `status` (`open`, `confirmed`, `false_positive`, `needs_investigation`, `escalated`, `closed`); `reviewer_note`; `recurrence` (same-type incidents on the same module in the previous seven days at creation); `resolved_at`. Indexed on (`status`, `severity`) and (`subject`, `status`).
 
-### ai_monitor_policy
+### ai_incident_rules
 
 One row per `issue_type` (unique): `enabled`, `min_confidence`, `min_severity`, `description`, `version` (bumped on every edit), `updated_by`. Defaults are created on first use from `ai_monitor.models.DEFAULT_POLICIES`.
 
-### ai_monitor_feedback
+### ai_check_feedback
 
 `evaluation` FK CASCADE, `incident` FK SET_NULL, `reviewer` FK SET_NULL, `label` (`correct`, `false_positive`, `needs_investigation`; indexed), `note`. The false-positive rate and high-severity precision on the admin overview are computed from these rows.
 

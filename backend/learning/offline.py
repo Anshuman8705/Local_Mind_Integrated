@@ -62,6 +62,10 @@ class StudentOfflineBundleView(APIView):
         return getattr(response, "data", None)
 
     def get(self, request):
+        with services.settle_once():
+            return self._build(request)
+
+    def _build(self, request):
         entries = {}
 
         def put(path, query=None):
@@ -72,7 +76,7 @@ class StudentOfflineBundleView(APIView):
 
         student = request.user
         put("/student/subjects/")
-        put("/student/quizzes/")
+        all_quizzes = put("/student/quizzes/") or []
         put("/student/scores/")
         put("/student/assignments/")
         put("/student/analytics/overview/")
@@ -86,7 +90,11 @@ class StudentOfflineBundleView(APIView):
             document_ids.add(module.chapter.document_id)
             put(f"/student/modules/{module.id}/")
             put(f"/student/modules/{module.id}/teach/")
-            put("/student/quizzes/", {"module": str(module.id)})
+            # The module filter of that view is exactly module_id == this
+            # module, so the answer is taken from the full list already built
+            # instead of running the view again for every module.
+            entries[entry_key("/student/quizzes/", {"module": str(module.id)})] = [
+                row for row in all_quizzes if str(row.get("module_id")) == str(module.id)]
             conversations = put("/student/conversations/", {"module": str(module.id)})
             rows = conversations.get("results", conversations) if isinstance(conversations, dict) else conversations
             if rows:

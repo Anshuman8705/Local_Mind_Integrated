@@ -101,102 +101,6 @@ paths:
                     - message
                 required:
                 - error
-  /api/admin/analytics/overview/:
-    get:
-      operationId: get_admin_analytics_overview
-      description: 'Faculty: their subjects. Admin: every non-archived subject, same
-        shape.'
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
   /api/admin/analytics/platform/:
     get:
       operationId: get_admin_analytics_platform
@@ -294,1656 +198,6 @@ paths:
   /api/admin/analytics/platform/subjects/:
     get:
       operationId: get_admin_analytics_platform_subjects
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/students/{student_id}/:
-    get:
-      operationId: get_admin_analytics_students_student_id
-      description: A student's overview as seen by faculty (shared subject required)
-        or admin.
-      parameters:
-      - in: path
-        name: student_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/students/{student_id}/subjects/{subject_id}/:
-    get:
-      operationId: get_admin_analytics_students_student_id_subjects_subject_id
-      parameters:
-      - in: path
-        name: student_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      - in: path
-        name: subject_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/subjects/{subject_id}/:
-    get:
-      operationId: get_admin_analytics_subjects_subject_id
-      parameters:
-      - in: path
-        name: subject_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/subjects/{subject_id}/modules/:
-    get:
-      operationId: get_admin_analytics_subjects_subject_id_modules
-      parameters:
-      - in: path
-        name: subject_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/subjects/{subject_id}/students/:
-    get:
-      operationId: get_admin_analytics_subjects_subject_id_students
-      parameters:
-      - in: path
-        name: subject_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/analytics/users/{user_id}/sessions/:
-    get:
-      operationId: get_admin_analytics_users_user_id_sessions
-      parameters:
-      - in: path
-        name: user_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignment-submissions/{submission_id}/evaluate/:
-    post:
-      operationId: post_admin_assignment_submissions_submission_id_evaluate
-      parameters:
-      - in: path
-        name: submission_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/:
-    get:
-      operationId: get_admin_assignments
-      parameters:
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedAssignmentList'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    post:
-      operationId: post_admin_assignments
-      tags:
-      - admin
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Assignment'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Assignment'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Assignment'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Assignment'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/{assignment_id}/:
-    get:
-      operationId: get_admin_assignments_assignment_id
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    patch:
-      operationId: patch_admin_assignments_assignment_id
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    delete:
-      operationId: delete_admin_assignments_assignment_id
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/{assignment_id}/release-results/:
-    post:
-      operationId: post_admin_assignments_assignment_id_release_results
-      description: 'Release held marks: the whole assignment, or one submission.'
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/{assignment_id}/status/:
-    post:
-      operationId: post_admin_assignments_assignment_id_status
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/{assignment_id}/submissions/:
-    get:
-      operationId: get_admin_assignments_assignment_id_submissions
-      parameters:
-      - in: path
-        name: assignment_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedSubmissionList'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/assignments/generate/:
-    post:
-      operationId: post_admin_assignments_generate
       tags:
       - admin
       security:
@@ -2157,1338 +411,6 @@ paths:
         book records "document.published". Serving the distinct values lets the
         screen offer them as a list, and the list stays correct as new actions are
         recorded without anyone editing the frontend.
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/chapters/{chapter_id}/:
-    patch:
-      operationId: patch_admin_chapters_chapter_id
-      parameters:
-      - in: path
-        name: chapter_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/chapters/{chapter_id}/availability/:
-    post:
-      operationId: post_admin_chapters_chapter_id_availability
-      parameters:
-      - in: path
-        name: chapter_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/:
-    get:
-      operationId: get_admin_documents
-      description: GET lists books the caller manages; POST uploads one to a subject.
-      parameters:
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedDocumentList'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    post:
-      operationId: post_admin_documents
-      description: GET lists books the caller manages; POST uploads one to a subject.
-      tags:
-      - admin
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Document'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Document'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Document'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/:
-    get:
-      operationId: get_admin_documents_document_id
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    delete:
-      operationId: delete_admin_documents_document_id
-      description: Permanent delete. Replaces the old archive action in the workspace.
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/archive/:
-    post:
-      operationId: post_admin_documents_document_id_archive
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/outline/:
-    get:
-      operationId: get_admin_documents_document_id_outline
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    put:
-      operationId: put_admin_documents_document_id_outline
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/process/:
-    post:
-      operationId: post_admin_documents_document_id_process
-      description: |-
-        Returns the document in 'processing' (background) or its final state
-        when processing ran inline; an inline failure is reported as 422.
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/publish/:
-    post:
-      operationId: post_admin_documents_document_id_publish
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/ready/:
-    post:
-      operationId: post_admin_documents_document_id_ready
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/documents/{document_id}/unpublish/:
-    post:
-      operationId: post_admin_documents_document_id_unpublish
-      parameters:
-      - in: path
-        name: document_id
-        schema:
-          type: string
-          format: uuid
-        required: true
       tags:
       - admin
       security:
@@ -4612,308 +1534,6 @@ paths:
         the parser cannot drift apart. The workbook comes back base64-encoded so
         the browser downloads it through the same authenticated request as
         everything else, with no token in a URL.
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/modules/{module_id}/:
-    get:
-      operationId: get_admin_modules_module_id
-      parameters:
-      - in: path
-        name: module_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    patch:
-      operationId: patch_admin_modules_module_id
-      parameters:
-      - in: path
-        name: module_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/modules/{module_id}/availability/:
-    post:
-      operationId: post_admin_modules_module_id_availability
-      parameters:
-      - in: path
-        name: module_id
-        schema:
-          type: string
-          format: uuid
-        required: true
       tags:
       - admin
       security:
@@ -6698,1042 +3318,6 @@ paths:
   /api/admin/monitor/trends/:
     get:
       operationId: get_admin_monitor_trends
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quiz-attempts/{attempt_id}/re-evaluate/:
-    post:
-      operationId: post_admin_quiz_attempts_attempt_id_re_evaluate
-      parameters:
-      - in: path
-        name: attempt_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/:
-    get:
-      operationId: get_admin_quizzes
-      parameters:
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedAssessmentList'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    post:
-      operationId: post_admin_quizzes
-      tags:
-      - admin
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Assessment'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Assessment'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Assessment'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Assessment'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/{quiz_id}/:
-    get:
-      operationId: get_admin_quizzes_quiz_id
-      parameters:
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    patch:
-      operationId: patch_admin_quizzes_quiz_id
-      parameters:
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-    delete:
-      operationId: delete_admin_quizzes_quiz_id
-      parameters:
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/{quiz_id}/attempts/:
-    get:
-      operationId: get_admin_quizzes_quiz_id_attempts
-      parameters:
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedAttemptList'
-          description: ''
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/{quiz_id}/release-results/:
-    post:
-      operationId: post_admin_quizzes_quiz_id_release_results
-      description: 'Release held results: the whole quiz, or one attempt with attempt_id.'
-      parameters:
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/{quiz_id}/status/:
-    post:
-      operationId: post_admin_quizzes_quiz_id_status
-      parameters:
-      - in: path
-        name: quiz_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      tags:
-      - admin
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '401':
-          description: Authentication required
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: object
-                    properties:
-                      code:
-                        type: string
-                      message:
-                        type: string
-                      details:
-                        type: object
-                    required:
-                    - code
-                    - message
-                required:
-                - error
-  /api/admin/quizzes/generate/:
-    post:
-      operationId: post_admin_quizzes_generate
       tags:
       - admin
       security:
@@ -13342,6 +8926,213 @@ paths:
                     - message
                 required:
                 - error
+  /api/faculty/documents/{document_id}/auto-quizzes/:
+    post:
+      operationId: post_faculty_documents_document_id_auto_quizzes
+      description: 'POST: queue automatic quizzes for every module of a book that
+        lacks one.'
+      parameters:
+      - in: path
+        name: document_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+  /api/faculty/documents/{document_id}/lessons/:
+    post:
+      operationId: post_faculty_documents_document_id_lessons
+      description: |-
+        POST: queue lessons for every module of a book that lacks a current one
+        (``{"force": true}`` regenerates all of them). Returns the book's counts.
+      parameters:
+      - in: path
+        name: document_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
   /api/faculty/documents/{document_id}/outline/:
     get:
       operationId: get_faculty_documents_document_id_outline
@@ -14151,9 +9942,319 @@ paths:
                     - message
                 required:
                 - error
+  /api/faculty/modules/{module_id}/auto-quiz/:
+    post:
+      operationId: post_faculty_modules_module_id_auto_quiz
+      description: 'POST: write the module''s automatic quiz again (queued in the
+        background).'
+      parameters:
+      - in: path
+        name: module_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
   /api/faculty/modules/{module_id}/availability/:
     post:
       operationId: post_faculty_modules_module_id_availability
+      parameters:
+      - in: path
+        name: module_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+  /api/faculty/modules/{module_id}/lesson/:
+    get:
+      operationId: get_faculty_modules_module_id_lesson
+      description: |-
+        GET: the module's lesson and where it is in the queue, for faculty to
+        preview. POST: generate it again (for example after a poor result).
+      parameters:
+      - in: path
+        name: module_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+    post:
+      operationId: post_faculty_modules_module_id_lesson
+      description: |-
+        GET: the module's lesson and where it is in the queue, for faculty to
+        preview. POST: generate it again (for example after a poor result).
       parameters:
       - in: path
         name: module_id
@@ -16617,6 +12718,7 @@ paths:
       tags:
       - health
       security:
+      - jwtAuth: []
       - {}
       responses:
         '200':
@@ -17896,8 +13998,124 @@ paths:
                 required:
                 - error
   /api/student/modules/{module_id}/teach/:
+    get:
+      operationId: get_student_modules_module_id_teach
+      description: |-
+        The stored lesson for a module. ``status`` is ready (``lesson`` is the
+        tutor's lesson), preparing (``lesson`` is null; ask again shortly) or
+        unavailable (``lesson`` is a plain lesson built from the source text).
+        Current clients GET. POST is what clients built before background
+        lessons send, and it always carries a lesson (a plain one from the text
+        while the tutor's is being prepared), because those clients cannot
+        handle a null lesson and installed phone apps cannot be updated at once.
+      parameters:
+      - in: path
+        name: module_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - student
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
     post:
       operationId: post_student_modules_module_id_teach
+      description: |-
+        The stored lesson for a module. ``status`` is ready (``lesson`` is the
+        tutor's lesson), preparing (``lesson`` is null; ask again shortly) or
+        unavailable (``lesson`` is a plain lesson built from the source text).
+        Current clients GET. POST is what clients built before background
+        lessons send, and it always carries a lesson (a plain one from the text
+        while the tutor's is being prepared), because those clients cannot
+        handle a null lesson and installed phone apps cannot be updated at once.
       parameters:
       - in: path
         name: module_id
@@ -18006,6 +14224,100 @@ paths:
           type: string
           format: uuid
         required: true
+      tags:
+      - student
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+  /api/student/offline/:
+    get:
+      operationId: get_student_offline
       tags:
       - student
       security:
@@ -19053,11 +15365,31 @@ components:
         pending_release_count:
           type: integer
           readOnly: true
+        auto_generated:
+          type: boolean
+        checked_at:
+          type: string
+          format: date-time
+          nullable: true
+        held_for_review:
+          type: boolean
+        hold_reason:
+          type: string
+          maxLength: 300
+        hold_incident_id:
+          type: string
+          nullable: true
+          description: |-
+            The AI monitor incident a held automatic quiz is waiting on, so the
+            quiz screen can release it as a false alarm. Only looked up for held
+            quizzes.
+          readOnly: true
       required:
       - attempt_count
       - chapter_id
       - created_at
       - created_by_name
+      - hold_incident_id
       - id
       - kind
       - module_id

@@ -37,8 +37,10 @@ class Command(BaseCommand):
             raise CommandError("No such document.")
         report = tidy_existing_document(document, dry_run=opts["dry_run"], titles=not opts["keep_titles"])
         verb = "would" if opts["dry_run"] else "did"
+        for row in report.get("adopted", []):
+            self.stdout.write(f"new section home: {row['module']!r} becomes {row['heading']!r} (its heading had no text of its own)")
         for row in report["renamed"]:
-            self.stdout.write(f"rename: {row['from']!r} -> {row['to']!r}")
+            self.stdout.write(f"rename {row.get('kind', 'title')}: {row['from']!r} -> {row['to']!r}")
         for row in report["merged"]:
             where = "into the start of" if row["position"] == "prepend" else "into the end of"
             self.stdout.write(f"merge: {row['title']!r} {where} {row['into']!r}")

@@ -26,7 +26,10 @@ class QuizListCreateView(ListAPIView):
         for key in ("subject", "module", "chapter", "status", "kind"):
             if p.get(key):
                 qs = qs.filter(**{f"{key}_id" if key in ("subject", "module", "chapter") else key: p[key]})
-        return qs
+        # Counted in the list query rather than twice more per quiz; the
+        # serializer uses these when present.
+        return (svc.with_list_counts(qs).prefetch_related("source_modules")
+                .order_by("-created_at", "id"))
 
     def post(self, request):
         s = CreateManualSerializer(data=request.data)

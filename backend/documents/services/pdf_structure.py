@@ -228,23 +228,19 @@ def _demote_repeated_headings(lines: list[_Line]) -> None:
 def _render(lines: list[_Line], page_count: int) -> str:
     out: list[str] = []
     current_page = 1
-    previous_was_heading = False
     for line in lines:
         while line.page > current_page:
             out.append("")
             out.append(PAGE_BREAK_MARKER)
             out.append("")
             current_page += 1
-            previous_was_heading = False
         if line.level:
             if out and out[-1] != "":
                 out.append("")
             out.append(f"{'#' * line.level} {line.text}")
             out.append("")
-            previous_was_heading = True
         else:
             out.append(line.text)
-            previous_was_heading = False
     while current_page < page_count:
         out.append("")
         out.append(PAGE_BREAK_MARKER)

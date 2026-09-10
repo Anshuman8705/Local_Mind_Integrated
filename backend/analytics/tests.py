@@ -96,7 +96,7 @@ class FacultyAnalyticsTests(Base):
         self.assertEqual(d["modules"]["completion_percentage"], 0.0)
         self.assertEqual(d["time"]["learning_seconds"], 120)
         self.assertEqual(self.ofc.get(f"/api/faculty/analytics/subjects/{self.subject.id}/").status_code, 404)
-        self.assertEqual(self.ac.get(f"/api/admin/analytics/subjects/{self.subject.id}/").status_code, 200)
+        self.assertEqual(self.ac.get(f"/api/faculty/analytics/subjects/{self.subject.id}/").status_code, 200)
 
     def test_students_table_and_module_funnel(self):
         self.run_quiz()
@@ -119,7 +119,7 @@ class FacultyAnalyticsTests(Base):
     def test_student_detail_requires_shared_subject(self):
         self.assertEqual(self.fc.get(f"/api/faculty/analytics/students/{self.student.id}/").status_code, 200)
         self.assertEqual(self.fc.get(f"/api/faculty/analytics/students/{self.other_student.id}/").status_code, 404)
-        self.assertEqual(self.ac.get(f"/api/admin/analytics/students/{self.other_student.id}/").status_code, 200)
+        self.assertEqual(self.ac.get(f"/api/faculty/analytics/students/{self.other_student.id}/").status_code, 200)
         self.assertEqual(self.fc.get(f"/api/faculty/analytics/students/{self.student.id}/subjects/{self.subject.id}/").status_code, 200)
         self.assertEqual(self.fc.get(f"/api/faculty/analytics/users/{self.student.id}/sessions/").status_code, 200)
         self.assertEqual(self.fc.get(f"/api/faculty/analytics/users/{self.other_student.id}/sessions/").status_code, 404)
@@ -127,7 +127,7 @@ class FacultyAnalyticsTests(Base):
     def test_overview_lists_only_own_subjects(self):
         res = self.fc.get("/api/faculty/analytics/overview/")
         self.assertEqual([s["subject"]["code"] for s in res.data["subjects"]], ["OS"])
-        res = self.ac.get("/api/admin/analytics/overview/")
+        res = self.ac.get("/api/faculty/analytics/overview/")
         self.assertEqual([s["subject"]["code"] for s in res.data["subjects"]], ["DB", "OS"])
 
     def test_date_window_excludes_old_attempts(self):
