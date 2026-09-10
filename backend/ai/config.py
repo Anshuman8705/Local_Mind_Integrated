@@ -32,21 +32,21 @@ _PROFILES = {
         "source_chars": 8000,
         "history": 4,
         "max_tokens": {"tutor": 512, "quiz": 1400, "lesson": 1000, "remediation": 800, "outline": 800,
-                       "evaluate": 400, "assignment": 700},
+                       "evaluate": 400, "assignment": 700, "monitor": 600},
     },
     "balanced": {
         "num_ctx": 12288,
         "source_chars": 11000,
         "history": 6,
         "max_tokens": {"tutor": 768, "quiz": 2000, "lesson": 1500, "remediation": 1100, "outline": 1200,
-                       "evaluate": 500, "assignment": 900},
+                       "evaluate": 500, "assignment": 900, "monitor": 700},
     },
     "quality": {
         "num_ctx": 16384,
         "source_chars": 14000,
         "history": 8,
         "max_tokens": {"tutor": 1024, "quiz": 3000, "lesson": 2500, "remediation": 1600, "outline": 2000,
-                       "evaluate": 600, "assignment": 1200},
+                       "evaluate": 600, "assignment": 1200, "monitor": 800},
     },
 }
 
@@ -61,6 +61,8 @@ _SAMPLING = {
     "outline": (0.0, 0.1),
     "evaluate": (0.0, 0.1),
     "assignment": (0.5, 0.9),
+    # The monitoring judge: deterministic, narrow sampling, JSON verdict.
+    "monitor": (0.0, 0.1),
 }
 
 # Retrieval budgets: how many chunks the tutor sends, and the quiz's source
@@ -73,6 +75,7 @@ ENV_MAX_TOKENS = {
     "tutor": "AI_TUTOR_MAX_TOKENS", "quiz": "AI_QUIZ_MAX_TOKENS", "lesson": "AI_LESSON_MAX_TOKENS",
     "remediation": "AI_REMEDIATION_MAX_TOKENS", "outline": "AI_OUTLINE_MAX_TOKENS",
     "evaluate": "AI_EVALUATE_MAX_TOKENS", "assignment": "AI_ASSIGNMENT_MAX_TOKENS",
+    "monitor": "AI_MONITOR_MAX_TOKENS",
 }
 TASKS = tuple(ENV_MAX_TOKENS)
 

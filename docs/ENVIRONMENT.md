@@ -104,3 +104,25 @@ OLLAMA_OUTLINE_MODEL=qwen3:1.7b
 OLLAMA_NUM_CTX=16384
 OLLAMA_TIMEOUT_SECONDS=120
 ```
+
+## AI Monitoring & Guard
+
+The independent evaluation layer (`docs/AI_MONITORING.md`). All variables are optional.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AI_MONITOR_ENABLED` | `true` | Master switch for the monitor. |
+| `AI_MONITOR_MODE` | `async` | `async` evaluates on a background thread after the response; `sync` inline (tests, backfill); `off` records nothing automatically. |
+| `AI_MONITOR_JUDGE_ENABLED` | `true` | Whether the judge model may be called. Validators run regardless. Forced false under the test runner. |
+| `AI_MONITOR_MODEL_FILE` | empty | Dedicated judge GGUF under `backend/models/` (llamacpp). Empty = share the application model. |
+| `AI_MONITOR_MODEL_PATH` | empty | Absolute path to the judge GGUF; overrides `AI_MONITOR_MODEL_FILE`. |
+| `AI_MONITOR_MODEL_REPO` | `Qwen/Qwen2.5-7B-Instruct-GGUF` | Hugging Face repo `fetch_model --monitor` downloads from. |
+| `AI_MONITOR_MODEL_DOWNLOAD_FILE` | `qwen2.5-7b-instruct-q4_k_m.gguf` | File in that repo. |
+| `AI_MONITOR_OLLAMA_MODEL` | empty | Judge model tag when `AI_PROVIDER=ollama`. Empty = the tutor model. |
+| `AI_MONITOR_SAMPLE_PERCENT` | `10` | Share of answers that pass every validator and are still judged. |
+| `AI_MONITOR_MIN_JUDGE_CONFIDENCE` | `60` | Percent. A judge verdict below it never decides on its own. |
+| `AI_MONITOR_MAX_EVIDENCE_CHARS` | `6000` | Evidence stored with an evaluation and sent to the judge. |
+| `AI_MONITOR_EVIDENCE_CHUNKS` | `4` | Retrieval depth when rebuilding the passages behind a tutor answer. |
+| `AI_MONITOR_RETENTION_DAYS` | `180` | `monitor_ai --purge` removes older evaluations; open incidents are kept. |
+| `AI_MONITOR_EVALUATOR_VERSION` | `1.0` | Stamped on every evaluation; bump after changing validators or the judge prompt. |
+| `AI_MONITOR_MAX_TOKENS` | profile | Judge output ceiling (600 / 700 / 800 by performance mode). |

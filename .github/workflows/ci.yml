@@ -41,6 +41,9 @@ jobs:
       DJANGO_DEBUG: "true"
       AI_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
+      # The black-box suite counts calls to the fake Ollama; the monitor's
+      # background judge calls would skew that count, and it has its own suite.
+      AI_MONITOR_MODE: "off"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,6 +58,8 @@ jobs:
           python manage.py check_ai --smoke
       - name: Black-box system test (every portal, endpoint and fallback)
         run: python scripts/system_test.py http://127.0.0.1:8011 --fake-ollama http://127.0.0.1:11434
+      - name: AI monitor benchmark (validators only)
+        run: python manage.py monitor_benchmark
       - name: Server log on failure
         if: failure()
         run: tail -100 /tmp/server.log

@@ -20,9 +20,12 @@ export default function AdminLayout() {
       <Tabs.Screen name="index" options={{ title: "Platform Overview", tabBarLabel: "Overview", tabBarIcon: icon("speedometer-outline") }} />
       <Tabs.Screen name="subjects" options={shellScreen({ title: "Subjects", tabBarIcon: icon("library-outline") }, { subtitle: "Every subject on the platform, its faculty and its students." })} />
       <Tabs.Screen name="users" options={shellScreen({ title: "People", tabBarIcon: icon("people-outline") }, { subtitle: "Student and faculty accounts." })} />
+      <Tabs.Screen name="monitoring" options={shellScreen({ title: "AI Monitoring", tabBarLabel: "AI Monitor", tabBarIcon: icon("shield-checkmark-outline") }, { subtitle: "Independent checks on every tutor answer and generated quiz." })} />
       <Tabs.Screen name="audit" options={{ title: "Audit Log", tabBarLabel: "Audit", tabBarIcon: icon("receipt-outline") }} />
       <Tabs.Screen name="profile" options={{ title: "Profile", tabBarIcon: icon("person-circle-outline") }} />
       <Tabs.Screen name="subject/[id]" options={shellScreen({ href: null, title: "Subject" }, { backTo: "/admin/subjects" })} />
+      <Tabs.Screen name="incident/[id]" options={shellScreen({ href: null, title: "Incident" }, { backTo: "/admin/monitoring" })} />
+      <Tabs.Screen name="monitor-policies" options={shellScreen({ href: null, title: "Monitoring Policies" }, { backTo: "/admin/monitoring" })} />
       <Tabs.Screen name="user/[id]" options={shellScreen({ href: null, title: "User" }, { backTo: "/admin/users" })} />
       <Tabs.Screen name="user/new" options={shellScreen({ href: null, title: "New User" }, { backTo: "/admin/users" })} />
       <Tabs.Screen name="user/import" options={shellScreen({ href: null, title: "Import From Excel" }, { backTo: "/admin/users" })} />

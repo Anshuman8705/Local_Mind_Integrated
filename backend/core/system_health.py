@@ -119,10 +119,27 @@ def check_offline(components: list[dict]) -> dict:
     return _component("offline_mode", READY, "every runtime dependency is local; no network needed", blockers=[])
 
 
+def check_ai_monitor() -> dict:
+    """The independent evaluation layer: validators always run; the judge
+    needs a usable model (its own or the application's)."""
+    try:
+        from ai_monitor import services as monitor
+    except Exception as exc:  # pragma: no cover - app missing
+        return _component("ai_monitor", ERROR, f"ai_monitor not importable: {exc}")
+    if not monitor.enabled():
+        return _component("ai_monitor", ERROR, "AI monitor disabled (AI_MONITOR_ENABLED=false or AI_MONITOR_MODE=off)", enabled=False)
+    try:
+        state = monitor.status()
+    except Exception as exc:
+        return _component("ai_monitor", ERROR, f"monitor status failed: {exc}")
+    summary = f"monitor {state['mode']}; judge {'ready' if state['judge_ready'] else 'unavailable'}: {state['judge_detail']}; backlog {state['pending_backlog']}"
+    return _component("ai_monitor", READY if state["judge_ready"] else ERROR, summary, **state)
+
+
 def system_status(force: bool = False) -> dict:
     components = [_component("backend", READY, "LocalMind API responding"), check_database(), check_storage()]
     runtime, model = check_ai(force=force)
-    components += [runtime, model, check_document_processing(), check_web_client()]
+    components += [runtime, model, check_document_processing(), check_web_client(), check_ai_monitor()]
     components.append(check_offline(components))
-    overall = READY if all(c["status"] == READY for c in components if c["component"] != "web_client") else ERROR
+    overall = READY if all(c["status"] == READY for c in components if c["component"] not in ("web_client", "ai_monitor")) else ERROR
     return {"status": overall, "components": components, "ai": ai_gateway.health().as_dict()}

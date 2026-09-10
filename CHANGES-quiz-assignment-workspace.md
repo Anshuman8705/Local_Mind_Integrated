@@ -79,3 +79,19 @@ something is written from does not rewrite its questions, and silently editing
 the set while the questions stay put would misrepresent them. Generating a new
 one is the honest path; if you want in-place regeneration from a changed
 selection, that is a separate piece of work.
+
+# AI Monitoring & Guard (September 2026)
+
+Implements `AI_Monitoring_Guard_PRD_v2`: a new `ai_monitor` app that evaluates
+every tutor answer and AI-generated quiz independently of the tutor model.
+Deterministic validators run first; a judge model (the app model by default,
+or a dedicated 7-8B GGUF via `AI_MONITOR_MODEL_FILE`) is consulted only for
+suspicious, undecided or sampled cases; per-issue-type policies decide when a
+verdict becomes an incident. Admins get an "AI Monitor" tab (overview, model
+health, incident queue, side-by-side incident view with review controls, policy
+editor); faculty get a scoped review API. New commands: `monitor_ai`,
+`monitor_benchmark`, `fetch_model --monitor`. Details in `docs/AI_MONITORING.md`.
+
+Backend: 287 tests (52 new). Frontend: `tsc`, `eslint` and `expo export` clean.
+The black-box system test runs with `AI_MONITOR_MODE=off` because it counts
+calls to its fake Ollama and the monitor's background judge calls would skew it.

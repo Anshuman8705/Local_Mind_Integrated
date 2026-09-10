@@ -100,10 +100,20 @@ class AIResult:
     raw: str = field(default="", repr=False)
     attempts: int = 1
     latency_ms: int = 0
+    # Token usage when the provider reports it (llama.cpp and Ollama both do);
+    # 0 when unknown. The benchmark command derives tokens/sec from these.
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
     @property
     def failed(self):
         return not self.ok
+
+    @property
+    def tokens_per_sec(self) -> float:
+        if not self.completion_tokens or not self.latency_ms:
+            return 0.0
+        return round(self.completion_tokens * 1000.0 / self.latency_ms, 1)
 
 
 @dataclass
@@ -227,7 +237,8 @@ class OllamaProvider:
             data = json.loads(content)
         except json.JSONDecodeError:
             return AIResult(ok=False, error_code="malformed", error="Model output was not valid JSON.", provider=self.name, model=model, raw=content[:2000], latency_ms=latency)
-        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content, latency_ms=latency)
+        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content, latency_ms=latency,
+                        prompt_tokens=int(payload.get("prompt_eval_count") or 0), completion_tokens=int(payload.get("eval_count") or 0))
 
     def list_models(self, timeout: int = 3) -> tuple[bool, list[str], str]:
         import requests
@@ -349,20 +360,23 @@ class AIGateway:
 
     def generate(self, *, task: str, system_prompt: str, user_prompt: str, schema: dict,
                  model_kind: str | None = None, temperature: float | None = None, timeout: int | None = None,
-                 source_chars: int = 0, retrieved_chunks: int = 0) -> AIResult:
+                 source_chars: int = 0, retrieved_chunks: int = 0, model: str | None = None) -> AIResult:
         """Run one model call for a named task.
 
         The task decides the token ceiling, the context window and the sampling
         temperature, all read from ai.config, so no caller carries a literal
         number. `source_chars` and `retrieved_chunks` are recorded for the log
         and the benchmark: they say how much text the caller decided to send,
-        which is the number that matters when a call is slow.
+        which is the number that matters when a call is slow. `model` names
+        a specific model (Ollama tag) and overrides the kind lookup; the
+        AI monitor uses it to run its judge on a different model than the
+        tutor.
         """
         from ai.config import task_config
 
         cfg = settings.AI
         budget = task_config(task)
-        model = model_for(model_kind or ("outline" if task == "outline" else "tutor"))
+        model = model or model_for(model_kind or ("outline" if task == "outline" else "tutor"))
         temperature = budget.temperature if temperature is None else temperature
         timeout = timeout or cfg["TIMEOUT_SECONDS"]
         max_attempts = 1 + max(0, int(_ai_setting("MAX_RETRIES", 1)))
@@ -389,8 +403,9 @@ class AIGateway:
                                       provider=result.provider, model=result.model, raw=result.raw,
                                       attempts=attempt, latency_ms=result.latency_ms)
             if result.ok:
-                logger.info("AI %s ok model=%s attempt=%d latency_ms=%d source_chars=%d chunks=%d max_tokens=%d",
-                            task, model, attempt, result.latency_ms, source_chars, retrieved_chunks, budget.max_tokens)
+                logger.info("AI %s ok model=%s attempt=%d latency_ms=%d source_chars=%d chunks=%d max_tokens=%d tokens=%d/%d tok_s=%s",
+                            task, model, attempt, result.latency_ms, source_chars, retrieved_chunks, budget.max_tokens,
+                            result.prompt_tokens, result.completion_tokens, result.tokens_per_sec or "?")
                 return result
             if result.error_code not in RETRYABLE:
                 break

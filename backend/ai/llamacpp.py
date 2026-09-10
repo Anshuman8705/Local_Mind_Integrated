@@ -162,8 +162,15 @@ class _SharedModel:
             return None
         from llama_cpp import Llama
 
+        from ai.config import num_ctx as profile_num_ctx
+
         threads = int(_cfg("THREADS", 0)) or max(1, (os.cpu_count() or 4) - 1)
-        n_ctx = int(_cfg("NUM_CTX", 16384))
+        # The context window comes from the performance profile unless
+        # OLLAMA_NUM_CTX overrides it. Reading the raw setting here used to
+        # hand llama.cpp n_ctx=0 when the variable was unset, which llama.cpp
+        # treats as "the model's full training context" (40k for Qwen3): a
+        # multi-GB cache and a much slower generation for nothing.
+        n_ctx = int(profile_num_ctx() or 8192)
         n_batch = max(32, min(int(_cfg("BATCH", 256)), n_ctx))
         logger.info("Loading embedded GGUF model... (%s, n_ctx=%d, n_batch=%d, threads=%d)", self.path.name, n_ctx, n_batch, threads)
         started = time.monotonic()
@@ -323,6 +330,8 @@ class LlamaCppProvider:
             self._lock.release()
 
         latency = int((time.monotonic() - started) * 1000)
+        usage = completion.get("usage") or {} if isinstance(completion, dict) else {}
+        prompt_tokens, completion_tokens = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
         try:
             choice = completion["choices"][0]
             content = choice["message"]["content"]
@@ -334,12 +343,14 @@ class LlamaCppProvider:
             return AIResult(ok=False, error_code="empty", error="Model returned no content.", provider=self.name, model=model, latency_ms=latency)
         if finish == "length":
             return AIResult(ok=False, error_code="truncated", error="Model output hit the token limit before completing.",
-                            provider=self.name, model=model, raw=content[:2000], latency_ms=latency)
+                            provider=self.name, model=model, raw=content[:2000], latency_ms=latency,
+                            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
             return AIResult(ok=False, error_code="malformed", error="Model output was not valid JSON.", provider=self.name, model=model, raw=content[:2000], latency_ms=latency)
-        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content, latency_ms=latency)
+        return AIResult(ok=True, data=data, provider=self.name, model=model, raw=content, latency_ms=latency,
+                        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
 
     def list_models(self, timeout: int = 3) -> tuple[bool, list[str], str]:
         """Health contract: 'reachable' means the library imports and the

@@ -128,4 +128,24 @@ export const admin = {
   platform: () => api<any>("/admin/analytics/platform/"),
   platformSubjects: () => api<any>("/admin/analytics/platform/subjects/"),
   aiStatus: (refresh = false) => api<T.AIStatus>("/admin/ai/status/", { query: { refresh: refresh ? 1 : undefined } }),
+
+  // AI Monitoring & Guard (admin incident centre).
+  monitorOverview: (days = 30) => api<T.MonitorOverview>("/admin/monitor/overview/", { query: { days } }),
+  monitorTrends: (days = 30) => api<{ window_days: number; days: T.MonitorTrendDay[] }>("/admin/monitor/trends/", { query: { days } }),
+  monitorSubjects: (days = 30) => api<{ subjects: T.MonitorSubjectHealth[] }>("/admin/monitor/subjects/", { query: { days } }),
+  monitorImpact: (days = 30) => api<{ users: T.MonitorUserImpact[] }>("/admin/monitor/impact/users/", { query: { days } }),
+  monitorStatus: () => api<T.MonitorStatus>("/admin/monitor/status/"),
+  monitorIncidents: (q: Q = {}) => api<T.Paginated<T.MonitorIncident>>("/admin/monitor/incidents/", { query: q }),
+  monitorIncident: (id: string) => api<T.MonitorIncidentDetail>(`/admin/monitor/incidents/${id}/`),
+  reviewIncident: (id: string, action: T.ReviewAction, note = "") => api<T.MonitorIncidentDetail>(`/admin/monitor/incidents/${id}/review/`, { method: "POST", body: { action, note } }),
+  assignIncident: (id: string, assigned_to: string | null) => api<T.MonitorIncidentDetail>(`/admin/monitor/incidents/${id}/assign/`, { method: "POST", body: { assigned_to } }),
+  monitorEvaluations: (q: Q = {}) => api<T.Paginated<T.EvaluationSummary>>("/admin/monitor/evaluations/", { query: q }),
+  monitorEvaluation: (id: string) => api<T.EvaluationDetail>(`/admin/monitor/evaluations/${id}/`),
+  evaluationFeedback: (id: string, label: T.MonitorFeedback["label"], note = "") => api<T.MonitorFeedback>(`/admin/monitor/evaluations/${id}/feedback/`, { method: "POST", body: { label, note } }),
+  reevaluate: (id: string) => api<T.EvaluationDetail>(`/admin/monitor/evaluations/${id}/reevaluate/`, { method: "POST" }),
+  monitorBacklog: () => api<{ pending: number }>("/admin/monitor/backlog/"),
+  runBacklog: (limit = 25) => api<{ evaluated: number; remaining: number; results: T.EvaluationSummary[] }>("/admin/monitor/backlog/", { method: "POST", body: { limit } }),
+  monitorPolicies: () => api<T.MonitorPolicy[]>("/admin/monitor/policies/"),
+  updatePolicy: (issueType: string, body: Partial<Pick<T.MonitorPolicy, "enabled" | "min_confidence" | "min_severity" | "description">>) =>
+    api<T.MonitorPolicy>(`/admin/monitor/policies/${issueType}/`, { method: "PATCH", body }),
 };

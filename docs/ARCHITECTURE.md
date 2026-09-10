@@ -22,6 +22,7 @@ The project is a monolith on purpose. It targets a department-scale deployment, 
 | `tutor` | `ModuleLesson`, `Conversation`, `Message` | core, learning, assessments, ai, activity |
 | `activity` | `ApplicationSession`, `ActivityEvent` | core, learning |
 | `analytics` | read-only aggregation | every data app |
+| `ai_monitor` | `Evaluation`, `Incident`, `Policy`, `Feedback`; validators, judge, incident review API | core, accounts, academics, audit, ai, documents (retrieval, chunks), tutor, assessments (models only) |
 
 Dependencies point downward only. `learning` and `documents` reference each other at the model level (a chapter belongs to a document; a document's outline is chapters and modules) but `learning` never imports document services, which keeps the student-facing reading path free of upload and parsing concerns.
 
@@ -74,6 +75,10 @@ Passing a module quiz marks the module `completed`; failing marks it `needs_revi
 The production model is `qwen3:1.7b` for every purpose. Prompts are written for a model that size: numbered rules, one task sentence, no examples the model could copy, and the schema does the structural work. Post-validation catches what the schema cannot: quiz options must be distinct, questions that repeat an earlier quiz on the same target are dropped, an assignment rubric must sum to `max_score`, an outline may only reference heading indices it was given, and a subjective answer the model marks correct while also listing missing rubric points is scored as incorrect. Callers decide what fallback is appropriate: outlines fall back to the source hierarchy, quiz generation to flagged placeholders, structured lessons to a deterministic summary of the source text, free-form questions to `AI_UNAVAILABLE` (503), since there is no honest fallback for an open question.
 
 Every prompt is built server-side from the module's stored `source_text`. Clients never send source text, which closes the injection path the reference design left open.
+
+## AI monitoring
+
+`ai_monitor` is the independent evaluation layer described in `docs/AI_MONITORING.md`. It attaches to `tutor.Message` and `assessments.Assessment` with post-save signals that fire after commit, so the apps it watches do not import it and cannot be broken by it. Each interaction is checked by deterministic validators against the same chunks the tutor retrieved; only suspicious, undecided or sampled cases reach the judge model, which runs through the gateway with its own task budget (`monitor`) and, optionally, its own GGUF. Verdicts, evidence and validator results are stored per evaluator version; per-issue-type policies decide whether an incident is opened for admin review. The monitor writes only its own tables and never touches a grade, a progress row or the student's response.
 
 ## Sessions and time
 

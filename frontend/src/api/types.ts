@@ -124,3 +124,63 @@ export interface AIStatus {
   details?: { runtime?: { name: string; ready: boolean; error: string }; model_file?: { name: string; found: boolean; valid: boolean; size_mb: number; error: string }; loaded?: boolean; display_name?: string };
   system?: SystemStatus;
 }
+
+/* ---------------------------------------------------------------- */
+/* AI Monitoring & Guard                                              */
+/* ---------------------------------------------------------------- */
+
+export type MonitorSeverity = "low" | "medium" | "high" | "critical";
+export type MonitorVerdict = "pass" | "issue" | "abstain";
+export type MonitorIssueType = "none" | "hallucination" | "factual_error" | "unsupported_claim" | "instruction_violation" | "quiz_error" | "safety" | "irrelevant" | "other";
+export type IncidentStatus = "open" | "confirmed" | "false_positive" | "needs_investigation" | "escalated" | "closed";
+export type ReviewAction = "confirm" | "false_positive" | "needs_investigation" | "escalate" | "close" | "reopen";
+
+export interface MonitorPerson { id: string; email: string; full_name: string; role: Role }
+export interface MonitorSubject { id: string; code: string; name: string }
+
+export interface ValidatorResult { name: string; passed: boolean | null; issue_type: MonitorIssueType; severity: MonitorSeverity; confidence: number; detail: string; evidence: string[] }
+export interface EvidencePassage { kind: string; ref: string; id?: string; text: string; truncated?: boolean }
+export interface JudgeVerdict { is_issue: boolean; issue_type: MonitorIssueType; severity: MonitorSeverity; confidence: number; reason: string; evidence: string[]; recommended_action: string }
+
+export interface MonitorFeedback { id: string; label: "correct" | "false_positive" | "needs_investigation"; note: string; reviewer: MonitorPerson | null; created_at: string }
+
+export interface EvaluationSummary {
+  id: string; interaction_kind: "tutor_answer" | "quiz"; interaction_id: string;
+  user: MonitorPerson | null; subject: MonitorSubject | null; module_title: string; app_model_name: string;
+  verdict: MonitorVerdict; issue_type: MonitorIssueType; severity: MonitorSeverity; confidence: number; reason: string;
+  recommended_action: string; judge_invoked: boolean; judge_reason: string; judge_model: string; stage: "pending" | "done" | "failed"; error: string;
+  evaluator_version: string; duration_ms: number; has_incident: boolean; created_at: string;
+}
+
+export interface EvaluationDetail extends EvaluationSummary {
+  prompt_excerpt: string; response_excerpt: string; evidence_json: EvidencePassage[]; validators_json: ValidatorResult[];
+  judge_json: Partial<JudgeVerdict>; judge_latency_ms: number | null; judge_error: string; feedback: MonitorFeedback[]; incident_id: string | null;
+}
+
+export interface MonitorIncident {
+  id: string; issue_type: MonitorIssueType; severity: MonitorSeverity; status: IncidentStatus;
+  user: MonitorPerson | null; subject: MonitorSubject | null; assigned_to: MonitorPerson | null; reviewer_note: string; recurrence: number;
+  resolved_by: MonitorPerson | null; resolved_at: string | null; evaluation: EvaluationSummary; created_at: string; updated_at: string;
+}
+export interface MonitorIncidentDetail extends Omit<MonitorIncident, "evaluation"> { evaluation: EvaluationDetail }
+
+export interface MonitorPolicy { id: string; issue_type: MonitorIssueType; enabled: boolean; min_confidence: number; min_severity: MonitorSeverity; description: string; version: number; updated_by: MonitorPerson | null; updated_at: string }
+
+export interface MonitorStatus {
+  enabled: boolean; mode: string; judge_enabled: boolean; judge_ready: boolean; judge_detail: string; judge_model: string;
+  sample_percent: number; evaluator_version: string; queue_depth: number; retention_days: number; pending_backlog: number;
+}
+
+export interface MonitorModelHealth { model: string; evaluated: number; issues: number; issue_rate_percent: number; incidents: number; high_severity: number }
+
+export interface MonitorOverview {
+  window_days: number; interactions: number; evaluated: number; failed_evaluations: number; coverage_percent: number | null; judge_invocations: number;
+  verdicts: Record<MonitorVerdict, number>; incidents: number; open_incidents: number; high_severity_incidents: number;
+  by_severity: Record<MonitorSeverity, number>; by_issue_type: Record<string, number>; by_status: Record<IncidentStatus, number>;
+  false_positive_rate_percent: number | null; high_severity_precision_percent: number | null; feedback_count: number; queue_depth: number;
+  evaluator_version: string; models: MonitorModelHealth[]; status: MonitorStatus;
+}
+
+export interface MonitorTrendDay { day: string; total: number; by_severity: Record<MonitorSeverity, number>; by_issue_type: Record<string, number>; evaluated?: number; issues?: number }
+export interface MonitorSubjectHealth { subject_id: string; code: string; name: string; evaluated: number; issues: number; incidents: number; incident_rate_percent: number; common_failures: { issue_type: MonitorIssueType; count: number }[] }
+export interface MonitorUserImpact { user_id: string; email: string; full_name: string; role: Role; incidents: number; high_severity: number; open: number }

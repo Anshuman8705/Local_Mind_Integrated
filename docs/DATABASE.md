@@ -172,10 +172,30 @@ A conversation belongs to one student and one module (`title`, `last_message_at`
 
 `user` FK CASCADE, `kind` (`learning`, `quiz`, `assignment`, `tutor`; indexed), optional `subject` and `module` FK SET_NULL, `reference_id` (attempt, submission or conversation id as text), `seconds`, `occurred_at` (indexed). Indexed on (`user`, `kind`, `occurred_at`).
 
+## ai_monitor
+
+The AI Monitoring & Guard tables. They point at the rows they judge with `SET_NULL` links so deleting a conversation or a quiz keeps the monitoring history.
+
+### ai_monitor_evaluation
+
+One row per (`interaction_kind`, `interaction_id`, `evaluator_version`), unique. `interaction_kind` is `tutor_answer` or `quiz`; `message` FK `tutor.Message` and `assessment` FK `assessments.Assessment` (SET_NULL); `user` (the student who asked or the faculty member who generated), `subject`, `module` (SET_NULL); `app_model_name` (indexed). Bounded excerpts `prompt_excerpt` and `response_excerpt` (4,000 characters), `evidence_json` (list of `{kind, ref, id?, text, truncated?}` passages), `validators_json` (list of `{name, passed, issue_type, severity, confidence, detail, evidence}`). Judge fields: `judge_invoked`, `judge_reason` (`suspicious`, `undecided`, `sampled`, `forced`), `judge_json` (normalised verdict), `judge_model`, `judge_latency_ms`, `judge_error`. Decision: `verdict` (`pass`, `issue`, `abstain`), `issue_type`, `severity` (`low` to `critical`), `confidence` (0 to 1), `reason`, `recommended_action`, `stage` (`done`, `failed`), `error`, `duration_ms`. Indexed on (`verdict`, `severity`), (`subject`, `created_at`), (`app_model_name`, `created_at`).
+
+### ai_monitor_incident
+
+`evaluation` one-to-one CASCADE; `user`, `subject`, `assigned_to`, `resolved_by` FK SET_NULL; `issue_type`, `severity` (copied from the evaluation, possibly bumped by recurrence); `status` (`open`, `confirmed`, `false_positive`, `needs_investigation`, `escalated`, `closed`); `reviewer_note`; `recurrence` (same-type incidents on the same module in the previous seven days at creation); `resolved_at`. Indexed on (`status`, `severity`) and (`subject`, `status`).
+
+### ai_monitor_policy
+
+One row per `issue_type` (unique): `enabled`, `min_confidence`, `min_severity`, `description`, `version` (bumped on every edit), `updated_by`. Defaults are created on first use from `ai_monitor.models.DEFAULT_POLICIES`.
+
+### ai_monitor_feedback
+
+`evaluation` FK CASCADE, `incident` FK SET_NULL, `reviewer` FK SET_NULL, `label` (`correct`, `false_positive`, `needs_investigation`; indexed), `note`. The false-positive rate and high-severity precision on the admin overview are computed from these rows.
+
 ## Invariants the services enforce
 
 A subject that is archived accepts no new documents, quizzes, assignments, assignments of faculty or enrollments. A document may only be published when every module has non-empty source text and `source_missing` is false. Once published, its chapter and module set is fixed; text may still change. A module referenced by any assessment, assignment, progress row or conversation cannot be deleted through the outline editor. An assessment with attempts is never edited in place; a new version is created. An attempt is written once at submission; later evaluation only fills evaluation fields. Session durations and attempt timings are never accepted from a client.
 
 ## Retention
 
-Nothing is hard-deleted by the API. Users, subjects, enrollments and assignments are discontinued or archived; documents are archived and their files kept. `cleanup_media` finds media directories whose document row no longer exists (which can only happen through manual database work) and removes them on request.
+Nothing is hard-deleted by the API. Users, subjects, enrollments and assignments are discontinued or archived; documents are archived and their files kept. `cleanup_media` finds media directories whose document row no longer exists (which can only happen through manual database work) and removes them on request. The one scheduled deletion is the AI monitor's retention: `monitor_ai --purge` (on the maintenance timer) removes `ai_monitor_evaluation` rows older than `AI_MONITOR_RETENTION_DAYS` together with their resolved incidents, and keeps any whose incident is still open, escalated or under investigation.

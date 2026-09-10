@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "tutor",
     "activity",
     "analytics",
+    "ai_monitor",
 ]
 
 MIDDLEWARE = [
@@ -291,8 +292,52 @@ AI = {
     "MAX_TOKENS_OUTLINE": env_int("AI_OUTLINE_MAX_TOKENS", 0),
     "MAX_TOKENS_EVALUATE": env_int("AI_EVALUATE_MAX_TOKENS", 0),
     "MAX_TOKENS_ASSIGNMENT": env_int("AI_ASSIGNMENT_MAX_TOKENS", 0),
+    "MAX_TOKENS_MONITOR": env_int("AI_MONITOR_MAX_TOKENS", 0),
     # Seconds to cache the provider readiness probe used by /api/health/.
     "HEALTH_CACHE_SECONDS": env_int("AI_HEALTH_CACHE_SECONDS", 30),
+}
+
+# AI Monitoring & Guard: the independent evaluation layer (ai_monitor app).
+# Watches every tutor answer and AI-generated quiz, runs deterministic
+# validators first, and asks a separate judge model only for suspicious or
+# sampled cases. Monitoring failures never block the student-facing path.
+AI_MONITOR = {
+    # Master switch for the monitor. Off means nothing is evaluated or stored.
+    "ENABLED": env_bool("AI_MONITOR_ENABLED", True),
+    # async: evaluate on a background thread after the response is sent
+    # (production). sync: evaluate inline, used by tests and the backfill
+    # command. off: record nothing automatically (manual evaluation only).
+    "MODE": env_str("AI_MONITOR_MODE", "sync" if TESTING else "async"),
+    # Whether the judge model may be called at all. Validators still run.
+    "JUDGE_ENABLED": env_bool("AI_MONITOR_JUDGE_ENABLED", True) and not TESTING,
+    # A separate GGUF for the judge (llamacpp provider). Empty means the judge
+    # shares the application model, which is the low-memory default. Set
+    # AI_MONITOR_MODEL_FILE (under backend/models/) or an absolute
+    # AI_MONITOR_MODEL_PATH to use a stronger evaluator such as a 7-8B Qwen
+    # instruct model; `python manage.py fetch_model --monitor` downloads it.
+    "MODEL_PATH": env_str("AI_MONITOR_MODEL_PATH", ""),
+    "MODEL_FILE": env_str("AI_MONITOR_MODEL_FILE", ""),
+    "MODEL_REPO": env_str("AI_MONITOR_MODEL_REPO", "Qwen/Qwen2.5-7B-Instruct-GGUF"),
+    "MODEL_DOWNLOAD_FILE": env_str("AI_MONITOR_MODEL_DOWNLOAD_FILE", "qwen2.5-7b-instruct-q4_k_m.gguf"),
+    # Ollama provider: the tag the judge runs on. Empty = the tutor model.
+    "OLLAMA_MODEL": env_str("AI_MONITOR_OLLAMA_MODEL", ""),
+    # Percentage of responses that pass every validator and are still sent
+    # to the judge, so quiet failures the validators cannot see are sampled.
+    "SAMPLE_PERCENT": env_int("AI_MONITOR_SAMPLE_PERCENT", 10),
+    # Judge verdicts below this confidence never create an incident on their
+    # own (policy rows can raise the bar per issue type, never lower it).
+    "MIN_JUDGE_CONFIDENCE": env_int("AI_MONITOR_MIN_JUDGE_CONFIDENCE", 60) / 100,
+    # Character cap on the evidence stored with an evaluation and sent to the
+    # judge (data minimisation: a bounded excerpt, never a whole conversation).
+    "MAX_EVIDENCE_CHARS": env_int("AI_MONITOR_MAX_EVIDENCE_CHARS", 6000),
+    # Retrieval depth when rebuilding the reference passages for a tutor answer.
+    "EVIDENCE_CHUNKS": env_int("AI_MONITOR_EVIDENCE_CHUNKS", 4),
+    # Evaluations and closed incidents older than this are removed by
+    # `manage.py monitor_ai --purge` (the maintenance timer runs it).
+    "RETENTION_DAYS": env_int("AI_MONITOR_RETENTION_DAYS", 180),
+    # Recorded on every evaluation so a verdict can be traced to the logic
+    # that produced it. Bump when validators or the judge prompt change.
+    "EVALUATOR_VERSION": env_str("AI_MONITOR_EVALUATOR_VERSION", "1.0"),
 }
 
 if TESTING:

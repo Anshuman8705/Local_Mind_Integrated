@@ -53,8 +53,9 @@ services:
     depends_on:
       db: { condition: service_healthy }
 
-  # Periodic maintenance: requeue documents abandoned by a recycled worker and
-  # flush expired JWT blacklist rows. Runs every 15 minutes.
+  # Periodic maintenance: requeue documents abandoned by a recycled worker,
+  # flush expired JWT blacklist rows and apply the AI monitor's retention.
+  # Runs every 15 minutes.
   maintenance:
     build: ../backend
     restart: unless-stopped
@@ -73,6 +74,8 @@ services:
         while true; do
           python manage.py requeue_stuck_documents || true
           python manage.py flushexpiredtokens || true
+          python manage.py monitor_ai --purge || true
+          python manage.py monitor_ai --purge || true
           sleep 900
         done
     depends_on:

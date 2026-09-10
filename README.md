@@ -36,7 +36,7 @@ Every account is created with the configured `INITIAL_USER_PASSWORD` and must ch
 ## Tests
 
 ```bash
-python manage.py test                                    # SQLite, 145 tests
+python manage.py test                                    # SQLite, 287 tests
 DATABASE_URL=postgres://user:pw@host:5432/db python manage.py test   # same suite on PostgreSQL
 ```
 
@@ -78,11 +78,12 @@ See `frontend/README.md` and `docs/FRONTEND.md`.
 | `docs/ENVIRONMENT.md` | Every environment variable with defaults and production guidance |
 | `docs/DEPLOYMENT.md` | Production deployment (docker-compose or systemd), PostgreSQL, Ollama, media, operations |
 | `docs/OFFLINE.md` | Embedded AI provider, one-process launcher, building an offline bundle for any machine |
+| `docs/AI_MONITORING.md` | AI Monitoring & Guard: how tutor answers and quizzes are checked, the judge model, policies, incident review, benchmark |
 | `deploy/` | docker-compose stack, nginx config, systemd units, maintenance timer |
 | `docs/MIGRATION.md` | Relationship to the reference codebase and what changed |
 | `docs/FRONTEND_INTEGRATION.md` | What a client must do: login, token handling, sessions, per-role screens |
 | `docs/FRONTEND.md` | The Expo client: every screen and the endpoints behind it |
-| `backend/openapi.yaml` | Generated OpenAPI 3 schema (142 operations) |
+| `backend/openapi.yaml` | Generated OpenAPI 3 schema (186 operations) |
 | `backend/samples/` | Excel import templates for faculty and students |
 
 ## Repository layout
@@ -103,5 +104,6 @@ backend/
   tutor/         structured lessons, grounded Q&A, remediation
   activity/      application sessions, heartbeat, time on task
   analytics/     scoped metrics for student, faculty and admin
+  ai_monitor/    AI Monitoring & Guard: validators, judge model, incidents, policies, admin/faculty review API
 docs/            the documents listed above
 ```

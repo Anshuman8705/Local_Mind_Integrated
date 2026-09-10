@@ -30,6 +30,8 @@ urlpatterns = [
     path("api/faculty/", include("analytics.urls_manage")),
     path("api/admin/", include("analytics.urls_manage")),
     path("api/admin/", include("analytics.urls_admin")),
+    path("api/admin/", include("ai_monitor.urls_admin")),
+    path("api/faculty/", include("ai_monitor.urls_faculty")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 ]
