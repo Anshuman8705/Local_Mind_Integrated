@@ -81,7 +81,7 @@ See `frontend/README.md` and `docs/FRONTEND.md`.
 | `docs/OFFLINE.md` | Embedded AI provider, one-process launcher, building an offline bundle for any machine |
 | `docs/AI_MONITORING.md` | AI Monitoring & Guard: how tutor answers and quizzes are checked, the judge model, policies, incident review, benchmark |
 | `deploy/` | docker-compose stack, nginx config, systemd units, maintenance timer |
-| `docs/MIGRATION.md` | Relationship to the reference codebase and what changed |
+| `docs/history/MIGRATION.md` | Relationship to the reference codebase and what changed |
 | `docs/FRONTEND_INTEGRATION.md` | What a client must do: login, token handling, sessions, per-role screens |
 | `docs/FRONTEND.md` | The Expo client: every screen and the endpoints behind it |
 | `backend/openapi.yaml` | Generated OpenAPI 3 schema (186 operations) |
