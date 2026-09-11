@@ -96,6 +96,16 @@ class ParserAndOutlineTests(TestCase):
         self.assertIsNone(ai_outline(self._doc(), headings))
 
     @patch("documents.services.outline.gateway")
+    def test_ai_outline_using_a_chapter_heading_as_a_module_is_discarded(self, gw):
+        # The H1 section holds every H2 under it, so that module would repeat
+        # the whole chapter (a Word chapter uploaded as one 50,000-char module).
+        from ai.gateway import AIResult
+        gw.return_value.generate.return_value = AIResult(ok=True, data={"document_title": "X", "chapters": [
+            {"title": "Course", "source_heading_index": 1,
+             "modules": [{"title": "Operating Systems", "source_heading_index": 0}]}]})
+        self.assertIsNone(ai_outline(self._doc(), fake_parse(None)["headings"]))
+
+    @patch("documents.services.outline.gateway")
     def test_ai_outline_keeps_source_index_mapping(self, gw):
         from ai.gateway import AIResult
         gw.return_value.generate.return_value = AIResult(ok=True, data={"document_title": "OS Course", "chapters": [

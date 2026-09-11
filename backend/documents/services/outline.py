@@ -152,7 +152,27 @@ Rules:
         chapters.append({"title": clean_title(ch["title"]), "source_heading_index": ci, "modules": modules})
     if not chapters:
         return None
+    # A module's text is its heading plus everything nested under it. If the
+    # model picks a heading that contains other picked headings (a chapter
+    # heading used as a module), that module repeats the whole chapter.
+    spans = _heading_spans(headings)
+    for ch in chapters:
+        for m in ch["modules"]:
+            start, end = spans[m["source_heading_index"]]
+            if any(start < i < end for i in used):
+                logger.warning("AI outline module %s contains other outline headings; discarding AI outline", start)
+                return None
     return {"document_title": clean_title(result.data.get("document_title")) or document.title, "chapters": chapters}
+
+
+def _heading_spans(headings):
+    """index -> (index, first index after its section) in document order."""
+    rows = sorted(headings, key=lambda h: h["index"])
+    spans = {}
+    for pos, h in enumerate(rows):
+        end = next((r["index"] for r in rows[pos + 1:] if r["level"] <= h["level"]), float("inf"))
+        spans[h["index"]] = (h["index"], end)
+    return spans
 
 
 # ------------------------------------------------------ tidying a new outline --
