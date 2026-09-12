@@ -30,6 +30,8 @@ class Assignment(TimeStampedUUIDModel):
     due_at = models.DateTimeField(null=True, blank=True)
     allow_late = models.BooleanField(default=True)
     allow_resubmission = models.BooleanField(default=False)
+    # With resubmission allowed: how many submissions in total (null = no limit).
+    max_attempts = models.PositiveIntegerField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     results_release = models.CharField(max_length=12, choices=ResultsRelease.choices, default=ResultsRelease.IMMEDIATE)

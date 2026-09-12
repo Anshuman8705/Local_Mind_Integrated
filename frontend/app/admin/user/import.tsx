@@ -1,139 +1,119 @@
-import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { admin } from "@/api/endpoints";
 import type { ImportReport } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Button, Card, Chip, ErrorBanner, H2, Loading, Notice, P, Row, Screen, Stat, colors, radiusSm, space } from "@/ui";
+import { Badge, Button, Card, CardHead, Column, Dropdown, ErrorBanner, FormFooter, Loading, Notice, PageHeading, Screen, Split, StepList, Table, TileIcon, colors } from "@/ui";
 import { OneTimeCredentials } from "@/ui/OneTimeCredentials";
 
-const kb = (bytes?: number) => (bytes ? `${Math.max(1, Math.round(bytes / 1024))} KB` : "");
+type Kind = "students" | "faculty";
+type RowT = { row: number; name: string; email: string; outcome: "Created" | "Account exists" | "Invalid email" | "Needs a fix"; todo: string };
 
-export default function ImportUsers() {
+export default function ImportPeople() {
   const router = useRouter();
   const p = useLocalSearchParams<{ kind?: string }>();
-  const [kind, setKind] = useState<"faculty" | "students">(p.kind === "faculty" ? "faculty" : "students");
+  const [kind, setKind] = useState<Kind>(p.kind === "faculty" ? "faculty" : "students");
   const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
-  const who = kind === "faculty" ? "faculty" : "students";
-  // The columns come from the server, which derives them from the parser, so
-  // this screen cannot describe a sheet the importer would reject.
+  const [showColumns, setShowColumns] = useState(false);
   const spec = useAsync(() => admin.importTemplate(kind), [kind]);
-
   const pick = async () => {
     const r = await DocumentPicker.getDocumentAsync({ type: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], copyToCacheDirectory: true });
     if (!r.canceled && r.assets[0]) { setFile(r.assets[0]); setReport(null); }
   };
-
-  // Downloaded through the authenticated request rather than a link, so no
-  // token ends up in a URL.
   const download = useAction(async () => {
     const data = spec.data ?? (await admin.importTemplate(kind));
     const bytes = Uint8Array.from(atob(data.content_base64), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = data.filename; a.click();
-    URL.revokeObjectURL(url);
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a"); a.href = url; a.download = data.filename; a.click(); URL.revokeObjectURL(url);
   });
-
   const upload = useAction(async () => {
     if (!file) return;
     const form = new FormData();
-    if (Platform.OS === "web" && file.file) form.append("file", file.file, file.name); else form.append("file", { uri: file.uri, name: file.name, type: file.mimeType ?? "application/octet-stream" } as any);
-    const r = await admin.importUsers(kind, form);
-    const skipped = r.already_existing ? `, ${r.already_existing} already existed` : "";
-    const summary = `Imported ${r.created} ${who} of ${r.total_rows} row${r.total_rows === 1 ? "" : "s"}${skipped}.`;
-    // An email that is already on the platform is a normal outcome, not a
-    // problem with the sheet: re-importing a class list should not be
-    // presented as a failure. Only genuinely invalid rows keep us here, or
-    // one-time passwords, which exist only in this response.
-    const issued = (r.created_users ?? []).some((u) => u.initial_password);
-    if (r.invalid === 0 && !issued) {
-      router.replace({ pathname: "/admin/users", params: { kind, notice: summary } });
-      return;
-    }
-    setReport(r);
+    if (Platform.OS === "web" && file.file) form.append("file", file.file, file.name);
+    else form.append("file", { uri: file.uri, name: file.name, type: file.mimeType ?? "application/octet-stream" } as unknown as Blob);
+    setReport(await admin.importUsers(kind, form));
   });
+  const who = kind === "faculty" ? "faculty" : "students";
 
-  const failures = (report?.errors ?? []).filter((e) => !(e.errors ?? []).every((x) => x === "User already exists."));
-  const credentials = (report?.created_users ?? []).filter((u) => u.initial_password)
-    .map((u) => ({ full_name: u.full_name, email: u.email, initial_password: u.initial_password as string }));
-  const backToPeople = () => report && router.replace({ pathname: "/admin/users", params: { kind, notice: `Imported ${report.created} ${who}${report.invalid ? `; ${report.invalid} row(s) skipped` : ""}.` } });
-  const required = (spec.data?.columns ?? []).filter((c) => c.required).map((c) => c.name);
-  const optional = (spec.data?.columns ?? []).filter((c) => !c.required).map((c) => c.name);
-  const aliasHint = (spec.data?.columns ?? []).flatMap((c) => c.aliases).slice(0, 3).join(", ");
+  if (report) {
+    const credentials = (report.created_users ?? []).filter((u) => u.initial_password).map((u) => ({ full_name: u.full_name, email: u.email, initial_password: u.initial_password as string }));
+    const rows: RowT[] = [
+      ...(report.created_users ?? []).map((u) => ({ row: u.row, name: u.full_name ?? "", email: u.email, outcome: "Created" as const, todo: "Share the onboarding instructions" })),
+      ...report.errors.map((e) => {
+        const exists = (e.errors ?? []).every((x) => /already exists/i.test(x));
+        const badEmail = !exists && (e.errors ?? []).some((x) => /email/i.test(x));
+        return { row: e.row, name: "", email: e.email ?? "No email", outcome: exists ? "Account exists" as const : badEmail ? "Invalid email" as const : "Needs a fix" as const, todo: exists ? "Nothing to do; the existing account was kept" : `Correct the sheet: ${(e.errors ?? []).join("; ")}` };
+      }),
+    ].sort((a, b) => a.row - b.row);
+    const columns: Column<RowT>[] = [
+      { key: "r", label: "Excel row", flex: 0.6, render: (r) => String(r.row) },
+      { key: "n", label: "Name", flex: 1.1, render: (r) => r.name || "—" },
+      { key: "e", label: "Email", flex: 1.5, render: (r) => r.email },
+      { key: "o", label: "Outcome", flex: 0.9, render: (r) => <Badge value={r.outcome} tone={r.outcome === "Created" ? "green" : r.outcome === "Account exists" ? "amber" : "red"} /> },
+      { key: "t", label: "What to do", flex: 2.2, render: (r) => <Text style={{ fontSize: 12, color: colors.text }}>{r.todo}</Text> },
+    ];
+    const done = () => router.replace({ pathname: "/admin/users", params: { kind, notice: `Imported ${report.created} ${who}${report.invalid ? `; ${report.invalid} row(s) need a fix` : ""}.` } });
+    return (
+      <Screen>
+        <PageHeading eyebrow="PEOPLE · IMPORT RESULTS" title="Review the import report" subtitle={file?.name ?? "Excel import"} right={<Button title="Go to people" icon="arrow-forward" onPress={done} />} />
+        <Notice tone={report.invalid || report.already_existing ? "warning" : "success"} title={`${report.created} row${report.created === 1 ? "" : "s"} accepted. ${report.invalid + report.already_existing} need${report.invalid + report.already_existing === 1 ? "s" : ""} attention.`}
+          message="Rows that were created are not created twice. Correct the marked rows in the sheet and import it again." />
+        {credentials.length ? <OneTimeCredentials title={`${credentials.length} one-time password${credentials.length === 1 ? "" : "s"}`} rows={credentials} filename={`localmind-${who}-one-time-passwords.csv`} /> : null}
+        <Card flush><Table noun="row" columns={columns} rows={rows} keyOf={(r) => `${r.row}-${r.email}`} minWidth={820} /></Card>
+        <View style={{ flexDirection: "row", gap: 9 }}><Button title="Return to import" variant="secondary" icon="arrow-back" onPress={() => { setReport(null); setFile(null); }} /></View>
+      </Screen>
+    );
+  }
 
+  const required = (spec.data?.columns ?? []).filter((c) => c.required);
+  const optional = (spec.data?.columns ?? []).filter((c) => !c.required);
   return (
     <Screen>
-      <Row style={{ justifyContent: "space-between" }}>
-        <Row>
-          <Chip label="Students" selected={kind === "students"} onPress={() => { setKind("students"); setReport(null); }} />
-          <Chip label="Faculty" selected={kind === "faculty"} onPress={() => { setKind("faculty"); setReport(null); }} />
-        </Row>
-        {Platform.OS === "web" ? (
-          <Button title="Download Template" icon="download-outline" small variant="secondary" onPress={() => download.run()} busy={download.busy} />
-        ) : null}
-      </Row>
-
-      <Card>
-        <H2 icon="cloud-upload-outline">Choose a file</H2>
-        <Pressable
-          onPress={pick}
-            style={({ pressed }) => [{
-              borderWidth: 1, borderStyle: "dashed", borderColor: file ? colors.primary : colors.borderStrong,
-              borderRadius: radiusSm, padding: space.xl, alignItems: "center", gap: 6,
-              backgroundColor: file ? colors.tealTint : "transparent",
-            }, pressed && { opacity: 0.85 }]}
-          >
-            <Ionicons name={file ? "document-text-outline" : "cloud-upload-outline"} size={26} color={file ? colors.primary : colors.faint} />
-            <P small style={{ fontWeight: "600" }}>{file ? file.name : "Choose an .xlsx file"}</P>
-            <P muted small>{file ? `${kb(file.size)} \u00b7 tap to change` : "Only .xlsx is accepted"}</P>
-          </Pressable>
-        <ErrorBanner message={upload.error ?? download.error} />
-        <Button title={`Import ${who}`} icon="arrow-forward-outline" onPress={() => upload.run()} busy={upload.busy} disabled={!file} />
-        <Notice message="Every account is created with the platform's initial password and must change it at first login. A row whose email already exists is skipped, not overwritten." />
-      </Card>
-
-      {/* One line rather than a table: the template carries the exact
-          headers, so the page only has to say which are required. */}
-      <ErrorBanner message={spec.error} onRetry={spec.reload} />
-      {spec.loading && !spec.data ? <Loading /> : null}
-      {spec.data ? (
-        <View style={{ flexDirection: "row", gap: space.md, alignItems: "flex-start", backgroundColor: colors.surface2, borderLeftWidth: 3, borderLeftColor: colors.accent, borderRadius: radiusSm, padding: space.md }}>
-          <Ionicons name="grid-outline" size={18} color={colors.accent} style={{ marginTop: 2 }} />
-          <View style={{ flex: 1, gap: 2 }}>
-            <Row style={{ gap: 6 }}><P small style={{ fontWeight: "700" }}>Required columns:</P><P small style={{ color: colors.primary, fontWeight: "700" }}>{required.join(", ")}</P></Row>
-            {optional.length ? <Row style={{ gap: 6 }}><P small style={{ fontWeight: "700" }}>Optional columns:</P><P small>{optional.join(", ")}</P></Row> : null}
-            <P muted small>Common variations such as {aliasHint} are understood, and any column the platform does not use is ignored.</P>
-          </View>
-        </View>
-      ) : null}
-
-      {report && credentials.length ? (
-        <OneTimeCredentials title={`${credentials.length} one-time password${credentials.length === 1 ? "" : "s"}`} rows={credentials}
-          filename={`localmind-${who}-one-time-passwords.csv`} onDone={report.invalid ? undefined : backToPeople} />
-      ) : null}
-
-      {report && report.invalid ? (
-        <Card accent={colors.warning}>
-          <H2 icon="alert-circle-outline">{report.invalid} row{report.invalid === 1 ? "" : "s"} could not be imported</H2>
-          <Row><Stat label="rows" value={report.total_rows} /><Stat label="created" value={report.created} /><Stat label="already existed" value={report.already_existing} /><Stat label="invalid" value={report.invalid} /></Row>
-          <P muted small>Fix these rows in the sheet and import it again. Rows that were created are not created twice.</P>
-          <View style={{ gap: 2 }}>
-            {failures.map((e, i) => (
-              <Row key={i} style={{ gap: space.sm, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-                <P small style={{ fontWeight: "700", width: 64 }}>Row {e.row}</P>
-                <P muted small style={{ flex: 1 }}>{e.email || "no email"}</P>
-                <P small style={{ flex: 2, color: colors.danger }}>{(e.errors ?? []).join("; ")}</P>
-              </Row>
-            ))}
-          </View>
-          <Button title="Back to People" small variant="secondary" onPress={backToPeople} />
-        </Card>
-      ) : null}
+      <PageHeading eyebrow="PEOPLE · BULK IMPORT" title="Add people from Excel" subtitle="Prepare the file, check the columns, then review each row’s result."
+        right={<Button title="Back to people" variant="secondary" icon="arrow-back" onPress={() => router.push({ pathname: "/admin/users", params: { kind } })} />} />
+      <Split
+        main={
+          <Card>
+            <CardHead title="Import setup" />
+            <Dropdown label="Account type" value={kind} onChange={(v) => { setKind(v as typeof kind); setFile(null); }} width="100%" options={[{ value: "students", label: "Students" }, { value: "faculty", label: "Faculty" }]} />
+            <View style={{ flexDirection: "row" }}>
+              <Button title={showColumns ? "Hide template columns" : "View Excel template columns"} variant="secondary" icon="grid-outline" onPress={() => setShowColumns((v) => !v)} />
+            </View>
+            {showColumns ? (spec.loading && !spec.data ? <Loading lines={1} /> : (
+              <View style={{ gap: 6, padding: 14, borderRadius: 9, backgroundColor: "#F8FAF7", borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ fontSize: 12, color: colors.ink }}><Text style={{ fontWeight: "600" }}>Required: </Text>{required.map((c) => c.name).join(", ")}</Text>
+                {optional.length ? <Text style={{ fontSize: 12, color: colors.ink }}><Text style={{ fontWeight: "600" }}>Optional: </Text>{optional.map((c) => c.name).join(", ")}</Text> : null}
+                <Text style={{ fontSize: 11, color: colors.muted }}>Common variations such as {(spec.data?.columns ?? []).flatMap((c) => c.aliases).slice(0, 3).join(", ")} are understood; other columns are ignored.</Text>
+                {Platform.OS === "web" ? <View style={{ flexDirection: "row" }}><Button title="Download template" small variant="secondary" icon="download-outline" onPress={() => download.run()} busy={download.busy} /></View> : null}
+              </View>
+            )) : null}
+            <View style={{ borderWidth: 1.5, borderStyle: "dashed", borderColor: file ? colors.primary : "#B8CBBB", borderRadius: 12, backgroundColor: file ? colors.pale : "#F9FCF6", alignItems: "center", paddingVertical: 30, paddingHorizontal: 20, gap: 8 }}>
+              <TileIcon icon={file ? "document-text-outline" : "cloud-upload-outline"} size={48} />
+              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.ink }}>{file ? file.name : "Choose the completed Excel file"}</Text>
+              <Text style={{ fontSize: 12, color: colors.muted }}>{file?.size ? `${Math.max(1, Math.round(file.size / 1024))} KB` : "Use the current import template so the columns match. Only .xlsx is accepted."}</Text>
+              <Button title={file ? "Choose a different file" : "Choose file"} variant="secondary" icon="document-attach-outline" onPress={pick} />
+            </View>
+            <ErrorBanner message={upload.error ?? download.error ?? spec.error} />
+            <FormFooter note="File contents are not read or sent anywhere until you import.">
+              <Button title="Cancel" variant="secondary" onPress={() => router.push({ pathname: "/admin/users", params: { kind } })} />
+              <Button title={`Import ${who}`} icon="arrow-forward" onPress={() => upload.run()} busy={upload.busy} disabled={!file} />
+            </FormFooter>
+          </Card>
+        }
+        side={
+          <Card>
+            <CardHead title="Before you import" />
+            <StepList steps={[
+              ["Use the matching template", "Student and faculty columns differ."],
+              ["Check the email addresses", "An account cannot use an email already registered."],
+              ["Review row-by-row results", "Correct failed rows without redoing successful ones."],
+            ]} />
+          </Card>
+        }
+      />
     </Screen>
   );
 }

@@ -70,6 +70,14 @@ class SubjectModulesView(_Base):
         return Response(svc.subject_modules(request.user, subject))
 
 
+class TeachingActivityView(_Base):
+    """Recent attempts, submissions, book and lesson events in the caller's subjects."""
+    permission_classes = [IsAdminOrFaculty]
+
+    def get(self, request):
+        return Response(svc.teaching_activity(request.user))
+
+
 class StudentDetailView(_Base):
     """A student's overview as seen by faculty (shared subject required) or admin."""
     permission_classes = [IsAdminOrFaculty]

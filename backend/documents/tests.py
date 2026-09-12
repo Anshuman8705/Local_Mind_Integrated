@@ -1,3 +1,9 @@
+import threading
+from django.db import OperationalError, connection
+from django.test import TransactionTestCase
+from documents.services import documents as documents_service
+from datetime import timedelta
+from django.utils import timezone
 import shutil
 import tempfile
 from io import BytesIO
@@ -859,3 +865,69 @@ class LegacyWordUploadTests(TestCase):
             ok, reason = parser.legacy_doc_support()
         self.assertFalse(ok)
         self.assertTrue(reason)
+
+
+class ConcurrentProcessingTests(TransactionTestCase):
+    """Several requests to process the same book at the same moment: exactly one may start it.
+
+    The threads race on one SQLite file, which can also answer a writer with "database is locked"; that is
+    another way of losing the race, so it counts as "did not claim". What must never happen is two winners.
+    """
+    reset_sequences = True
+
+    def _race(self, doc, count=6):
+        results, unexpected = [], []
+        barrier = threading.Barrier(count)
+
+        def claim():
+            barrier.wait()
+            try:
+                results.append(documents_service.claim_for_processing(doc))
+            except OperationalError:
+                results.append(False)  # the database refused this writer: it did not claim the book
+            except Exception as exc:  # recorded, not raised, so one thread cannot hide the others
+                unexpected.append(exc)
+            finally:
+                connection.close()
+
+        threads = [threading.Thread(target=claim) for _ in range(count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        self.assertEqual(unexpected, [])
+        return results
+
+    def test_only_one_of_many_parallel_claims_wins(self):
+        faculty = make_faculty()
+        subject = make_subject()
+        assign(faculty, subject)
+        doc = Document.objects.create(subject=subject, title="Race", original_name="race.pdf", file_type="pdf", file_size=10,
+                                      status=DocumentStatus.UPLOADED, uploaded_by=faculty)
+        results = self._race(doc)
+        self.assertEqual(results.count(True), 1, f"{results.count(True)} claims won: {results}")
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, DocumentStatus.PROCESSING)
+
+    def test_a_stale_run_is_reclaimed_once(self):
+        faculty = make_faculty()
+        subject = make_subject()
+        assign(faculty, subject)
+        doc = Document.objects.create(subject=subject, title="Stale", original_name="stale.pdf", file_type="pdf", file_size=10,
+                                      status=DocumentStatus.PROCESSING, uploaded_by=faculty,
+                                      processing_started_at=timezone.now() - timedelta(hours=4))
+        results = self._race(doc, count=4)
+        self.assertEqual(results.count(True), 1, f"{results.count(True)} reclaims won: {results}")
+
+    def test_processing_again_is_allowed_once_the_first_run_finished(self):
+        """A quick book can finish before a second request arrives; that request may legitimately start it again."""
+        faculty = make_faculty()
+        subject = make_subject()
+        assign(faculty, subject)
+        doc = Document.objects.create(subject=subject, title="Quick", original_name="quick.pdf", file_type="pdf", file_size=10,
+                                      status=DocumentStatus.UPLOADED, uploaded_by=faculty)
+        self.assertTrue(documents_service.claim_for_processing(doc))
+        self.assertFalse(documents_service.claim_for_processing(doc))
+        Document.objects.filter(pk=doc.pk).update(status=DocumentStatus.UNDER_REVIEW)
+        doc.refresh_from_db()
+        self.assertTrue(documents_service.claim_for_processing(doc))

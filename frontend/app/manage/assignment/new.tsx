@@ -1,7 +1,6 @@
 import React from "react";
-import AssignmentWorkspace from "@/screens/AssignmentWorkspace";
+import { AssignmentNewPage } from "@/screens/AssignmentWorkspace";
 
-/** "New assignment" opens the workspace with the builder showing. */
 export default function NewAssignment() {
-  return <AssignmentWorkspace startNew />;
+  return <AssignmentNewPage />;
 }

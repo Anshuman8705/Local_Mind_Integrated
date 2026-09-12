@@ -1,9 +1,9 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import React from "react";
-import AssignmentWorkspace from "@/screens/AssignmentWorkspace";
+import { AssignmentListPage } from "@/screens/AssignmentWorkspace";
 
-/** The assignments tab: the list and the open assignment share one screen. */
 export default function Assignments() {
   const { assignment } = useLocalSearchParams<{ assignment?: string }>();
-  return <AssignmentWorkspace initialId={assignment} />;
+  if (assignment) return <Redirect href={{ pathname: "/manage/assignment/[id]", params: { id: assignment } }} />;
+  return <AssignmentListPage />;
 }

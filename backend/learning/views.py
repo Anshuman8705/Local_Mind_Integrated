@@ -7,7 +7,7 @@ from core.permissions import IsStudent
 from core.utils import get_or_404
 
 from . import services
-from .models import ProgressStatus
+from .models import Module, ProgressStatus
 
 
 def _module_payload(module, progress, include_source):
@@ -84,4 +84,11 @@ class StudentModuleView(APIView):
         payload["chapter_title"] = module.chapter.title
         payload["document_id"] = str(module.chapter.document_id)
         payload["document_title"] = module.chapter.document.title
+        # Position in the book ("Module 4 of 6") and who teaches it, for the module page.
+        ordered = list(Module.objects.filter(chapter__document_id=module.chapter.document_id, source_missing=False)
+                       .order_by("chapter__order", "order").values_list("id", flat=True))
+        payload["module_number"] = ordered.index(module.id) + 1 if module.id in ordered else None
+        payload["module_count"] = len(ordered)
+        from academics.views import subject_faculty_names
+        payload["faculty_names"] = subject_faculty_names([module.chapter.document.subject_id]).get(module.chapter.document.subject_id, [])
         return Response(payload)

@@ -5,6 +5,7 @@ import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { DialogHost, Loading, colors } from "@/ui";
+import { NativeDatePickerHost } from "@/ui/NativeDatePicker";
 
 /**
  * Shown instead of a blank white page when a screen throws while rendering.
@@ -14,15 +15,15 @@ import { DialogHost, Loading, colors } from "@/ui";
  */
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: "#080F13" }} contentContainerStyle={{ padding: 24, gap: 12, maxWidth: 720, alignSelf: "center", width: "100%" }}>
-      <Text style={{ color: "#F4F7F8", fontSize: 22, fontWeight: "800" }}>This screen ran into a problem</Text>
-      <Text style={{ color: "#8FA3AE", fontSize: 15, lineHeight: 22 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: "#F5F7F4" }} contentContainerStyle={{ padding: 24, gap: 12, maxWidth: 720, alignSelf: "center", width: "100%" }}>
+      <Text style={{ color: "#21382E", fontSize: 22, fontWeight: "600" }}>This screen ran into a problem</Text>
+      <Text style={{ color: "#62746A", fontSize: 15, lineHeight: 22 }}>
         Nothing was lost. Try again, or go back and open the page once more. If it keeps happening, send the message below to your administrator.
       </Text>
-      <Text selectable style={{ color: "#F3B51B", fontSize: 13, fontFamily: "monospace" }}>{error?.message || String(error)}</Text>
+      <Text selectable style={{ color: "#A33936", fontSize: 13, fontFamily: "monospace" }}>{error?.message || String(error)}</Text>
       <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
-        <Pressable onPress={retry} style={{ backgroundColor: "#25D0AA", paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8 }}>
-          <Text style={{ color: "#06231D", fontWeight: "700" }}>Try Again</Text>
+        <Pressable onPress={retry} style={{ backgroundColor: "#236148", paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8 }}>
+          <Text style={{ color: "#FFFFFF", fontWeight: "600" }}>Try Again</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -48,7 +49,9 @@ function Gate({ children }: { children: React.ReactNode }) {
     if (mustChangePassword) { if (!onChange) router.replace("/change-password"); return; }
     const home = user.role === "student" ? "/student" : user.role === "faculty" ? "/manage" : "/admin";
     const allowed = user.role === "student" ? ["student"] : user.role === "faculty" ? ["manage"] : ["admin", "manage"];
-    if (onLogin || onChange || !first || !allowed.includes(first)) router.replace(home as any);
+    // A signed-in person may open Change password from the account menu.
+    if (onChange) return;
+    if (onLogin || !first || !allowed.includes(first)) router.replace(home as any);
   }, [ready, user, mustChangePassword, segments, router]);
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center" }}><Loading /></View>;
   return <>{children}</>;
@@ -59,13 +62,13 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AuthProvider>
         <Gate>
-          <StatusBar style="light" />
+          <StatusBar style="dark" />
           <Stack screenOptions={{ headerStyle: { backgroundColor: colors.bg }, headerShadowVisible: false, headerTintColor: colors.text, headerTitleStyle: { fontWeight: "800" }, contentStyle: { backgroundColor: colors.bg } }}>
             <Stack.Screen name="login/index" options={{ headerShown: false }} />
             <Stack.Screen name="login/student" options={{ headerShown: false }} />
             <Stack.Screen name="login/faculty" options={{ headerShown: false }} />
             <Stack.Screen name="login/admin" options={{ headerShown: false }} />
-            <Stack.Screen name="change-password" options={{ title: "Set a new password", headerBackVisible: false }} />
+            <Stack.Screen name="change-password" options={{ headerShown: false }} />
             <Stack.Screen name="student" options={{ headerShown: false }} />
             <Stack.Screen name="manage" options={{ headerShown: false }} />
             <Stack.Screen name="admin" options={{ headerShown: false }} />
@@ -73,6 +76,7 @@ export default function RootLayout() {
           {/* One dialog host for the whole app: every confirmation and warning
               renders here, centred, instead of in a browser popup. */}
           <DialogHost />
+          <NativeDatePickerHost />
         </Gate>
       </AuthProvider>
     </SafeAreaProvider>

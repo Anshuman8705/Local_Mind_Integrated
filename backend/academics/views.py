@@ -201,8 +201,19 @@ class StudentSubjectListView(APIView):
     permission_classes = [IsStudent]
 
     def get(self, request):
-        enrollments = Enrollment.objects.filter(student=request.user, status=EnrollmentStatus.ACTIVE).select_related("subject")
+        enrollments = list(Enrollment.objects.filter(student=request.user, status=EnrollmentStatus.ACTIVE).select_related("subject"))
+        faculty = subject_faculty_names([e.subject_id for e in enrollments])
         return Response([
-            {**SubjectSerializer(e.subject).data, "enrollment_id": str(e.id), "enrolled_at": e.enrolled_at}
+            {**SubjectSerializer(e.subject).data, "enrollment_id": str(e.id), "enrolled_at": e.enrolled_at,
+             "faculty_names": faculty.get(e.subject_id, [])}
             for e in enrollments if e.subject.status == "active"
         ])
+
+
+def subject_faculty_names(subject_ids):
+    """Active faculty names per subject id, in one query (shown to enrolled students)."""
+    names = {}
+    for link in (FacultySubject.objects.filter(subject_id__in=subject_ids, status=AssignmentStatus.ACTIVE)
+                 .select_related("faculty").order_by("faculty__full_name")):
+        names.setdefault(link.subject_id, []).append(link.faculty.full_name)
+    return names

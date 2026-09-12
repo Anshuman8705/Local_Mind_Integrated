@@ -1,53 +1,48 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useAuth } from "@/auth/AuthContext";
-import { Badge, Button, Card, Divider, Gradient, Label, P, Row, Screen, colors } from "@/ui";
+import { confirmLeave } from "@/hooks/unsavedGuard";
+import { Avatar, Badge, Button, Card, CardHead, DetailList, Grid, ListRow, Notice, PageHeading, Screen, colors } from "@/ui";
+import { openHelp } from "./Shell";
+
+const pretty = (k: string) => k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 export function ProfileScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
   if (!user) return null;
-  const profile = user.profile ?? {};
-  const initials = user.full_name.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("") || "U";
-  const extra = Object.entries(profile).filter(([, v]) => v);
+  const role = user.role === "admin" ? "Administrator" : user.role.charAt(0).toUpperCase() + user.role.slice(1);
+  const extra = Object.entries(user.profile ?? {}).filter(([, v]) => v !== null && v !== undefined && v !== "");
   return (
     <Screen>
-      <Card style={{ padding: 0, overflow: "hidden", gap: 0 }}>
-        <Gradient name="hero" direction="horizontal" style={s.banner} />
-        <View style={s.identity}>
-          <Gradient name="brand" style={s.avatar}><Text style={s.avatarText}>{initials}</Text></Gradient>
-          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-            <Text style={s.name}>{user.full_name}</Text>
-            <Row><Ionicons name="mail-outline" size={14} color={colors.muted} /><P muted small>{user.email}</P></Row>
-          </View>
-          <Badge value={user.role} color={colors.primary} />
+      <PageHeading eyebrow="ACCOUNT" title="My profile" subtitle="Your account information and sign-in security." />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 16, padding: 24, borderRadius: 14, backgroundColor: "#EAF1E5", borderWidth: 1, borderColor: "#D9E6D5" }}>
+        <Avatar name={user.full_name} size={64} />
+        <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+          <Text style={{ fontSize: 18, fontWeight: "600", color: colors.ink }}>{user.full_name}</Text>
+          <Text style={{ fontSize: 12, color: colors.muted }}>{user.email}</Text>
+          <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}><Badge value={role} tone="green" /></View>
         </View>
-      </Card>
-      {extra.length ? (
+      </View>
+      <Grid min={320} gap={20}>
         <Card>
-          {extra.map(([k, v], i) => (
-            <React.Fragment key={k}>
-              {i > 0 ? <Divider /> : null}
-              <View style={s.field}><Label>{k.replace(/_/g, " ")}</Label><P>{String(v)}</P></View>
-            </React.Fragment>
-          ))}
+          <CardHead title="Account details" />
+          <DetailList items={[
+            ["Full name", user.full_name], ["Email", user.email], ["Role", role],
+            ["Account status", <Badge key="st" value={user.status} tone={user.status === "active" ? "green" : "red"} />],
+            ...extra.map(([k, v]) => [pretty(k), String(v)] as [string, string]),
+          ]} />
+          <Text style={{ fontSize: 11, color: colors.muted, marginTop: 8 }}>Profile changes are managed by your administrator.</Text>
         </Card>
-      ) : null}
-      <Row style={{ gap: 12 }}>
-        <View style={{ flex: 1, minWidth: 200 }}><Button title="Change Password" icon="key-outline" variant="secondary" onPress={() => router.push("/change-password")} /></View>
-        <View style={{ flex: 1, minWidth: 200 }}><Button title="Sign Out" icon="log-out-outline" variant="danger" onPress={() => logout()} /></View>
-      </Row>
+        <Card>
+          <CardHead title="Security & help" />
+          <ListRow plain icon="key-outline" title="Change password" subtitle="Update your sign-in password." onPress={() => router.push("/change-password")} />
+          <ListRow plain icon="compass-outline" title="Getting started" subtitle="Understand the main areas of your workspace." right={<Button title="Open guide" small variant="secondary" onPress={openHelp} />} />
+          <View style={{ flexDirection: "row", marginTop: 8 }}><Button title="Sign out" small variant="secondary" icon="log-out-outline" onPress={() => { void confirmLeave("signOut").then((ok) => { if (ok) void logout(); }); }} /></View>
+        </Card>
+      </Grid>
+      {user.role === "student" ? <Notice title="Using a shared device?" message="Signing out removes downloaded offline reading and your saved profile from this device." /> : null}
     </Screen>
   );
 }
-
-const s = StyleSheet.create({
-  banner: { height: 72 },
-  identity: { flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 20, paddingBottom: 20, marginTop: -28 },
-  avatar: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: colors.surface },
-  avatarText: { color: colors.primaryText, fontSize: 22, fontWeight: "800" },
-  name: { color: colors.text, fontSize: 20, fontWeight: "800", marginTop: 20 },
-  field: { gap: 4, paddingVertical: 4 },
-});

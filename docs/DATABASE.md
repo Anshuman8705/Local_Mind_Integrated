@@ -183,7 +183,7 @@ Unique on (`assessment`, `student`, `attempt_number`). `assessment` FK PROTECT (
 
 ### assignments
 
-`subject` FK PROTECT, optional `chapter` and `module` FK PROTECT, `created_by`, `title`, `description`, `instructions`, `rubric` JSON `[{"criterion", "points"}]` summing to `max_score`, `max_score` smallint, `generator`, `status` (`draft`, `published`, `closed`), `available_from`, `due_at`, `allow_late`, `allow_resubmission`, `published_at`, `closed_at`. Indexed on (`subject`, `status`).
+`subject` FK PROTECT, optional `chapter` and `module` FK PROTECT, `created_by`, `title`, `description`, `instructions`, `rubric` JSON `[{"criterion", "points"}]` summing to `max_score`, `max_score` smallint, `generator`, `status` (`draft`, `published`, `closed`), `available_from`, `due_at`, `allow_late`, `allow_resubmission`, `max_attempts` (positive int, null; with resubmission allowed, the total number of submissions a student may make, null meaning no limit; added by `assignments/0004_assignment_max_attempts`), `published_at`, `closed_at`. Indexed on (`subject`, `status`).
 
 ### assignment_submissions
 

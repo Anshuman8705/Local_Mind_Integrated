@@ -8,6 +8,8 @@ applies to time-stamped facts (attempts, submissions, sessions, events).
 Structural facts such as enrollment counts are point-in-time.
 """
 
+from datetime import timedelta
+
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -191,9 +193,19 @@ def student_subject_detail(student, subject, window=(None, None), released_only=
     subs = _between(AssignmentSubmission.objects.filter(student=student, assignment__subject=subject), "submitted_at", window)
     if released_only:
         attempts, subs = _released_attempts(attempts), _released_submissions(subs)
+    recent = []
+    if not released_only:
+        for att in (AssessmentAttempt.objects.filter(student=student, assessment__subject=subject).exclude(status="in_progress")
+                    .select_related("assessment").order_by("-submitted_at")[:20]):
+            recent.append({
+                "id": str(att.id), "quiz_id": str(att.assessment_id), "quiz_title": att.assessment.title,
+                "attempt_number": att.attempt_number, "status": att.status, "percentage": att.percentage,
+                "passed": att.passed, "submitted_at": att.submitted_at, "results_released": bool(att.results_visible),
+            })
     return {
         "subject": {"id": str(subject.id), "code": subject.code, "name": subject.name},
         "modules": rows,
+        "quiz_attempts": recent,
         "quiz_average": round(attempts.aggregate(a=Avg("percentage"))["a"], 1) if attempts.exists() else None,
         "assignment_average": round(subs.aggregate(a=Avg("score"))["a"], 1) if subs.filter(score__isnull=False).exists() else None,
         "time": {
@@ -270,7 +282,7 @@ def subject_students(actor, subject, window=(None, None)):
     completed = {r["student"]: r["n"] for r in ModuleProgress.objects.filter(module__in=modules, status="completed").values("student").annotate(n=Count("id"))}
     needs_review = {r["student"]: r["n"] for r in ModuleProgress.objects.filter(module__in=modules, status="needs_review").values("student").annotate(n=Count("id"))}
     attempts = _between(AssessmentAttempt.objects.filter(assessment__subject=subject, status="evaluated"), "submitted_at", window)
-    quiz = {r["student"]: r for r in attempts.values("student").annotate(n=Count("id"), avg=Avg("percentage"), passed=Count("id", filter=Q(passed=True)))}
+    quiz = {r["student"]: r for r in attempts.values("student").annotate(n=Count("id"), avg=Avg("percentage"), best=Max("percentage"), passed=Count("id", filter=Q(passed=True)))}
     subs = _between(AssignmentSubmission.objects.filter(assignment__subject=subject), "submitted_at", window)
     assign = {r["student"]: r for r in subs.values("student").annotate(n=Count("id"), avg=Avg("score"), late=Count("id", filter=Q(is_late=True)))}
     events = _between(ActivityEvent.objects.filter(subject=subject), "occurred_at", window)
@@ -290,6 +302,7 @@ def subject_students(actor, subject, window=(None, None)):
             "completion_percentage": round(100.0 * completed.get(sid, 0) / total, 1) if total else 0.0,
             "quiz_attempts": q.get("n", 0), "quiz_passed": q.get("passed", 0),
             "quiz_average": round(q["avg"], 1) if q.get("avg") is not None else None,
+            "best_quiz_percentage": round(q["best"], 1) if q.get("best") is not None else None,
             "assignments_submitted": a.get("n", 0), "assignments_late": a.get("late", 0),
             "assignment_average": round(a["avg"], 1) if a.get("avg") is not None else None,
             "learning_seconds": t.get("learning") or 0, "quiz_seconds": t.get("quiz") or 0, "assignment_seconds": t.get("assignment") or 0,
@@ -336,6 +349,60 @@ def faculty_overview(actor, window=(None, None)):
 
 
 # ------------------------------------------------------------- admin --------
+
+def teaching_activity(actor, days=14, limit=8):
+    """Recent things that happened in the subjects this person teaches, newest first.
+
+    Built from the records that already exist (attempts, submissions, books,
+    lessons), grouped per item and day so a class of thirty submitting the same
+    quiz reads as one line rather than thirty.
+    """
+    from tutor.models import ModuleLesson
+    since = timezone.now() - timedelta(days=days)
+    subjects = scoped_subjects(actor)
+    items = []
+
+    def day(dt):
+        return timezone.localtime(dt).date()
+
+    groups = {}
+    for att in (AssessmentAttempt.objects.filter(assessment__subject__in=subjects, submitted_at__gte=since)
+                .exclude(status="in_progress").select_related("assessment", "assessment__subject")):
+        key = ("quiz", att.assessment_id, day(att.submitted_at))
+        g = groups.setdefault(key, {"count": 0, "evaluated": 0, "at": att.submitted_at, "title": att.assessment.title,
+                                    "subject": att.assessment.subject.code, "id": str(att.assessment_id)})
+        g["count"] += 1; g["evaluated"] += att.status == "evaluated"; g["at"] = max(g["at"], att.submitted_at)
+    for (_, _, _), g in [(k, v) for k, v in groups.items() if k[0] == "quiz"]:
+        n = g["count"]
+        items.append({"kind": "quiz_attempts", "title": f"{n} quiz attempt{'s' if n != 1 else ''} {'evaluated' if g['evaluated'] == n else 'submitted'}",
+                      "detail": g["title"], "subject": g["subject"], "at": g["at"], "target_id": g["id"]})
+    subs = {}
+    for sub in (AssignmentSubmission.objects.filter(assignment__subject__in=subjects, submitted_at__gte=since)
+                .select_related("assignment", "assignment__subject")):
+        key = (sub.assignment_id, day(sub.submitted_at))
+        g = subs.setdefault(key, {"count": 0, "at": sub.submitted_at, "title": sub.assignment.title, "subject": sub.assignment.subject.code, "id": str(sub.assignment_id)})
+        g["count"] += 1; g["at"] = max(g["at"], sub.submitted_at)
+    for g in subs.values():
+        n = g["count"]
+        items.append({"kind": "assignment_submissions", "title": f"{n} assignment submission{'s' if n != 1 else ''} received",
+                      "detail": g["title"], "subject": g["subject"], "at": g["at"], "target_id": g["id"]})
+    labels = {"under_review": "Book ready for review", "ready": "Book marked ready", "published": "Book published", "error": "Book processing failed"}
+    for doc in Document.objects.filter(subject__in=subjects, updated_at__gte=since, status__in=list(labels)).select_related("subject"):
+        items.append({"kind": "document", "title": labels[doc.status], "detail": doc.title, "subject": doc.subject.code,
+                      "at": doc.published_at if doc.status == "published" and doc.published_at else doc.updated_at, "target_id": str(doc.id)})
+    lessons = {}
+    for lesson in (ModuleLesson.objects.filter(module__chapter__document__subject__in=subjects, status="ready", updated_at__gte=since)
+                   .select_related("module__chapter__document__subject")):
+        doc = lesson.module.chapter.document
+        g = lessons.setdefault((doc.id, day(lesson.updated_at)), {"count": 0, "at": lesson.updated_at, "title": doc.title, "subject": doc.subject.code, "id": str(doc.id)})
+        g["count"] += 1; g["at"] = max(g["at"], lesson.updated_at)
+    for g in lessons.values():
+        n = g["count"]
+        items.append({"kind": "lessons", "title": f"{n} lesson{'s' if n != 1 else ''} generated", "detail": g["title"],
+                      "subject": g["subject"], "at": g["at"], "target_id": g["id"]})
+    items.sort(key=lambda x: x["at"], reverse=True)
+    return {"items": items[:limit], "window_days": days}
+
 
 def admin_overview(window=(None, None)):
     users = User.objects.values("role", "status").annotate(n=Count("id"))
@@ -391,6 +458,7 @@ def admin_subjects(window=(None, None)):
             "subject_id": str(s.id), "code": s.code, "name": s.name, "status": s.status, "faculty": faculty,
             "students_enrolled": Enrollment.objects.filter(subject=s, status="active").count(),
             "documents_published": Document.objects.filter(subject=s, status="published").count(),
+            "modules_published": Module.objects.filter(chapter__document__subject=s, chapter__document__status="published", source_missing=False).count(),
             "quiz_attempts": attempts.count(),
             "quiz_average": round(attempts.aggregate(a=Avg("percentage"))["a"], 1) if attempts.exists() else None,
             "students_active_in_window": events.values("user").distinct().count(),

@@ -6456,6 +6456,102 @@ paths:
                     - message
                 required:
                 - error
+  /api/faculty/analytics/activity/:
+    get:
+      operationId: get_faculty_analytics_activity
+      description: Recent attempts, submissions, book and lesson events in the caller's
+        subjects.
+      tags:
+      - faculty
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                      message:
+                        type: string
+                      details:
+                        type: object
+                    required:
+                    - code
+                    - message
+                required:
+                - error
   /api/faculty/analytics/overview/:
     get:
       operationId: get_faculty_analytics_overview
@@ -15384,11 +15480,25 @@ components:
             quiz screen can release it as a false alarm. Only looked up for held
             quizzes.
           readOnly: true
+        hold_details:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          description: |-
+            What the monitor actually flagged on a held quiz: the question(s) its failing checks name, the
+            findings, and the source passages it compared against.
+
+            Quiz checks list the questions they flag by id (``"<id>: problem"``, or the bare id), falling back
+            to ``q<n>`` for questions without an id. Only those references count, so a finding about one question
+            never flags the others. ``question_ids`` is empty when no failing check names a question (for
+            example a judge-only finding); the screen then says the question is not identified.
+          readOnly: true
       required:
       - attempt_count
       - chapter_id
       - created_at
       - created_by_name
+      - hold_details
       - hold_incident_id
       - id
       - kind
@@ -15457,6 +15567,12 @@ components:
           type: boolean
         allow_resubmission:
           type: boolean
+        max_attempts:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: 0
+          format: int64
+          nullable: true
         published_at:
           type: string
           format: date-time
@@ -15535,6 +15651,10 @@ components:
           type: string
           format: email
           readOnly: true
+        student_name:
+          type: string
+          readOnly: true
+          default: ''
         attempt_number:
           type: integer
           maximum: 9223372036854775807
@@ -15601,6 +15721,7 @@ components:
       - started_at
       - student_email
       - student_id
+      - student_name
     AuditLog:
       type: object
       properties:
@@ -15707,6 +15828,10 @@ components:
           type: string
           readOnly: true
           default: ''
+        published_by_name:
+          type: string
+          readOnly: true
+          default: ''
         processed_at:
           type: string
           format: date-time
@@ -15765,6 +15890,7 @@ components:
       - module_count
       - original_name
       - progress
+      - published_by_name
       - subject_code
       - subject_id
       - updated_at
@@ -16336,6 +16462,10 @@ components:
           type: string
           format: email
           readOnly: true
+        student_name:
+          type: string
+          readOnly: true
+          default: ''
         attempt_number:
           type: integer
           maximum: 9223372036854775807
@@ -16376,6 +16506,10 @@ components:
           type: string
           format: date-time
           nullable: true
+        results_released_at:
+          type: string
+          format: date-time
+          nullable: true
       required:
       - assignment_id
       - assignment_title
@@ -16384,6 +16518,7 @@ components:
       - max_score
       - student_email
       - student_id
+      - student_name
       - submitted_at
     User:
       type: object

@@ -1,9 +1,8 @@
 import { useLocalSearchParams } from "expo-router";
 import React from "react";
-import QuizWorkspace from "@/screens/QuizWorkspace";
+import { QuizDetailPage, type Tab } from "@/screens/QuizWorkspace";
 
-/** A direct link to one quiz opens the workspace with it selected. */
 export default function QuizScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  return <QuizWorkspace initialId={id} />;
+  const { id, tab, note } = useLocalSearchParams<{ id: string; tab?: Tab; note?: string }>();
+  return <QuizDetailPage id={id} initialTab={tab} note={note} />;
 }

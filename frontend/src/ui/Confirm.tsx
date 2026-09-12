@@ -46,7 +46,9 @@ interface DialogRequest extends DialogOptions {
   message: string;
   okLabel: string;
   cancelLabel: string;
-  resolve: (value: boolean) => void;
+  resolve: (value: boolean | "extra") => void;
+  /** A third button between cancel and confirm (used by choiceAsync). */
+  extraLabel?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -89,7 +91,7 @@ export function confirmAsync(
       icon: options.icon,
       detail: options.detail,
       acknowledge: options.acknowledge,
-      resolve,
+      resolve: (v) => resolve(v === true),
     });
   });
 }
@@ -105,6 +107,18 @@ export function confirmDeleteAsync(
 }
 
 /** Single-button message. Replaces window.alert. */
+/**
+ * Three choices, e.g. Save / Discard / Stay when leaving unsaved work. Escape or the backdrop means `cancel`.
+ */
+export function choiceAsync(title: string, message: string, labels: { confirm: string; extra: string; cancel: string }): Promise<"confirm" | "extra" | "cancel"> {
+  return new Promise((resolve) => {
+    enqueue({
+      id: ++sequence, title, message, okLabel: labels.confirm, cancelLabel: labels.cancel, extraLabel: labels.extra, tone: "primary",
+      resolve: (v) => resolve(v === "extra" ? "extra" : v ? "confirm" : "cancel"),
+    });
+  });
+}
+
 export function alertAsync(title: string, message = "", okLabel = "OK"): Promise<boolean> {
   return confirmAsync(title, message, okLabel, "", { acknowledge: true });
 }
@@ -129,7 +143,7 @@ export function DialogHost() {
   }, []);
 
   const current = pending[0];
-  const answer = useCallback((value: boolean) => {
+  const answer = useCallback((value: boolean | "extra") => {
     if (!current) return;
     current.resolve(value);
     dequeue(current.id);
@@ -183,6 +197,11 @@ export function DialogHost() {
                 <Text style={[s.btnText, { color: colors.text }]}>{current.cancelLabel || "Cancel"}</Text>
               </Pressable>
             )}
+            {current.extraLabel ? (
+              <Pressable onPress={() => answer("extra")} accessibilityRole="button" style={({ pressed }) => [s.btn, s.btnGhost, pressed && { opacity: 0.8 }]}>
+                <Text style={[s.btnText, { color: colors.danger }]}>{current.extraLabel}</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={() => answer(true)}
               accessibilityRole="button"
@@ -200,7 +219,7 @@ export function DialogHost() {
 const s = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(3,8,11,0.72)",
+    backgroundColor: "rgba(22,40,30,0.35)",
     alignItems: "center",
     justifyContent: "center",
     padding: space.lg,
@@ -213,11 +232,9 @@ const s = StyleSheet.create({
     borderColor: colors.borderStrong,
     padding: space.xl,
     gap: space.md,
-    shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 16,
+    ...(Platform.OS === "web"
+      ? ({ boxShadow: "0 14px 40px rgba(22,40,30,0.18)" } as object)
+      : { shadowColor: "#1B3B2A", shadowOpacity: 0.18, shadowRadius: 28, shadowOffset: { width: 0, height: 14 }, elevation: 16 }),
   },
   head: { flexDirection: "row", alignItems: "center", gap: space.md },
   iconWrap: {

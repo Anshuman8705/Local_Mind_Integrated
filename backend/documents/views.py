@@ -20,7 +20,7 @@ from .services import documents as svc
 
 
 def _docs_for(user):
-    return Document.objects.visible_to(user).select_related("subject", "uploaded_by")
+    return Document.objects.visible_to(user).select_related("subject", "uploaded_by", "published_by")
 
 
 def _doc(user, document_id):
@@ -59,7 +59,7 @@ def _detail(user, document_id):
     """The document with its outline and each module's lesson loaded in a
     handful of queries; the book screen polls this while lessons generate."""
     document = _doc(user, document_id)
-    return (Document.objects.select_related("subject", "uploaded_by")
+    return (Document.objects.select_related("subject", "uploaded_by", "published_by")
             .prefetch_related("chapters__modules__lesson", "chapters__modules__auto_quiz_job").get(pk=document.pk))
 
 

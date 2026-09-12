@@ -13,7 +13,7 @@ class AssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Assignment
         fields = ["id", "subject_id", "chapter_id", "module_id", "title", "description", "instructions", "rubric", "max_score",
-                  "generator", "status", "available_from", "due_at", "allow_late", "allow_resubmission", "published_at",
+                  "generator", "status", "available_from", "due_at", "allow_late", "allow_resubmission", "max_attempts", "published_at",
                   "closed_at", "submission_count", "created_at", "updated_at",
                   "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count"]
 
@@ -34,11 +34,12 @@ class SubmissionSerializer(serializers.ModelSerializer):
     max_score = serializers.IntegerField(source="assignment.max_score", read_only=True)
     student_id = serializers.UUIDField(read_only=True)
     student_email = serializers.EmailField(source="student.email", read_only=True)
+    student_name = serializers.CharField(source="student.full_name", read_only=True, default="")
 
     class Meta:
         model = AssignmentSubmission
-        fields = ["id", "assignment_id", "assignment_title", "max_score", "student_id", "student_email", "attempt_number",
-                  "content", "submitted_at", "is_late", "time_spent_seconds", "status", "score", "feedback", "rubric_scores", "evaluated_at"]
+        fields = ["id", "assignment_id", "assignment_title", "max_score", "student_id", "student_email", "student_name", "attempt_number",
+                  "content", "submitted_at", "is_late", "time_spent_seconds", "status", "score", "feedback", "rubric_scores", "evaluated_at", "results_released_at"]
 
 
 class RubricItemSerializer(serializers.Serializer):
@@ -56,6 +57,7 @@ class _Fields(serializers.Serializer):
     due_at = serializers.DateTimeField(required=False, allow_null=True)
     allow_late = serializers.BooleanField(required=False)
     allow_resubmission = serializers.BooleanField(required=False)
+    max_attempts = serializers.IntegerField(min_value=1, max_value=100, required=False, allow_null=True)
     results_release = serializers.ChoiceField(choices=["immediate", "held", "scheduled"], required=False)
     results_release_at = serializers.DateTimeField(required=False, allow_null=True)
 

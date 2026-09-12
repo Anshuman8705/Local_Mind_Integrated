@@ -180,6 +180,9 @@ def generate(actor, *, module_id=None, chapter_id=None, module_ids=None, num_mcq
     return assessment, error
 
 
+CLEARABLE = ("max_attempts", "time_limit_minutes", "available_from", "due_at", "results_release_at")
+
+
 @transaction.atomic
 def update(actor, assessment, *, questions=None, request=None, **fields):
     _require_manage(actor, assessment.subject)
@@ -188,14 +191,23 @@ def update(actor, assessment, *, questions=None, request=None, **fields):
     changes = {}
     for key in ("title", "instructions", "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at",
                 "results_release", "results_release_at"):
-        if key in fields and fields[key] is not None and fields[key] != getattr(assessment, key):
-            changes[key] = True
-            setattr(assessment, key, fields[key])
+        if key not in fields or fields[key] == getattr(assessment, key):
+            continue
+        # null clears the limits and dates that may be empty; the others keep their value.
+        if fields[key] is None and key not in CLEARABLE:
+            continue
+        changes[key] = True
+        setattr(assessment, key, fields[key])
+    if questions is not None and normalize_questions(questions) == (assessment.questions or []):
+        questions = None  # the same questions sent back with a settings change: nothing to version
     if questions is not None:
         new_questions = normalize_questions(questions)
         if assessment.attempts.exists():
             # Attempts exist: freeze this row, spawn a new version.
-            old = assessment
+            # Settings changed in the same save apply to the old row's values before they are copied.
+            old = Assessment.objects.get(pk=assessment.pk)
+            sources = list(old.source_modules.all())
+            anchor = old.chapter or (old.module.chapter if old.module_id else None) or (sources[0].chapter if sources else None)
             old.status = AssessmentStatus.SUPERSEDED
             old.save(update_fields=["status", "updated_at"])
             assessment = Assessment.objects.create(
@@ -203,8 +215,12 @@ def update(actor, assessment, *, questions=None, request=None, **fields):
                 instructions=old.instructions, questions=new_questions, generator=Generator.MANUAL, status=AssessmentStatus.DRAFT,
                 pass_percentage=old.pass_percentage, max_attempts=old.max_attempts, time_limit_minutes=old.time_limit_minutes,
                 available_from=old.available_from, due_at=old.due_at, version=old.version + 1, supersedes=old,
-                created_by=actor, content_version_at_creation=old.chapter.document.content_version,
+                results_release=old.results_release, results_release_at=old.results_release_at,
+                created_by=actor,
+                content_version_at_creation=anchor.document.content_version if anchor else old.content_version_at_creation,
             )
+            if sources:
+                assessment.source_modules.set(sources)
             for key in changes:
                 setattr(assessment, key, fields[key])
             assessment.save()

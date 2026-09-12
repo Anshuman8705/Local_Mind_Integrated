@@ -58,7 +58,7 @@ export function OneTimeCredentials({ rows, title, onDone, filename = "localmind-
         ))}
       </View>
       <Row>
-        {canCopy ? <Button title={copied ? "Copied" : rows.length === 1 ? "Copy Password" : "Copy All"} icon="copy-outline" small variant="secondary" onPress={copy} /> : null}
+        {canCopy ? <Button title={copied ? "Copied" : rows.length === 1 ? "Copy password" : "Copy all"} icon="copy-outline" small variant="secondary" onPress={copy} /> : null}
         {Platform.OS === "web" && rows.length > 1 ? <Button title="Download CSV" icon="download-outline" small variant="secondary" onPress={() => downloadCsv(filename, rows)} /> : null}
         {onDone ? <Button title="Done" small onPress={onDone} /> : null}
       </Row>

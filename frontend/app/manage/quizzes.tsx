@@ -1,9 +1,10 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import React from "react";
-import QuizWorkspace from "@/screens/QuizWorkspace";
+import { QuizListPage } from "@/screens/QuizWorkspace";
 
-/** The quizzes tab: the list and the open quiz share one screen. */
 export default function Quizzes() {
   const { quiz } = useLocalSearchParams<{ quiz?: string }>();
-  return <QuizWorkspace initialId={quiz} />;
+  // Older links opened a quiz inside the list; send them to the quiz's own page.
+  if (quiz) return <Redirect href={{ pathname: "/manage/quiz/[id]", params: { id: quiz } }} />;
+  return <QuizListPage />;
 }

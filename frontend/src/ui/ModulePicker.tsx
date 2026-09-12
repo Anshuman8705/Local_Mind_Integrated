@@ -99,7 +99,7 @@ export function ModulePicker({ value, onChange, subjectId, onSubjectChange, disa
                 <View key={key}>
                   <View style={p.ch}>
                     <Box state={on === 0 ? "off" : on === ids.length ? "on" : "part"} onPress={() => !disabled && toggleChapter(ids)} />
-                    <Pressable style={p.chName} onPress={() => setOpen(expanded && on === 0 ? null : key)}>
+                    <Pressable style={p.chName} accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setOpen(expanded && on === 0 ? null : key)}>
                       <Ionicons name={expanded ? "chevron-down" : "chevron-forward"} size={13} color={colors.faint} />
                       <Text style={p.chText} numberOfLines={1}>{c.title}</Text>
                       <Text style={p.chCount}>{on ? `${on}/${ids.length}` : ids.length}</Text>
@@ -109,6 +109,7 @@ export function ModulePicker({ value, onChange, subjectId, onSubjectChange, disa
                     <View style={p.mods}>
                       {c.modules.map((m) => (
                         <Pressable key={m.id} onPress={() => !disabled && m.id && toggle(m.id)}
+                          accessibilityRole="checkbox" accessibilityLabel={m.title} accessibilityState={{ checked: !!(m.id && chosen.has(m.id)), disabled: !!disabled }}
                           style={({ pressed }) => [p.m, pressed && { opacity: 0.85 }]}>
                           <Box state={m.id && chosen.has(m.id) ? "on" : "off"} />
                           <Text style={[p.mText, m.id && chosen.has(m.id) && { color: colors.text }]} numberOfLines={1}>{m.title}</Text>
@@ -135,7 +136,7 @@ function Box({ state, onPress }: { state: "on" | "off" | "part"; onPress?: () =>
       {state === "part" ? <View style={p.dash} /> : null}
     </View>
   );
-  return onPress ? <Pressable onPress={onPress} hitSlop={6}>{body}</Pressable> : body;
+  return onPress ? <Pressable onPress={onPress} hitSlop={6} accessibilityRole="checkbox" accessibilityState={{ checked: state === "on" ? true : state === "part" ? "mixed" : false }}>{body}</Pressable> : body;
 }
 
 const p = StyleSheet.create({

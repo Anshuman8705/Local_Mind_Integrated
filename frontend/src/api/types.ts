@@ -17,6 +17,8 @@ export interface Paginated<T> { count: number; next: string | null; previous: st
 export interface Subject {
   id: string; name: string; code: string; description?: string;
   status: "active" | "discontinued" | "archived"; created_at?: string;
+  /** Active faculty for the subject (student subject list only). */
+  faculty_names?: string[];
 }
 export type ModuleAvailability = "locked" | "open";
 export type ProgressStatus = "not_started" | "in_progress" | "completed" | "needs_review";
@@ -30,6 +32,8 @@ export interface ModuleBrief {
 export interface ModuleFull extends ModuleBrief {
   chapter_id: string; source_text: string; source_heading_index?: number | null; is_user_edited?: boolean;
   document_id?: string; document_title?: string; chapter_title?: string;
+  /** Position in the book and who teaches it (student module detail). */
+  module_number?: number | null; module_count?: number; faculty_names?: string[];
 }
 export interface Chapter { id: string; title: string; order: number; modules: ModuleBrief[]; status?: string }
 export type DocumentStatus = "uploaded" | "processing" | "under_review" | "ready" | "published" | "unpublished" | "archived" | "error";
@@ -46,7 +50,7 @@ export interface Document {
     dismissed: number; short?: number; min_chars?: number; enabled: boolean };
   /** Detail endpoint only: chapters with each module's lesson_status. */
   chapters?: OutlineChapter[];
-  uploaded_by_name?: string; created_at: string; published_at?: string | null;
+  uploaded_by_name?: string; published_by_name?: string; created_at: string; updated_at?: string; published_at?: string | null; archived_at?: string | null;
   processing_started_at?: string | null;
   /** Present only while a processing run is in flight. */
   progress?: { step: number; total_steps: number; stage: string; detail: string; percent: number } | null;
@@ -73,7 +77,7 @@ export interface Question {
 export interface Quiz {
   id: string; title: string; instructions?: string; kind: "module" | "chapter" | "selection"; subject_id: string; module_id: string | null;
   chapter_id: string | null; status: "draft" | "published" | "closed" | "superseded"; generator: "ai" | "fallback" | "manual";
-  pass_percentage: number; max_attempts: number; time_limit_minutes: number | null; available_from: string | null; due_at: string | null;
+  pass_percentage: number; max_attempts: number | null; time_limit_minutes: number | null; available_from: string | null; due_at: string | null;
   version: number; question_count?: number; attempt_count?: number; questions?: Question[];
   /** Modules the questions were written from, when the quiz targets a chosen set. */
   source_module_ids?: string[];
@@ -83,20 +87,21 @@ export interface Quiz {
   held_for_review?: boolean; hold_reason?: string; checked_at?: string | null;
   /** The AI monitor incident a held quiz waits on (faculty and admin views). */
   hold_incident_id?: string | null;
+  hold_details?: { question_ids: string[]; evidence: { ref: string; text: string }[]; findings: { name: string; detail: string }[]; reason?: string } | null;
   /** Returned by generation only: what fell short of the request, or null. */
   generation_warning?: string | null;
   results_release?: "immediate" | "held" | "scheduled";
   results_release_at?: string | null;
   results_released_at?: string | null;
   pending_release_count?: number;
-  attempts_used?: number; best_percentage?: number | null; passed?: boolean | null; created_by_name?: string; created_at: string;
+  attempts_used?: number; results_pending?: number; best_percentage?: number | null; passed?: boolean | null; created_by_name?: string; created_at: string;
 }
 export interface DetailedResult {
   question_id: string; type: "mcq" | "subjective"; question: string; selected_option?: string; correct_option?: string;
   student_answer?: string; is_correct: boolean | null; score_awarded: number | null; explanation?: string; feedback?: string; missing_points?: string[];
 }
 export interface Attempt {
-  id: string; assessment_id: string; assessment_title?: string; student_id?: string; student_email?: string; attempt_number: number;
+  id: string; assessment_id: string; assessment_title?: string; student_id?: string; student_email?: string; student_name?: string; attempt_number: number;
   status: "in_progress" | "submitted" | "pending_evaluation" | "evaluated"; started_at: string; submitted_at: string | null;
   time_taken_seconds: number; score: number | null; total_questions: number; percentage: number | null; passed: boolean | null;
   detailed_results: DetailedResult[];
@@ -109,7 +114,7 @@ export interface RubricItem { criterion: string; points: number }
 export interface Assignment {
   id: string; title: string; description?: string; instructions?: string; subject_id: string; module_id: string | null; chapter_id: string | null;
   rubric: RubricItem[]; max_score: number; generator: string; status: "draft" | "published" | "closed";
-  available_from: string | null; due_at: string | null; allow_late: boolean; allow_resubmission: boolean;
+  available_from: string | null; due_at: string | null; allow_late: boolean; allow_resubmission: boolean; max_attempts?: number | null;
   submission_count?: number; my_submission?: Submission | null; created_at: string;
   /** Modules the brief and rubric were drafted from, when a set was chosen. */
   source_module_ids?: string[];
@@ -119,9 +124,10 @@ export interface Assignment {
   pending_release_count?: number;
 }
 export interface Submission {
-  id: string; assignment_id: string; assignment_title?: string; student_id?: string; student_email?: string; attempt_number: number;
+  id: string; assignment_id: string; assignment_title?: string; student_id?: string; student_email?: string; student_name?: string; attempt_number: number;
   content: string; submitted_at: string; is_late: boolean; time_spent_seconds: number; status: "submitted" | "evaluated" | "returned";
   score: number | null; feedback: string; rubric_scores: { criterion: string; points: number }[]; evaluated_at: string | null;
+  results_released_at?: string | null;
 }
 
 export interface LessonSection { heading: string; explanation: string; source_reference: string }

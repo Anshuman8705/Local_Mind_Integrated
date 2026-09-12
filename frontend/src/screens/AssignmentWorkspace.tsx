@@ -1,105 +1,125 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Text, View } from "react-native";
 import { manage } from "@/api/endpoints";
-import type { Assignment } from "@/api/types";
+import type { Assignment, Submission } from "@/api/types";
 import { useAction, useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
+import { useDraft, useUnsavedWarning } from "@/hooks/useDraft";
+import { confirmLeave, registerGuard } from "@/hooks/unsavedGuard";
 import {
-  Badge, Button, Chip, ErrorBanner, Input, Loading, Notice, P, Row, Screen,
-  colors, confirmAsync, confirmDeleteAsync, fmtDate, space,
-} from "@/ui";
-import { ModulePicker } from "@/ui/ModulePicker";
-import { ResultsRelease, type ReleaseMode, releaseSummary } from "@/ui/ResultsRelease";
-import {
-  DetailPane, EmptyPane, Foot, FootState, Hint, ListItem, ListPane, PaneScroll, Rows, SectionLabel,
-  SettingRow, Strip, Tabs, WorkspaceBody, useSplit,
-} from "@/ui/workspace";
+  Badge, Button, Card, CardHead, CellText, Column, DangerZone, DetailList, Dropdown, Empty, ErrorBanner, FormFooter, Grid, Input, Loading,
+  Notice, OptionCard, PageHeading, PageTabs, Screen, Split, StepList, Table, TableToolbar, Tone, colors, confirmAsync, confirmDeleteAsync, fmtDate, fmtDay,
+RequestFailed, } from "@/ui";
+import { DateTimeField } from "@/ui/DateTimeField";
+import { ResultsRelease, type ReleaseMode } from "@/ui/ResultsRelease";
+import { resultVisible } from "@/ui/releaseState";
+import { SourceModuleChooser } from "@/screens/QuizWorkspace";
+import { useSubjectModules } from "@/screens/manage/subjectModules";
 
-type Tab = "brief" | "sources" | "settings" | "submissions";
-const STATUS_TABS = [
-  { key: "", label: "All" }, { key: "draft", label: "Drafts" },
-  { key: "published", label: "Published" }, { key: "closed", label: "Closed" },
-];
+export type Tab = "brief" | "sources" | "settings" | "submissions";
 
-/**
- * Every assignment in one screen, laid out like the quizzes: list on the left,
- * the open assignment on the right. Both existing routes land here.
- */
-export default function AssignmentWorkspace({ initialId, startNew }: { initialId?: string; startNew?: boolean }) {
-  const split = useSplit();
+const aStatus = (a: Assignment): { label: string; tone: Tone } => (a.status === "published" ? { label: "Published", tone: "green" } : a.status === "draft" ? { label: "Draft", tone: "neutral" } : { label: "Closed", tone: "neutral" });
+
+/* ------------------------------------------------------------------ */
+/* List                                                                */
+/* ------------------------------------------------------------------ */
+
+export function AssignmentListPage() {
+  const router = useRouter();
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const needle = useDebounced(search, 150).trim().toLowerCase();
   const list = useAsync(() => manage.assignments({ status: status || undefined }), [status]);
-  const [selected, setSelected] = useState<string | null>(initialId ?? (startNew ? "new" : null));
-  useEffect(() => { if (initialId) setSelected(initialId); }, [initialId]);
-  useEffect(() => {
-    if (!selected && split && list.data?.length) setSelected(list.data[0].id);
-  }, [list.data, selected, split]);
-
-  const rows = useMemo(() => {
-    const all = list.data ?? [];
-    return needle ? all.filter((a) => a.title.toLowerCase().includes(needle)) : all;
-  }, [list.data, needle]);
-
-  const listPane = (
-    <ListPane
-      split={split}
-      title="Assignments"
-      action={<Button title="New" icon="add-outline" small variant="ghost" onPress={() => setSelected("new")} />}
-      meta={`${list.data?.length ?? 0} in the subjects you manage`}
-      filters={
-        <>
-          <Input compact value={search} onChangeText={setSearch} placeholder="Search" />
-          <Tabs tabs={STATUS_TABS} value={status} onChange={setStatus} />
-        </>
-      }
-    >
-      {list.loading && !list.data ? <Loading /> : null}
-      {rows.length === 0 && !list.loading ? <Hint>No assignments here yet.</Hint> : null}
-      {rows.map((a) => (
-        <ListItem
-          key={a.id}
-          title={a.title}
-          meta={`${a.status} · ${a.max_score} points · ${a.submission_count ?? 0} submissions`}
-          warn={releaseSummary(a.results_release ?? "immediate", a.results_release_at, a.pending_release_count)}
-          selected={selected === a.id}
-          onPress={() => setSelected(a.id)}
-        />
-      ))}
-    </ListPane>
-  );
-
-  const detail = (
-    <DetailPane>
-      {selected === "new" ? (
-        <AssignmentBuilder
-          onCancel={() => setSelected(list.data?.[0]?.id ?? null)}
-          onCreated={async (id) => { await list.reload(); setSelected(id); }}
-          onBack={split ? undefined : () => setSelected(null)}
-        />
-      ) : selected ? (
-        <AssignmentDetail
-          key={selected}
-          id={selected}
-          onChanged={list.reload}
-          onDeleted={() => { setSelected(null); list.reload(); }}
-          onBack={split ? undefined : () => setSelected(null)}
-        />
-      ) : (
-        <EmptyPane title="Pick an assignment" text="Choose one on the left, or start a new one and select the modules it should be drafted from." icon="create-outline" />
-      )}
-    </DetailPane>
-  );
-
+  const subjects = useAsync(() => manage.subjects(), []);
+  const rows = useMemo(() => (list.data ?? []).filter((a) => !needle || a.title.toLowerCase().includes(needle)), [list.data, needle]);
+  const subject = (a: Assignment) => subjects.data?.find((s) => s.id === a.subject_id);
+  const action = (a: Assignment) => (a.status === "draft" ? "Edit draft" : (a.submission_count ?? 0) > 0 ? "Review submissions" : "Open assignment");
+  const open = (a: Assignment) => router.push({ pathname: "/manage/assignment/[id]", params: action(a) === "Review submissions" ? { id: a.id, tab: "submissions" } : { id: a.id } });
+  const columns: Column<Assignment>[] = [
+    { key: "t", label: "Assignment", flex: 2.2, render: (a) => { const s = subject(a); return <CellText title={a.title} sub={s ? `${s.code} · ${s.name}` : null} />; } },
+    { key: "s", label: "Status", flex: 0.8, render: (a) => { const st = aStatus(a); return <Badge value={st.label} tone={st.tone} />; } },
+    { key: "d", label: "Due date", flex: 0.9, render: (a) => (a.due_at ? fmtDay(a.due_at) : "—") },
+    { key: "n", label: "Submissions", flex: 0.8, render: (a) => `${a.submission_count ?? 0} of ${(subject(a) as { active_students?: number } | undefined)?.active_students ?? "—"}` },
+    { key: "r", label: "To do", flex: 1, render: (a) => ((a.pending_release_count ?? 0) > 0 ? `${a.pending_release_count} results held` : "—") },
+    { key: "x", label: "", flex: 1.1, render: (a) => <Button title={action(a)} small icon={action(a) === "Review submissions" ? "arrow-forward" : undefined} variant={action(a) === "Review submissions" ? "primary" : "secondary"} onPress={() => open(a)} /> },
+  ];
   return (
-    <Screen scroll={false} padded={false} wide>
-      <View style={{ flex: 1, minHeight: 0 }}>
-        <ErrorBanner message={list.error} onRetry={list.reload} />
-        <WorkspaceBody>
-          {split ? <>{listPane}{detail}</> : (selected ? detail : listPane)}
-        </WorkspaceBody>
-      </View>
+    <Screen refreshing={list.loading} onRefresh={list.reload}>
+      <PageHeading eyebrow="TEACHING ACTIVITIES" title="Assignments" subtitle="Clear instructions for students. A simpler review process for you."
+        right={<Button title="Create assignment" icon="add" onPress={() => router.push("/manage/assignment/new")} />} />
+      <ErrorBanner message={list.error} onRetry={list.reload} />
+      <Card flush>
+        <TableToolbar right={<Dropdown value={status} onChange={setStatus} accessibilityLabel="Filter by status" options={[{ value: "", label: "All statuses" }, { value: "published", label: "Published" }, { value: "draft", label: "Draft" }, { value: "closed", label: "Closed" }]} />}>
+          <Input icon="search" compact value={search} onChangeText={setSearch} placeholder="Search this list…" accessibilityLabel="Search assignments" />
+        </TableToolbar>
+        {list.error && !list.data ? <RequestFailed onRetry={list.reload} /> : list.loading && !list.data ? <Loading lines={2} /> : (
+          <Table noun="assignment" columns={columns} rows={rows} keyOf={(a) => a.id} onRowPress={open} minWidth={900}
+            empty={<Empty icon="create-outline" title={list.data?.length ? "No matching records" : "No assignments yet"} text={list.data?.length ? "Try a different search." : "Create an assignment from one or more modules; the task and rubric can be drafted for you."}
+              action={!list.data?.length ? <Button title="Create assignment" icon="add" onPress={() => router.push("/manage/assignment/new")} /> : undefined} />} />
+        )}
+      </Card>
+    </Screen>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Create                                                              */
+/* ------------------------------------------------------------------ */
+
+export function AssignmentNewPage() {
+  const router = useRouter();
+  const [title, setTitle] = useState("");
+  const [subjectId, setSubjectId] = useState("");
+  const [modules, setModules] = useState<string[]>([]);
+  const [how, setHow] = useState<"generate" | "manual">("generate");
+  const [maxScore, setMaxScore] = useState("10");
+  const [due, setDue] = useState("");
+  const go = useAction(async () => {
+    const score = Number(maxScore) || 10;
+    const common = { module_ids: modules, max_score: score, due_at: due || undefined, allow_late: true };
+    const a = how === "generate"
+      ? await manage.generateAssignment({ ...common, title: title.trim() || undefined })
+      : await manage.createAssignment({ ...common, title: title.trim() || "Untitled assignment", rubric: [{ criterion: "Accuracy against the source", points: Math.ceil(score / 2) }, { criterion: "Clarity and structure", points: Math.floor(score / 2) }] });
+    router.replace(`/manage/assignment/${a.id}`);
+  });
+  return (
+    <Screen>
+      <PageHeading eyebrow="ASSIGNMENTS" title="Create an assignment" subtitle="Select the source, describe the task, and decide how it will be assessed."
+        right={<Button title="Back to assignments" variant="secondary" icon="arrow-back" onPress={() => router.push("/manage/assignments")} />} />
+      <Split
+        main={
+          <Card>
+            <CardHead title="Assignment basics" />
+            <Input label="Assignment title" required value={title} onChangeText={setTitle} placeholder="For example, A personal security checklist" hint="Leave blank to name it after the modules when generating." />
+            <SourceModuleChooser subjectId={subjectId} onSubject={setSubjectId} value={modules} onChange={setModules} />
+            <Text style={{ fontSize: 15, fontWeight: "600", color: colors.ink, marginTop: 6 }}>Create the task</Text>
+            <View style={{ gap: 8 }}>
+              <OptionCard title="Generate a task and rubric with local AI" text="Drafted only from the selected modules; you edit it before publishing." selected={how === "generate"} onPress={() => setHow("generate")} />
+              <OptionCard title="Write the task myself" text="Start from an empty task with a simple two-criterion rubric." selected={how === "manual"} onPress={() => setHow("manual")} />
+            </View>
+            <Grid min={200} gap={16}>
+              <Input label="Maximum score" value={maxScore} onChangeText={setMaxScore} keyboardType="number-pad" />
+              <DateTimeField label="Due date" value={due || null} onChange={(v) => setDue(v ?? "")} />
+            </Grid>
+            <ErrorBanner message={go.error} />
+            <FormFooter note="Attempts, late submissions and result release are set on the Settings tab.">
+              <Button title="Cancel" variant="secondary" onPress={() => router.push("/manage/assignments")} />
+              <Button title="Continue to task" icon="arrow-forward" onPress={() => go.run()} busy={go.busy} disabled={modules.length === 0} />
+            </FormFooter>
+          </Card>
+        }
+        side={
+          <Card>
+            <CardHead title="How assignments work" />
+            <StepList steps={[
+              ["Choose the material", "The task is written from the modules you select."],
+              ["Make expectations clear", "Say what to submit and how each part is assessed."],
+              ["Evaluate, then release", "Mark each submission; release results when you are ready."],
+            ]} />
+          </Card>
+        }
+      />
     </Screen>
   );
 }
@@ -108,336 +128,282 @@ export default function AssignmentWorkspace({ initialId, startNew }: { initialId
 /* One assignment                                                      */
 /* ------------------------------------------------------------------ */
 
-function AssignmentDetail({ id, onChanged, onDeleted, onBack }: { id: string; onChanged: () => void; onDeleted: () => void; onBack?: () => void }) {
+export function AssignmentDetailPage({ id, initialTab }: { id: string; initialTab?: Tab }) {
+  const router = useRouter();
   const q = useAsync(() => manage.assignment(id), [id]);
-  const [tab, setTab] = useState<Tab>("brief");
-  const [d, setD] = useState<Assignment | null>(null);
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => { if (q.data) { setD(JSON.parse(JSON.stringify(q.data))); setDirty(false); } }, [q.data]);
-  const edit = (fn: (a: Assignment) => Assignment) => { setD((a) => (a ? fn(a) : a)); setDirty(true); };
+  const subjects = useAsync(() => manage.subjects(), []);
+  const modules = useSubjectModules(q.data?.subject_id);
+  const [tab, setTab] = useState<Tab>(initialTab ?? "brief");
+  const { draft: d, edit, dirty, discard, markSaved, changedMeanwhile, leftBehind, forgetLeftBehind } = useDraft<Assignment>(q.data, {
+    label: (a) => `the assignment “${a.title || "Untitled assignment"}”`,
+    save: async () => (await save.run()) === true,
+  });
 
   const save = useAction(async () => {
-    if (!d) return;
-    await manage.updateAssignment(id, {
-      title: d.title, description: d.description, instructions: d.instructions, rubric: d.rubric,
-      max_score: d.max_score, due_at: d.due_at || null, available_from: d.available_from || null,
-      allow_late: d.allow_late, allow_resubmission: d.allow_resubmission,
-      results_release: d.results_release, results_release_at: d.results_release_at || null,
+    if (!d) return false;
+    const sent = JSON.parse(JSON.stringify(d)) as Assignment;
+    await manage.updateAssignment(sent.id, {
+      title: sent.title, description: sent.description, instructions: sent.instructions, rubric: sent.rubric,
+      max_score: sent.max_score, due_at: sent.due_at || null, available_from: sent.available_from || null,
+      allow_late: sent.allow_late, allow_resubmission: sent.allow_resubmission, max_attempts: sent.allow_resubmission ? sent.max_attempts ?? null : null,
+      results_release: sent.results_release, results_release_at: sent.results_release === "scheduled" ? sent.results_release_at || null : null,
     });
-    onChanged();
-    await q.reload();
+    markSaved(sent);
+    if (sent.id === id) await q.reload();
+    return true;
   });
-  const setStatus = useAction(async (s: string) => { await manage.assignmentStatus(id, s); onChanged(); await q.reload(); });
-  const release = useAction(async (submissionId?: string) => {
-    if (!q.data) return;
-    if (!submissionId) {
-      const n = q.data.pending_release_count ?? 0;
-      const ok = await confirmAsync(
-        "Release marks to everyone?",
-        `${n} submission${n === 1 ? "" : "s"} will become visible to the students who made them, with their score and feedback. Releasing cannot be undone.`,
-        "Release Marks", "Not Yet",
-      );
-      if (!ok) return;
-    }
-    await manage.releaseAssignmentResults(id, submissionId);
-    onChanged();
-    await q.reload();
+  const setStatus = useAction(async (s: string) => {
+    if (s === "closed" && !(await confirmAsync("Close this assignment?", "Students can no longer submit. Existing submissions and scores are kept.", "Close assignment", "Cancel", { tone: "warning" }))) return;
+    if (s === "published" && !(await confirmAsync("Publish this assignment?", "Enrolled students can see it and submit.", "Publish assignment", "Cancel"))) return;
+    await manage.assignmentStatus(id, s); await q.reload();
   });
   const remove = useAction(async () => {
     if (!q.data) return;
-    const count = q.data.submission_count ?? 0;
-    const ok = await confirmDeleteAsync(
-      "Delete this assignment?",
-      count
-        ? `This permanently removes the assignment and the ${count} submission${count === 1 ? "" : "s"} against it, including any marks and feedback already given. It cannot be undone.`
-        : "This permanently removes the assignment and any submissions against it. It cannot be undone.",
-      { detail: q.data.title, okLabel: "Delete Assignment" },
-    );
+    const ok = await confirmDeleteAsync("Delete this assignment?", "This permanently removes the assignment and every submission, score and piece of feedback recorded against it. It cannot be undone.", { detail: q.data.title, okLabel: "Delete assignment" });
     if (!ok) return;
-    await manage.deleteAssignment(id);
-    onDeleted();
+    await manage.deleteAssignment(id); router.replace("/manage/assignments");
   });
 
-  if (q.loading && !d) return <Loading />;
-  if (!d) return <ErrorBanner message={q.error} onRetry={q.reload} />;
+  if (q.loading && !d) return <Screen><Loading /></Screen>;
+  if (!d) return <Screen><ErrorBanner message={q.error} onRetry={q.reload} /></Screen>;
+  const subject = subjects.data?.find((s) => s.id === d.subject_id);
+  const st = aStatus(d);
+  const sourceIds = d.source_module_ids?.length ? d.source_module_ids : d.module_id ? [d.module_id] : [];
+  const sources = (modules.data ?? []).filter((m) => sourceIds.includes(m.id) || (!sourceIds.length && !!d.chapter_id && m.chapter_id === d.chapter_id));
   const rubricTotal = d.rubric.reduce((t, r) => t + (Number(r.points) || 0), 0);
-  const balanced = rubricTotal === d.max_score;
-  const pending = q.data?.pending_release_count ?? 0;
-  const mode = (d.results_release ?? "immediate") as ReleaseMode;
-  const sources = d.source_module_ids?.length ?? 0;
+  const attemptsValue = !d.allow_resubmission ? "1" : d.max_attempts ? String(d.max_attempts) : "";
 
   return (
-    <>
-      <View style={as.head}>
-        <Row>
-          {onBack ? <Button title="Assignments" icon="chevron-back" small variant="ghost" onPress={onBack} /> : null}
-          <View style={{ flex: 1, minWidth: 200 }}>
-            <Input value={d.title} onChangeText={(t) => edit((a) => ({ ...a, title: t }))} />
-          </View>
-          <Badge value={d.status} />
-          {mode !== "immediate" ? <Badge value={mode === "held" ? "marks held" : "marks scheduled"} color={colors.warning} /> : null}
-        </Row>
-        <Text style={as.where}>
-          {sources > 1 ? `${sources} modules` : d.chapter_id ? "whole chapter" : d.module_id ? "one module" : "whole subject"}
-          {" · "}{d.generator === "ai" ? "drafted by the tutor model" : d.generator === "fallback" ? "fallback draft, review before publishing" : "written by hand"}
-        </Text>
-        <Tabs
-          big
-          value={tab}
-          onChange={(k) => setTab(k as Tab)}
-          tabs={[
-            { key: "brief", label: "Brief" },
-            { key: "sources", label: "Sources", count: sources || null },
-            { key: "settings", label: "Settings" },
-            { key: "submissions", label: "Submissions", count: d.submission_count ?? 0 },
-          ]}
-        />
-      </View>
+    <Screen refreshing={q.loading} onRefresh={q.reload}>
+      <PageHeading eyebrow="ASSIGNMENT WORKSPACE" title={d.title || "Untitled assignment"} subtitle={subject ? `${subject.code} · ${subject.name}` : null} right={<Badge value={st.label} tone={st.tone} />} />
+      <PageTabs<Tab> value={tab} onChange={setTab} tabs={[
+        { key: "brief", label: "Task & rubric" }, { key: "sources", label: "Source modules" },
+        { key: "settings", label: "Settings & release" }, { key: "submissions", label: "Submissions", count: d.submission_count ? d.submission_count : null },
+      ]} />
+      <ErrorBanner message={save.error ?? setStatus.error ?? remove.error} />
+      {leftBehind ? <Notice tone="warning" title="Unsaved changes were left on another assignment." message={`Your edits to ${leftBehind.label} are kept with that assignment and were not applied here.`}
+        action={<View style={{ flexDirection: "row", gap: 8 }}><Button title="Open that assignment" small variant="secondary" onPress={() => router.push(`/manage/assignment/${leftBehind.id}`)} /><Button title="Discard them" small variant="ghost" onPress={forgetLeftBehind} /></View>} /> : null}
+      {changedMeanwhile ? <Notice tone="warning" title="This assignment changed on the server while you were editing." message="Your edits are kept. Saving replaces the server copy; cancel your edits to load the latest version." /> : null}
+      {d.generator === "fallback" ? <Notice tone="warning" title="Fallback draft" message="This draft was produced without the AI. Review the task and rubric before publishing." /> : null}
 
-      <PaneScroll>
-        <ErrorBanner message={save.error ?? setStatus.error ?? release.error ?? remove.error} />
-        {pending ? (
-          <Strip
-            text={`${pending} marked submission${pending === 1 ? "" : "s"} waiting for you to release.`}
-            action={<Button title="Release marks" small onPress={() => release.run()} busy={release.busy} />}
-          />
-        ) : null}
-        {d.generator === "fallback" ? <Notice tone="warning" message="This draft was produced without the AI. Review the brief and rubric before publishing." /> : null}
-
-        {tab === "brief" ? (
-          <>
-            <SectionLabel>What the student has to do</SectionLabel>
-            <Input multiline value={d.description ?? ""} onChangeText={(t) => edit((a) => ({ ...a, description: t }))} style={{ minHeight: 110 }} />
-            <SectionLabel>Instructions</SectionLabel>
-            <Input multiline value={d.instructions ?? ""} onChangeText={(t) => edit((a) => ({ ...a, instructions: t }))} style={{ minHeight: 90 }} />
-            <SectionLabel>Rubric</SectionLabel>
-            <Rows>
-              {d.rubric.map((r, i) => (
-                <SettingRow key={i} label={`Criterion ${i + 1}`}>
-                  <View style={{ flex: 1, minWidth: 160 }}>
-                    <Input compact value={r.criterion} onChangeText={(t) => edit((a) => ({ ...a, rubric: a.rubric.map((x, j) => (j === i ? { ...x, criterion: t } : x)) }))} />
+      {tab === "brief" ? (
+        <Split
+          main={
+            <Card>
+              <CardHead title="Task & assessment criteria" />
+              <Input label="Assignment title" required value={d.title} onChangeText={(v) => edit((a) => ({ ...a, title: v }))} />
+              <Input label="Task instructions" multiline value={d.description ?? ""} onChangeText={(v) => edit((a) => ({ ...a, description: v }))} style={{ minHeight: 110 }} />
+              <Input label="Points to include" multiline value={d.instructions ?? ""} onChangeText={(v) => edit((a) => ({ ...a, instructions: v }))} style={{ minHeight: 80 }} hint="One point per line; students see them as a numbered list." />
+              <View style={{ gap: 8 }}>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.ink }}>Assessment rubric</Text>
+                {d.rubric.map((r, i) => (
+                  <View key={i} style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <Input compact value={r.criterion} placeholder="Criterion" onChangeText={(v) => edit((a) => ({ ...a, rubric: a.rubric.map((x, j) => (j === i ? { ...x, criterion: v } : x)) }))} containerStyle={{ flex: 1 }} accessibilityLabel={`Criterion ${i + 1}`} />
+                    <Input compact value={String(r.points)} keyboardType="number-pad" onChangeText={(v) => edit((a) => ({ ...a, rubric: a.rubric.map((x, j) => (j === i ? { ...x, points: Number(v) || 0 } : x)) }))} containerStyle={{ width: 80 }} accessibilityLabel={`Points for criterion ${i + 1}`} />
+                    <Text style={{ fontSize: 11, color: colors.muted }}>points</Text>
+                    <Button title="Remove" small variant="ghost" onPress={() => edit((a) => ({ ...a, rubric: a.rubric.filter((_, j) => j !== i) }))} />
                   </View>
-                  <Input compact value={String(r.points)} keyboardType="number-pad" containerStyle={{ width: 74 }}
-                    onChangeText={(t) => edit((a) => ({ ...a, rubric: a.rubric.map((x, j) => (j === i ? { ...x, points: Number(t) || 0 } : x)) }))} />
-                  <Button title="Remove" small variant="ghost" onPress={() => edit((a) => ({ ...a, rubric: a.rubric.filter((_, j) => j !== i) }))} />
-                </SettingRow>
-              ))}
-              <SettingRow label="Total">
-                <Text style={{ color: balanced ? colors.primary : colors.warning, fontWeight: "700" }}>{rubricTotal}</Text>
-                <Hint>of {d.max_score} — they must match before this can be saved</Hint>
-              </SettingRow>
-            </Rows>
-            <Row><Button title="Add Criterion" small variant="secondary" onPress={() => edit((a) => ({ ...a, rubric: [...a.rubric, { criterion: "", points: 0 }] }))} /></Row>
-          </>
-        ) : null}
-
-        {tab === "sources" ? (
-          <>
-            <SectionLabel>Modules the brief was drafted from</SectionLabel>
-            {sources ? (
-              <ModulePicker value={d.source_module_ids ?? []} onChange={() => {}} subjectId={d.subject_id} disabled />
-            ) : (
-              <Hint>
-                {d.chapter_id ? "This assignment was drafted from a whole chapter."
-                  : d.module_id ? "This assignment was drafted from a single module."
-                  : "This assignment is not tied to any book material."}
-              </Hint>
-            )}
-            <Notice message="Changing what an assignment draws on does not rewrite its brief. Generate a new one from the modules you want instead." />
-          </>
-        ) : null}
-
-        {tab === "settings" ? (
-          <>
-            <SectionLabel>Submitting</SectionLabel>
-            <Rows>
-              <SettingRow label="Maximum score">
-                <Input compact value={String(d.max_score)} keyboardType="number-pad" containerStyle={{ width: 90 }}
-                  onChangeText={(t) => edit((a) => ({ ...a, max_score: Number(t) || 0 }))} />
-              </SettingRow>
-              <SettingRow label="Available from">
-                <Input compact value={d.available_from ?? ""} placeholder="2026-09-10T09:00:00Z" containerStyle={{ flex: 1, minWidth: 200 }}
-                  onChangeText={(t) => edit((a) => ({ ...a, available_from: t || null }))} />
-              </SettingRow>
-              <SettingRow label="Due">
-                <Input compact value={d.due_at ?? ""} placeholder="2026-09-30T23:59:00Z" containerStyle={{ flex: 1, minWidth: 200 }}
-                  onChangeText={(t) => edit((a) => ({ ...a, due_at: t || null }))} />
-              </SettingRow>
-              <SettingRow label="Late submissions">
-                <Chip label={d.allow_late ? "Allowed, flagged late" : "Refused after the due date"} selected={d.allow_late}
-                  onPress={() => edit((a) => ({ ...a, allow_late: !a.allow_late }))} />
-              </SettingRow>
-              <SettingRow label="Resubmission">
-                <Chip label={d.allow_resubmission ? "Allowed" : "Single submission"} selected={d.allow_resubmission}
-                  onPress={() => edit((a) => ({ ...a, allow_resubmission: !a.allow_resubmission }))} />
-              </SettingRow>
-            </Rows>
-
-            <SectionLabel>Results</SectionLabel>
-            <Rows>
-              <SettingRow label="Students see marks" top>
-                <ResultsRelease
-                  kind="assignment"
-                  value={mode}
-                  at={d.results_release_at ?? null}
-                  onChange={(m, at) => edit((a) => ({ ...a, results_release: m, results_release_at: at }))}
-                />
-              </SettingRow>
-            </Rows>
-          </>
-        ) : null}
-
-        {tab === "submissions" ? <SubmissionsTab assignment={d} mode={mode} onRelease={(s) => release.run(s)} /> : null}
-      </PaneScroll>
-
-      <Foot>
-        <Button title="Save Changes" icon="save-outline" small onPress={() => save.run()} busy={save.busy} disabled={!dirty || !balanced} />
-        {d.status === "draft" ? <Button title="Publish" small variant="secondary" onPress={() => setStatus.run("published")} busy={setStatus.busy} disabled={dirty} /> : null}
-        {d.status === "published" ? <Button title="Close" small variant="secondary" onPress={() => setStatus.run("closed")} busy={setStatus.busy} /> : null}
-        <FootState
-          dirty={dirty || !balanced}
-          text={!balanced ? `Rubric adds up to ${rubricTotal}, not ${d.max_score}` : dirty ? "Unsaved changes" : d.status === "published" ? "Live for enrolled students" : d.status === "draft" ? "Not visible to students" : "Everything saved"}
+                ))}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <Button title="Add criterion" small variant="secondary" icon="add" onPress={() => edit((a) => ({ ...a, rubric: [...a.rubric, { criterion: "", points: 0 }] }))} />
+                  <Text style={{ fontSize: 11, color: rubricTotal === d.max_score ? colors.muted : colors.warning }}>{rubricTotal} of {d.max_score} points{rubricTotal === d.max_score ? "" : " · must match the maximum score"}</Text>
+                </View>
+              </View>
+              <Input label="Maximum score" value={String(d.max_score)} keyboardType="number-pad" onChangeText={(v) => edit((a) => ({ ...a, max_score: Number(v) || 0 }))} containerStyle={{ maxWidth: 200 }} />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap", paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, borderColor: colors.border, borderRadius: 10, backgroundColor: "#F8FAF7", marginTop: 6 }}>
+                <Text style={{ flex: 1, fontSize: 12, color: dirty ? colors.warning : colors.muted }}>{dirty ? "Unsaved changes" : "No unsaved changes"}</Text>
+                {d.status === "draft" ? <Button title="Publish assignment" small variant="secondary" icon="checkmark" onPress={() => setStatus.run("published")} busy={setStatus.busy} disabled={dirty} /> : null}
+                <Button title="Save changes" small icon="save-outline" onPress={() => save.run()} busy={save.busy} disabled={!dirty || rubricTotal !== d.max_score} />
+              </View>
+            </Card>
+          }
+          side={
+            <Card>
+              <CardHead title="Make expectations clear." subtitle="Tell students what to submit and how each part will be assessed. The rubric’s points should add up to the maximum score." />
+              <Button title="Review submissions" variant="secondary" icon="people-outline" full onPress={() => setTab("submissions")} />
+            </Card>
+          }
         />
-        <View style={{ flex: 1 }} />
-        <Button title="Delete" icon="trash-outline" small variant="danger" onPress={() => remove.run()} busy={remove.busy} />
-      </Foot>
-    </>
+      ) : null}
+
+      {tab === "sources" ? (
+        <Card>
+          <CardHead title="Source material" />
+          {modules.error && !modules.data ? <RequestFailed onRetry={modules.reload} /> : modules.loading && !modules.data ? <Loading lines={1} /> : null}
+          {modules.data && sources.length === 0 ? <Empty icon="book-outline" text={d.chapter_id ? "This assignment follows a whole chapter." : "This assignment was written for the whole subject."} /> : null}
+          {sources.map((m) => (
+            <View key={m.id} style={{ gap: 10, paddingVertical: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 9, backgroundColor: colors.pale, alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 11, color: colors.primary }}>{m.number}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.ink }}>{m.title}</Text>
+                  <Text style={{ fontSize: 11, color: colors.muted }}>{m.document_title} · Module {m.number}</Text>
+                </View>
+                <Badge value="Source module" tone="green" />
+              </View>
+              <View style={{ borderWidth: 1, borderColor: "#DDE8D8", backgroundColor: "#F3F6EE", borderRadius: 9, padding: 14 }}>
+                <Text style={{ fontSize: 12, lineHeight: 20, color: colors.text }}>{m.source_text || "This module has no text."}</Text>
+              </View>
+            </View>
+          ))}
+        </Card>
+      ) : null}
+
+      {tab === "settings" ? (
+        <Split
+          main={
+            <Card>
+              <CardHead title="Assignment settings" />
+              <Grid min={200} gap={16}>
+                <Input label="Maximum attempts" value={attemptsValue} keyboardType="number-pad" placeholder="No limit" hint="1 means a single submission. Leave blank for no limit."
+                  onChangeText={(v) => { const n = Number(v); edit((a) => ({ ...a, allow_resubmission: v.trim() === "" || n > 1, max_attempts: n > 1 ? n : null })); }} />
+                <DateTimeField label="Available from" value={d.available_from} onChange={(v) => edit((a) => ({ ...a, available_from: v }))} hint="Empty means available as soon as it is published." />
+              </Grid>
+              <DateTimeField label="Due date" value={d.due_at} onChange={(v) => edit((a) => ({ ...a, due_at: v }))} width={360} />
+              <OptionCard multi title="Accept late submissions" text="Late work is accepted and marked as late." selected={d.allow_late} onPress={() => edit((a) => ({ ...a, allow_late: !a.allow_late }))} />
+              <Text style={{ fontSize: 15, fontWeight: "600", color: colors.ink, marginTop: 6 }}>When can students see results?</Text>
+              <ResultsRelease kind="assignment" value={(d.results_release ?? "immediate") as ReleaseMode} at={d.results_release_at ?? null} onChange={(m, at) => edit((a) => ({ ...a, results_release: m, results_release_at: at }))} />
+              <FormFooter note="Evaluation and release are separate steps.">
+                <Button title="Cancel" variant="secondary" onPress={discard} disabled={!dirty} />
+                <Button title="Save settings" icon="checkmark" onPress={() => save.run()} busy={save.busy} disabled={!dirty} />
+              </FormFooter>
+            </Card>
+          }
+          side={
+            <>
+              <Notice title="Evaluation and release are different steps." message="Your evaluation can be saved before the student is allowed to see it." />
+              <DangerZone title="Assignment lifecycle" text="Closing ends availability. Deleting also removes submissions and scores.">
+                {d.status === "published" ? <Button title="Close assignment" variant="secondary" onPress={() => setStatus.run("closed")} busy={setStatus.busy} disabled={dirty} /> : <Button title="Publish assignment" variant="secondary" onPress={() => setStatus.run("published")} busy={setStatus.busy} disabled={dirty} />}
+                <Button title="Delete" variant="danger" icon="trash-outline" onPress={() => remove.run()} busy={remove.busy} />
+              </DangerZone>
+            </>
+          }
+        />
+      ) : null}
+
+      {tab === "submissions" ? <SubmissionsTab assignment={q.data!} onChanged={q.reload} /> : null}
+    </Screen>
   );
 }
 
-function SubmissionsTab({ assignment, mode, onRelease }: { assignment: Assignment; mode: ReleaseMode; onRelease: (id: string) => void }) {
+const releasedFor = (a: Assignment, s: Submission) => s.status === "evaluated" && resultVisible(a, s);
+
+function SubmissionsTab({ assignment, onChanged }: { assignment: Assignment; onChanged: () => void }) {
+  const router = useRouter();
   const q = useAsync(() => manage.submissions(assignment.id), [assignment.id]);
-  const [scores, setScores] = useState<Record<string, { score: string; feedback: string }>>({});
-  const evaluate = useAction(async (subId: string) => {
-    const v = scores[subId];
-    await manage.evaluate(subId, { score: Number(v?.score ?? 0), feedback: v?.feedback ?? "" });
-    await q.reload();
+  const [search, setSearch] = useState("");
+  const pending = assignment.pending_release_count ?? 0;
+  const release = useAction(async () => {
+    if (!(await confirmAsync("Release evaluated results?", `${pending} evaluated submission${pending === 1 ? "" : "s"} will become visible to the students who made them. Pending evaluations stay hidden.`, "Release results", "Not yet"))) return;
+    await manage.releaseAssignmentResults(assignment.id); await q.reload(); onChanged();
   });
+  const rows = (q.data ?? []).filter((s) => `${s.student_name ?? ""} ${s.student_email ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const columns: Column<Submission>[] = [
+    { key: "s", label: "Student", flex: 1.8, render: (s) => <CellText avatar={s.student_name || s.student_email || "?"} title={s.student_name || s.student_email || "Student"} sub={`${fmtDay(s.submitted_at)} · Attempt ${s.attempt_number}${s.is_late ? " · late" : ""}`} /> },
+    { key: "e", label: "Evaluation", flex: 1, render: (s) => <Badge value={s.status === "evaluated" ? "Evaluated" : "Pending evaluation"} tone={s.status === "evaluated" ? "green" : "amber"} /> },
+    { key: "p", label: "Score", flex: 0.6, render: (s) => (s.score != null ? `${s.score} / ${assignment.max_score}` : "—") },
+    { key: "r", label: "Results", flex: 0.8, render: (s) => <Badge value={releasedFor(assignment, s) ? "Released" : "Not released"} tone={releasedFor(assignment, s) ? "green" : "amber"} /> },
+    { key: "x", label: "", flex: 1, render: (s) => <Button title={s.status === "evaluated" ? "View submission" : "Evaluate"} small icon={s.status === "evaluated" ? undefined : "create-outline"} variant={s.status === "evaluated" ? "secondary" : "primary"} onPress={() => router.push({ pathname: "/manage/submission/[id]", params: { id: s.id, assignment: assignment.id } })} /> },
+  ];
   return (
     <>
-      <ErrorBanner message={q.error ?? evaluate.error} onRetry={q.reload} />
-      {q.loading && !q.data ? <Loading /> : null}
-      {q.data?.length === 0 ? <Hint>No submissions yet.</Hint> : null}
-      {q.data?.map((s) => (
-        <View key={s.id} style={as.card}>
-          <Row style={{ justifyContent: "space-between" }}>
-            <View style={{ flex: 1, minWidth: 160 }}>
-              <P style={{ fontWeight: "600" }}>{s.student_email}</P>
-              <P muted small>{fmtDate(s.submitted_at)}{s.is_late ? " · late" : ""} · attempt {s.attempt_number}</P>
-            </View>
-            <Badge value={s.status === "evaluated" ? `${s.score}/${assignment.max_score}` : s.status}
-              color={s.status === "evaluated" ? colors.success : colors.warning} />
-            {mode !== "immediate" && s.status === "evaluated" ? (
-              <Button title="Release" small variant="secondary" onPress={() => onRelease(s.id)} />
-            ) : null}
-          </Row>
-          <P>{s.content}</P>
-          {s.status === "evaluated" && s.feedback ? <Notice tone="success" message={s.feedback} /> : null}
-          <Row>
-            <Input compact label={`Score (0–${assignment.max_score})`} keyboardType="decimal-pad" containerStyle={{ width: 110 }}
-              value={scores[s.id]?.score ?? (s.score != null ? String(s.score) : "")}
-              onChangeText={(t) => setScores((x) => ({ ...x, [s.id]: { score: t, feedback: x[s.id]?.feedback ?? s.feedback ?? "" } }))} />
-            <View style={{ flex: 1, minWidth: 180 }}>
-              <Input compact label="Feedback" value={scores[s.id]?.feedback ?? s.feedback ?? ""}
-                onChangeText={(t) => setScores((x) => ({ ...x, [s.id]: { score: x[s.id]?.score ?? (s.score != null ? String(s.score) : ""), feedback: t } }))} />
-            </View>
-            <Button title="Save Mark" small onPress={() => evaluate.run(s.id)} busy={evaluate.busy} disabled={!scores[s.id]?.score} />
-          </Row>
-        </View>
-      ))}
+      {pending ? (
+        <Notice tone="warning" title={`${pending} evaluated submission${pending === 1 ? " is" : "s are"} ready to release.`} message="Pending evaluations remain ungraded. Students see only their own released results."
+          action={<Button title="Release evaluated results" small icon="checkmark" onPress={() => release.run()} busy={release.busy} />} />
+      ) : null}
+      <ErrorBanner message={q.error ?? release.error} onRetry={q.reload} />
+      <Card flush>
+        <TableToolbar><Input icon="search" compact value={search} onChangeText={setSearch} placeholder="Search this list…" accessibilityLabel="Search submissions" /></TableToolbar>
+        {q.error && !q.data ? <RequestFailed onRetry={q.reload} /> : q.loading && !q.data ? <Loading lines={2} /> : <Table noun="submission" columns={columns} rows={rows} keyOf={(s) => s.id} minWidth={820} empty={<Empty icon="document-text-outline" text="No submissions yet." />} />}
+      </Card>
     </>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* New assignment                                                      */
+/* One submission                                                      */
 /* ------------------------------------------------------------------ */
 
-function AssignmentBuilder({ onCancel, onCreated, onBack }: { onCancel: () => void; onCreated: (id: string) => void; onBack?: () => void }) {
-  const [modules, setModules] = useState<string[]>([]);
-  const [title, setTitle] = useState("");
-  const [maxScore, setMaxScore] = useState("20");
-  const [due, setDue] = useState("");
-  const [late, setLate] = useState(true);
-  const [resubmit, setResubmit] = useState(false);
-  const [release, setRelease] = useState<ReleaseMode>("immediate");
-  const [releaseAt, setReleaseAt] = useState<string | null>(null);
-
-  const common = () => ({
-    module_ids: modules,
-    title: title || undefined,
-    max_score: Number(maxScore) || 20,
-    due_at: due || undefined,
-    allow_late: late,
-    allow_resubmission: resubmit,
-    results_release: release,
-    results_release_at: release === "scheduled" ? releaseAt : undefined,
-  });
-  const generate = useAction(async () => {
-    const a = await manage.generateAssignment(common());
-    onCreated(a.id);
-  });
-  const blank = useAction(async () => {
-    const score = Number(maxScore) || 20;
-    const a = await manage.createAssignment({
-      ...common(),
-      title: title || "Untitled assignment",
-      rubric: [{ criterion: "Accuracy against the source", points: Math.ceil(score / 2) }, { criterion: "Clarity and structure", points: Math.floor(score / 2) }],
+export function SubmissionReviewPage({ submissionId, assignmentId }: { submissionId: string; assignmentId: string }) {
+  const router = useRouter();
+  const a = useAsync(() => manage.assignment(assignmentId), [assignmentId]);
+  const subs = useAsync(() => manage.submissions(assignmentId), [assignmentId]);
+  const s = subs.data?.find((x) => x.id === submissionId) ?? null;
+  const [score, setScore] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [showError, setShowError] = useState(false);
+  // Fill the form once per submission; a background reload must not overwrite marks being typed.
+  const filledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!s || filledFor.current === s.id) return;
+    filledFor.current = s.id;
+    setScore(s.score != null ? String(s.score) : ""); setFeedback(s.feedback ?? "");
+  }, [s]);
+  const marking = !!s && (score !== (s.score != null ? String(s.score) : "") || feedback !== (s.feedback ?? ""));
+  useUnsavedWarning(marking);
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  useEffect(() => {
+    if (!marking || !s) return;
+    return registerGuard({
+      label: `the evaluation of ${s.student_name || s.student_email || "this submission"}`,
+      save: () => saveRef.current(),
+      discard: () => { setScore(s.score != null ? String(s.score) : ""); setFeedback(s.feedback ?? ""); },
     });
-    onCreated(a.id);
+  }, [marking, s]);
+  const leave = () => router.push({ pathname: "/manage/assignment/[id]", params: { id: assignmentId, tab: "submissions" } });
+  // Back and Cancel are exits like any other: unsaved marks ask Save / Discard / Stay first.
+  const back = () => { void confirmLeave().then((ok) => { if (ok) leave(); }); };
+  const z = a.data;
+  const held = !!z && !!s && !resultVisible(z, s);
+  // The same rule guards the button and the save itself, so "Save and leave" cannot turn a blank score
+  // into a real 0. A typed 0 is a valid mark.
+  const scoreError = score.trim() === "" ? "Enter a score before saving."
+    : Number.isNaN(Number(score)) ? "The score must be a number."
+    : Number(score) < 0 || (!!z && Number(score) > z.max_score) ? `Enter 0 to ${z?.max_score ?? "the maximum"}.`
+    : null;
+  const valid = !scoreError;
+  const save = useAction(async () => {
+    if (scoreError) { setShowError(true); throw new Error(scoreError); }
+    await manage.evaluate(submissionId, { score: Number(score), feedback: feedback.trim() });
+    await subs.reload(); filledFor.current = null; leave(); return true;
   });
-  const ready = modules.length > 0 && (release !== "scheduled" || !!releaseAt);
-
+  saveRef.current = async () => { try { return (await save.run()) === true; } catch { return false; } };
+  const name = s?.student_name?.trim().split(/\s+/)[0] || s?.student_email?.split("@")[0] || "student";
   return (
-    <>
-      <View style={as.head}>
-        <Row>
-          {onBack ? <Button title="Assignments" icon="chevron-back" small variant="ghost" onPress={onBack} /> : null}
-          <View style={{ flex: 1, minWidth: 200 }}>
-            <Input value={title} onChangeText={setTitle} placeholder="New assignment — leave blank and the modules name it" />
-          </View>
-        </Row>
-      </View>
-      <PaneScroll>
-        <ErrorBanner message={generate.error ?? blank.error} />
-        <SectionLabel>Drafted from</SectionLabel>
-        <ModulePicker value={modules} onChange={setModules} />
-        <Hint>The brief and rubric are written only from the text of the modules you tick.</Hint>
-
-        <SectionLabel>Marking</SectionLabel>
-        <Rows>
-          <SettingRow label="Maximum score"><Input compact value={maxScore} onChangeText={setMaxScore} keyboardType="number-pad" containerStyle={{ width: 90 }} /></SettingRow>
-          <SettingRow label="Due"><Input compact value={due} onChangeText={setDue} placeholder="2026-09-30T23:59:00Z" containerStyle={{ flex: 1, minWidth: 200 }} /></SettingRow>
-          <SettingRow label="Late submissions">
-            <Chip label={late ? "Allowed, flagged late" : "Refused after the due date"} selected={late} onPress={() => setLate((v) => !v)} />
-          </SettingRow>
-          <SettingRow label="Resubmission">
-            <Chip label={resubmit ? "Allowed" : "Single submission"} selected={resubmit} onPress={() => setResubmit((v) => !v)} />
-          </SettingRow>
-        </Rows>
-
-        <SectionLabel>Results</SectionLabel>
-        <Rows>
-          <SettingRow label="Students see marks" top>
-            <ResultsRelease kind="assignment" value={release} at={releaseAt} onChange={(m, at) => { setRelease(m); setReleaseAt(at); }} />
-          </SettingRow>
-        </Rows>
-
-        <Notice message="The model drafts a rubric whose points add up to the maximum score. If it is unavailable you get a labelled fallback to edit." />
-      </PaneScroll>
-      <Foot>
-        <Button title="Generate Draft" small onPress={() => generate.run()} busy={generate.busy} disabled={!ready} />
-        <Button title="Write It Myself" small variant="secondary" onPress={() => blank.run()} busy={blank.busy} disabled={!ready} />
-        <FootState text={modules.length ? `${modules.length} module${modules.length === 1 ? "" : "s"} selected` : "Select at least one module"} />
-        <View style={{ flex: 1 }} />
-        <Button title="Cancel" small variant="ghost" onPress={onCancel} />
-      </Foot>
-    </>
+    <Screen refreshing={subs.loading} onRefresh={subs.reload}>
+      <PageHeading eyebrow="ASSIGNMENT EVALUATION" title={`Review ${name}’s submission`} subtitle={z && s ? `${z.title} · Submitted ${fmtDate(s.submitted_at)}${s.is_late ? " · late" : ""}` : null}
+        right={<Button title="Back to submissions" variant="secondary" icon="arrow-back" onPress={back} />} />
+      <ErrorBanner message={subs.error ?? a.error ?? save.error} onRetry={subs.reload} />
+      {subs.loading && !s ? <Loading /> : null}
+      {subs.data && !s ? <Notice tone="warning" title="Submission not found" message="It may have been removed." /> : null}
+      {s && z ? (
+        <Split sideWidth={340}
+          main={
+            <>
+              <Card>
+                <CardHead title="Student response" subtitle={`Attempt ${s.attempt_number} · ${Math.round((s.time_spent_seconds ?? 0) / 60)} min spent`} />
+                <Text style={{ fontSize: 14, lineHeight: 25, color: colors.text }} selectable>{s.content}</Text>
+              </Card>
+              <Card>
+                <CardHead title="Assessment rubric" />
+                <DetailList items={z.rubric.map((r) => [r.criterion, `${r.points} point${r.points === 1 ? "" : "s"}`] as [string, string])} />
+              </Card>
+            </>
+          }
+          side={
+            <Card>
+              <CardHead title="Your evaluation" />
+              <Input label="Score" required value={score} onChangeText={(v) => { setShowError(false); setScore(v); }} keyboardType="decimal-pad" hint={`Maximum ${z.max_score} points.`} error={(score || showError) && scoreError ? scoreError : null} />
+              <Input label="Feedback" required multiline value={feedback} onChangeText={setFeedback} style={{ minHeight: 120 }} />
+              {held ? <Notice title="Results are currently held." message="Saving this evaluation does not release the result to the student." /> : null}
+              <FormFooter>
+                <Button title="Cancel" variant="secondary" onPress={back} />
+                <Button title="Save evaluation" icon="checkmark" onPress={() => save.run()} busy={save.busy} disabled={!valid} />
+              </FormFooter>
+            </Card>
+          }
+        />
+      ) : null}
+    </Screen>
   );
 }
-
-const as = StyleSheet.create({
-  head: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.sm },
-  where: { fontSize: 12.5, color: colors.faint },
-  card: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: space.md, gap: space.sm, backgroundColor: colors.surface },
-});

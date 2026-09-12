@@ -1,67 +1,46 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
-import { View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
 import { admin } from "@/api/endpoints";
-import { useAction, useAsync } from "@/hooks/useAsync";
+import type { Subject } from "@/api/types";
+import { useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
-import { useFilterChoices } from "@/hooks/useChoices";
-import { Button, Card, CardGrid, Chip, Empty, ErrorBanner, H2, Input, ListRow, Loading, Notice, Row, Screen } from "@/ui";
+import { Badge, Button, Card, CellText, Column, Dropdown, Empty, ErrorBanner, Input, Loading, Notice, PageHeading, Screen, Table, TableToolbar, RequestFailed } from "@/ui";
 
 export default function Subjects() {
   const router = useRouter();
   const p = useLocalSearchParams<{ notice?: string }>();
   const [status, setStatus] = useState("");
-  // The statuses come from the server, which reads them off the model.
-  const filters = useFilterChoices("subject_status");
   const [q, setQ] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
-  // The create form is hidden until asked for; it was permanently occupying the
-  // top of the page even though most visits here are to find an existing subject.
-  const [creating, setCreating] = useState(false);
-  // The subject screen sends us back here after a delete with a one-line result.
-  useEffect(() => {
-    if (p.notice) { setNotice(String(p.notice)); router.setParams({ notice: "" } as never); }
-  }, [p.notice, router]);
-  // Searching happens as the person types; the debounce keeps that to one
-  // request per pause rather than one per keystroke.
+  useEffect(() => { if (p.notice) { setNotice(String(p.notice)); router.setParams({ notice: "" } as never); } }, [p.notice, router]);
   const query = useDebounced(q);
-  const list = useAsync(() => admin.subjects({ status, q: query }), [status, query]);
-  const [name, setName] = useState(""); const [code, setCode] = useState("");
-  const create = useAction(async () => {
-    await admin.createSubject({ name, code });
-    setName(""); setCode(""); setCreating(false);
-    await list.reload();
-  });
+  const list = useAsync(() => admin.subjects({ status: status || undefined, q: query }), [status, query]);
+  const stats = useAsync(() => admin.platformSubjects(), []);
+  const byId = useMemo(() => new Map<string, any>((stats.data?.subjects ?? []).map((s: any) => [s.subject_id, s])), [stats.data]);
+  const columns: Column<Subject>[] = [
+    { key: "s", label: "Subject", flex: 2, render: (s) => <CellText title={s.name} sub={s.code} /> },
+    { key: "f", label: "Faculty", flex: 1.4, render: (s) => (byId.get(s.id)?.faculty ?? []).join(", ") || "Not assigned" },
+    { key: "n", label: "Students", flex: 0.7, render: (s) => String(byId.get(s.id)?.students_enrolled ?? "—") },
+    { key: "b", label: "Books", flex: 0.6, render: (s) => String(byId.get(s.id)?.documents_published ?? "—") },
+    { key: "t", label: "Status", flex: 0.9, render: (s) => <Badge value={s.status.charAt(0).toUpperCase() + s.status.slice(1)} tone={s.status === "active" ? "green" : "neutral"} /> },
+    { key: "x", label: "", flex: 1.1, render: (s) => <Button title="Manage subject" small variant="secondary" icon="arrow-forward" onPress={() => router.push(`/admin/subject/${s.id}`)} /> },
+  ];
   return (
-    <Screen
-      refreshing={list.loading}
-      onRefresh={list.reload}
-      toolbar={
-        <>
-          <Input compact containerStyle={{ flex: 1, minWidth: 180, maxWidth: 320 }} placeholder="Search subjects" value={q} onChangeText={setQ} />
-          {filters.map((f) => <Chip key={f.value} label={f.label} selected={status === f.value} onPress={() => setStatus(f.value)} />)}
-        </>
-      }
-      actions={<Button title={creating ? "Cancel" : "New Subject"} icon={creating ? "close-outline" : "add-outline"} small variant={creating ? "secondary" : "primary"} onPress={() => setCreating((x) => !x)} />}
-    >
-      {creating ? (
-        <Card>
-          <H2>Create a subject</H2>
-          <Row>
-            <View style={{ flex: 2, minWidth: 200 }}><Input placeholder="Name" value={name} onChangeText={setName} /></View>
-            <View style={{ flex: 1, minWidth: 120 }}><Input placeholder="CODE" value={code} onChangeText={setCode} autoCapitalize="characters" /></View>
-            <Button title="Create" small onPress={() => create.run()} busy={create.busy} disabled={!name || !code} />
-          </Row>
-          <ErrorBanner message={create.error} />
-        </Card>
-      ) : null}
+    <Screen refreshing={list.loading} onRefresh={() => { list.reload(); stats.reload(); }}>
+      <PageHeading eyebrow="ACADEMIC STRUCTURE" title="Subjects" subtitle="Give every class a clear home and the right teaching access."
+        right={<Button title="Create subject" icon="add" onPress={() => router.push("/admin/subject/new")} />} />
       {notice ? <Notice tone="success" message={notice} /> : null}
       <ErrorBanner message={list.error} onRetry={list.reload} />
-      {list.loading && !list.data ? <Loading /> : null}
-      {list.data?.length === 0 ? <Empty text={q ? "No subjects match that search." : "No subjects yet."} /> : null}
-      <CardGrid>
-        {list.data?.map((s) => <ListRow key={s.id} icon="library-outline" title={`${s.code} · ${s.name}`} subtitle={s.description || undefined} badge={s.status === "active" ? undefined : s.status} onPress={() => router.push(`/admin/subject/${s.id}`)} />)}
-      </CardGrid>
+      <Card flush>
+        <TableToolbar right={<Dropdown value={status} onChange={setStatus} accessibilityLabel="Filter by status" options={[{ value: "", label: "All statuses" }, { value: "active", label: "Active" }, { value: "discontinued", label: "Discontinued" }, { value: "archived", label: "Archived" }]} />}>
+          <Input icon="search" compact placeholder="Search this list…" value={q} onChangeText={setQ} accessibilityLabel="Search subjects" />
+        </TableToolbar>
+        {list.error && !list.data ? <RequestFailed onRetry={list.reload} /> : list.loading && !list.data ? <Loading lines={2} /> : (
+          <Table noun="subject" columns={columns} rows={list.data ?? []} keyOf={(s) => s.id} onRowPress={(s) => router.push(`/admin/subject/${s.id}`)} minWidth={860}
+            empty={<Empty icon="library-outline" title={q || status ? "No subject matches" : "No subjects yet"} text={q || status ? "Try a different search or status." : "Create a subject, then assign faculty and enroll students."}
+              action={!q && !status ? <Button title="Create subject" icon="add" onPress={() => router.push("/admin/subject/new")} /> : undefined} />} />
+        )}
+      </Card>
     </Screen>
   );
 }

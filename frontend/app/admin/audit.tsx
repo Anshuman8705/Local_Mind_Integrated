@@ -1,12 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
-import { View } from "react-native";
+import React, { useState } from "react";
+import { ScrollView, Text, View } from "react-native";
 import { admin } from "@/api/endpoints";
 import type { AuditLog } from "@/api/types";
 import { useAsync } from "@/hooks/useAsync";
 import { useDebounced } from "@/hooks/useDebounced";
-import { Button, Card, Empty, ErrorBanner, Input, Loading, P, Row, Screen, colors, space } from "@/ui";
-import { SelectField } from "@/ui/SelectField";
+import { Badge, Button, Card, CellText, DetailList, Dropdown, Empty, ErrorBanner, Input, Loading, PageHeading, Row, Screen, TableFooter, TextLink, colors, fmtDate, RequestFailed } from "@/ui";
+import { DateTimeField } from "@/ui/DateTimeField";
+
+const toDay = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const fromDay = (day: string) => new Date(`${day}T00:00:00`).toISOString();
 
 /**
  * The audit log, written for reading.
@@ -72,118 +75,108 @@ function summaryValue(value: unknown): string {
 const HIDDEN_KEYS = new Set(["conversation", "latency_ms", "modules", "document_id", "module_id", "subject_id", "attempt_id"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const dayKey = (iso: string) => new Date(iso).toDateString();
 
-function dayLabel(iso: string) {
+
+const stamp = (iso: string) => {
   const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-}
+  return `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+};
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-
-function Entry({ log }: { log: AuditLog }) {
-  const { entity, verb } = splitAction(log.action);
-  const tone = toneFor(verb);
-  const colour = TONES[tone];
+function DetailPairs({ log }: { log: AuditLog }) {
   const pairs = Object.entries(log.summary ?? {})
     .filter(([, v]) => v !== "" && v !== null && v !== undefined)
-    // Internal identifiers and timings tell a reader nothing and crowd out the
-    // values that do, like a reason or an old-to-new change.
+    // Internal identifiers and timings tell a reader nothing.
     .filter(([key, v]) => !HIDDEN_KEYS.has(key) && !(typeof v === "string" && UUID.test(v)));
   return (
-    <Card style={{ flexDirection: "row", gap: space.md, alignItems: "flex-start" }}>
-      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colour}22`, alignItems: "center", justifyContent: "center" }}>
-        <Ionicons name={ICONS[tone]} size={17} color={colour} />
-      </View>
-      <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-        <P style={{ fontWeight: "700" }}>{sentence(entity)} {verb.replace(/_/g, " ")}</P>
-        {log.target_label ? <P small>{log.target_label}</P> : null}
-        <P muted small>
-          {log.actor_email || "system"}
-          {log.actor_role ? ` \u00b7 ${log.actor_role}` : ""}{` \u00b7 ${time(log.created_at)}`}
-        </P>
-        {pairs.length ? (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm, marginTop: 2 }}>
-            {pairs.map(([key, value]) => (
-              <View key={key} style={{ backgroundColor: colors.surface2, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
-                <P muted small>{key.replace(/_/g, " ")}: <P small style={{ color: colors.text }}>{summaryValue(value)}</P></P>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </Card>
+    <View style={{ gap: 8, paddingHorizontal: 18, paddingBottom: 16, paddingTop: 4, backgroundColor: "#FAFBF8", borderBottomWidth: 1, borderBottomColor: colors.rowLine }}>
+      <DetailList items={[
+        ["Action", log.action],
+        ["Target", `${log.target_type}${log.target_label ? ` · ${log.target_label}` : ""}`],
+        ["Target ID", log.target_id || "—"],
+        ["When", fmtDate(log.created_at)],
+        ...pairs.map(([k, v]) => [sentence(k), summaryValue(v)] as [string, string]),
+      ]} />
+    </View>
   );
 }
 
 export default function Audit() {
   const [action, setAction] = useState("");
   const [actor, setActor] = useState("");
+  const [target, setTarget] = useState("");
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
+  const [more, setMore] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const who = useDebounced(actor);
-  const q = useAsync(() => admin.auditLogs({ action, actor_email: who, page }), [action, who, page]);
-  // The filter offers the actions actually present in the log, so nobody has
-  // to know that publishing a book records "document.published".
+  const targetId = useDebounced(target);
+  const validDate = (v: string) => !v || /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const q = useAsync(() => admin.auditLogs({ action, actor_email: who, target_id: targetId.trim() || undefined, since: validDate(since) && since ? `${since}T00:00:00` : undefined, until: validDate(until) && until ? `${until}T23:59:59` : undefined, page }), [action, who, targetId, since, until, page]);
   const known = useAsync(() => admin.auditActions(), []);
-  const set = (value: string) => { setAction(value); setPage(1); };
-
-  const days = useMemo(() => {
-    const groups: { key: string; label: string; entries: AuditLog[] }[] = [];
-    for (const log of q.data?.results ?? []) {
-      const key = dayKey(log.created_at);
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) last.entries.push(log);
-      else groups.push({ key, label: dayLabel(log.created_at), entries: [log] });
-    }
-    return groups;
-  }, [q.data]);
-
+  const reset = (fn: (v: string) => void) => (v: string) => { fn(v); setPage(1); };
+  const rows = q.data?.results ?? [];
+  const tones: Record<string, "red" | "green" | "amber" | "blue" | "neutral"> = { danger: "red", success: "green", warning: "amber", accent: "blue", muted: "neutral" };
   return (
-    <Screen
-      refreshing={q.loading}
-      onRefresh={q.reload}
-      toolbar={
-        <>
-          <Input compact containerStyle={{ flex: 1, minWidth: 180, maxWidth: 280 }} placeholder="Filter by who did it" value={actor} onChangeText={(t) => { setActor(t); setPage(1); }} />
-          <SelectField
-            label="All actions"
-            value={action}
-            onChange={set}
-            placeholder="Search actions"
-            options={[
-              { value: "", label: "All actions" },
-              ...(known.data?.actions ?? []).map((a) => ({ value: a.value, label: sentence(a.value), hint: String(a.count) })),
-            ]}
-          />
-        </>
-      }
-    >
+    <Screen refreshing={q.loading} onRefresh={q.reload}>
+      <PageHeading eyebrow="PLATFORM ACCOUNTABILITY" title="Audit trail" subtitle="Understand who changed what, and when." />
       <ErrorBanner message={q.error} onRetry={q.reload} />
-      {q.loading && !q.data ? <Loading /> : null}
-      {q.data?.results.length === 0 ? <Empty text={action || actor ? "Nothing matches that filter." : "Nothing has been recorded yet."} icon="receipt-outline" /> : null}
-      {days.map((day) => (
-        <View key={day.key} style={{ gap: space.sm }}>
-          <Row style={{ justifyContent: "space-between", marginTop: space.sm }}>
-            <P muted small style={{ fontWeight: "700", letterSpacing: 0.4, textTransform: "uppercase" }}>{day.label}</P>
-            <P muted small>{day.entries.length} {day.entries.length === 1 ? "entry" : "entries"}</P>
-          </Row>
-          {day.entries.map((log) => <Entry key={log.id} log={log} />)}
+      <Card flush>
+        <View style={{ paddingHorizontal: 22, paddingTop: 22, paddingBottom: 14, gap: 10 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <Input icon="search" compact containerStyle={{ flex: 1, minWidth: 220, maxWidth: 350 }} placeholder="Filter by who did it (email)" value={actor} onChangeText={reset(setActor)} accessibilityLabel="Filter by actor email" />
+            <Dropdown value={action} onChange={reset(setAction)} accessibilityLabel="Filter by action"
+              options={[{ value: "", label: "All actions" }, ...(known.data?.actions ?? []).map((a) => ({ value: a.value, label: `${sentence(a.value)} (${a.count})` }))]} />
+          </View>
+          <View style={{ flexDirection: "row" }}><TextLink title={more ? "Fewer filters" : "More filters"} onPress={() => setMore((v) => !v)} /></View>
+          {more ? (
+            <Row style={{ alignItems: "flex-start" }}>
+              <Input label="Target ID" compact value={target} onChangeText={reset(setTarget)} placeholder="Filter by target" containerStyle={{ minWidth: 260 }} />
+              <DateTimeField dateOnly label="From date" value={since ? fromDay(since) : null} onChange={(v) => reset(setSince)(v ? toDay(v) : "")} width={200} />
+              <DateTimeField dateOnly label="To date" value={until ? fromDay(until) : null} onChange={(v) => reset(setUntil)(v ? toDay(v) : "")} width={200} />
+              {(target || since || until) ? <View style={{ paddingTop: 24 }}><Button title="Clear" small variant="ghost" onPress={() => { setTarget(""); setSince(""); setUntil(""); setPage(1); }} /></View> : null}
+            </Row>
+          ) : null}
         </View>
-      ))}
-      {q.data && q.data.count > 0 ? (
-        <Row style={{ justifyContent: "space-between", marginTop: space.md }}>
-          <P muted small>{`${q.data.count} entries \u00b7 page ${page}`}</P>
-          <Row>
-            {page > 1 ? <Button title="Previous" icon="chevron-back-outline" small variant="secondary" onPress={() => setPage((p) => p - 1)} /> : null}
-            {q.data.next ? <Button title="Next" icon="chevron-forward-outline" small variant="secondary" onPress={() => setPage((p) => p + 1)} /> : null}
-          </Row>
-        </Row>
-      ) : null}
+        {q.error && !q.data ? <RequestFailed onRetry={q.reload} /> : q.loading && !q.data ? <Loading lines={3} /> : rows.length === 0 ? <Empty icon="receipt-outline" text={action || actor || target || since || until ? "Nothing matches these filters." : "Nothing has been recorded yet."} /> : (
+          <ScrollView horizontal contentContainerStyle={{ flexGrow: 1 }}>
+            <View style={{ minWidth: 900, flex: 1 }}>
+              <View style={{ flexDirection: "row", backgroundColor: "#F7F9F5", borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border, paddingVertical: 12 }}>
+                {[["Time", 1.1], ["Actor", 1.6], ["Action", 1.5], ["Target", 1.8], ["Status", 0.8], ["", 1.4]].map(([l, f]) => <Text key={String(l) + f} style={{ flex: Number(f), paddingHorizontal: 18, fontSize: 11, fontWeight: "600", letterSpacing: 0.2, color: "#708071" }}>{l}</Text>)}
+              </View>
+              {rows.map((log) => {
+                const { entity, verb } = splitAction(log.action);
+                const tone = toneFor(verb);
+                return (
+                  <View key={log.id}>
+                    <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 13, borderBottomWidth: open === log.id ? 0 : 1, borderBottomColor: colors.rowLine }}>
+                      <View style={{ flex: 1.1, paddingHorizontal: 18 }}><Text style={{ fontSize: 12, color: colors.text }}>{stamp(log.created_at)}</Text></View>
+                      <View style={{ flex: 1.6, paddingHorizontal: 18 }}><CellText title={log.actor_email || "System"} sub={log.actor_role || null} /></View>
+                      <View style={{ flex: 1.5, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Ionicons name={ICONS[tone]} size={15} color={TONES[tone]} />
+                        <Text style={{ fontSize: 12, color: colors.ink, flexShrink: 1 }}>{sentence(entity)} {verb.replace(/_/g, " ")}</Text>
+                      </View>
+                      <View style={{ flex: 1.8, paddingHorizontal: 18 }}><CellText strong={false} title={log.target_label || sentence(log.target_type)} sub={log.target_label ? sentence(log.target_type) : null} /></View>
+                      <View style={{ flex: 0.8, paddingHorizontal: 18 }}><Badge value="Recorded" tone={tones[tone]} /></View>
+                      <View style={{ flex: 1.4, paddingHorizontal: 18, alignItems: "flex-start" }}><Button title={open === log.id ? "Hide" : "Details"} icon="eye-outline" small variant="secondary" onPress={() => setOpen((o) => (o === log.id ? null : log.id))} /></View>
+                    </View>
+                    {open === log.id ? <DetailPairs log={log} /> : null}
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+        )}
+        {q.data && q.data.count > 0 ? (
+          <TableFooter>
+            <Text style={{ fontSize: 11, color: colors.muted }}>Showing {rows.length} of {q.data.count} records · page {page}</Text>
+            <Row style={{ gap: 8 }}>
+              <Button title="Previous" small variant="secondary" icon="chevron-back" disabled={page <= 1} onPress={() => setPage((p) => p - 1)} />
+              <Button title="Next" small variant="secondary" icon="chevron-forward" disabled={!q.data.next} onPress={() => setPage((p) => p + 1)} />
+            </Row>
+          </TableFooter>
+        ) : null}
+      </Card>
     </Screen>
   );
 }

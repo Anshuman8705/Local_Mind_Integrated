@@ -13,6 +13,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
     question_count = serializers.IntegerField(read_only=True)
     attempt_count = serializers.SerializerMethodField()
     hold_incident_id = serializers.SerializerMethodField()
+    hold_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Assessment
@@ -20,7 +21,42 @@ class AssessmentSerializer(serializers.ModelSerializer):
                   "pass_percentage", "max_attempts", "time_limit_minutes", "available_from", "due_at", "version", "supersedes",
                   "created_by_name", "published_at", "closed_at", "question_count", "attempt_count", "created_at", "updated_at",
                   "source_module_ids", "results_release", "results_release_at", "results_released_at", "pending_release_count",
-                  "auto_generated", "checked_at", "held_for_review", "hold_reason", "hold_incident_id"]
+                  "auto_generated", "checked_at", "held_for_review", "hold_reason", "hold_incident_id", "hold_details"]
+
+    def get_hold_details(self, a) -> dict | None:
+        """What the monitor actually flagged on a held quiz: the question(s) its failing checks name, the
+        findings, and the source passages it compared against.
+
+        Quiz checks list the questions they flag by id (``"<id>: problem"``, or the bare id), falling back
+        to ``q<n>`` for questions without an id. Only those references count, so a finding about one question
+        never flags the others. ``question_ids`` is empty when no failing check names a question (for
+        example a judge-only finding); the screen then says the question is not identified."""
+        if not a.held_for_review:
+            return None
+        from ai_monitor.models import Evaluation
+        ev = Evaluation.objects.filter(assessment=a).exclude(verdict="pass").order_by("-created_at").first()
+        if ev is None:
+            return {"question_ids": [], "evidence": [], "findings": []}
+        failing = [v for v in (ev.validators_json or []) if v.get("passed") is False]
+        labels = {}
+        for n, q in enumerate(a.questions or [], start=1):
+            if q.get("id"):
+                labels[str(q["id"])] = q["id"]
+            labels.setdefault(f"q{n}", q.get("id"))
+        flagged = []
+        for v in failing:
+            for item in (v.get("evidence") or []):
+                ref = str(item).split(":", 1)[0].strip()
+                qid = labels.get(ref)
+                if qid and qid not in flagged:
+                    flagged.append(qid)
+        return {
+            "question_ids": flagged,
+            "evidence": [{"ref": e.get("ref", ""), "text": e.get("text", "")} for e in (ev.evidence_json or [])][:5],
+            "findings": [{"name": v.get("name", ""), "detail": v.get("detail", ""), "questions": [labels[r] for r in
+                          (str(i).split(":", 1)[0].strip() for i in (v.get("evidence") or [])) if labels.get(r)]} for v in failing][:5],
+            "reason": ev.reason or "",
+        }
 
     def get_hold_incident_id(self, a) -> str | None:
         """The AI monitor incident a held automatic quiz is waiting on, so the
@@ -49,13 +85,14 @@ class AssessmentSerializer(serializers.ModelSerializer):
 
 class AssessmentStudentSerializer(serializers.ModelSerializer):
     """Student view: no answers."""
+    subject_id = serializers.UUIDField(read_only=True)
     module_id = serializers.UUIDField(read_only=True)
     chapter_id = serializers.UUIDField(read_only=True)
     question_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Assessment
-        fields = ["id", "module_id", "chapter_id", "kind", "title", "instructions", "pass_percentage", "max_attempts",
+        fields = ["id", "subject_id", "module_id", "chapter_id", "kind", "title", "instructions", "pass_percentage", "max_attempts",
                   "time_limit_minutes", "available_from", "due_at", "question_count", "version",
                   "results_release", "results_release_at", "auto_generated"]
 
@@ -65,10 +102,11 @@ class AttemptSerializer(serializers.ModelSerializer):
     assessment_title = serializers.CharField(source="assessment.title", read_only=True)
     student_id = serializers.UUIDField(read_only=True)
     student_email = serializers.EmailField(source="student.email", read_only=True)
+    student_name = serializers.CharField(source="student.full_name", read_only=True, default="")
 
     class Meta:
         model = AssessmentAttempt
-        fields = ["id", "assessment_id", "assessment_title", "student_id", "student_email", "attempt_number", "status",
+        fields = ["id", "assessment_id", "assessment_title", "student_id", "student_email", "student_name", "attempt_number", "status",
                   "started_at", "submitted_at", "time_taken_seconds", "score", "total_questions", "percentage", "passed",
                   "detailed_results", "evaluation_notes", "evaluated_at", "results_released_at"]
 

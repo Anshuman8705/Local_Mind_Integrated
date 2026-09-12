@@ -62,6 +62,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     subject_code = serializers.CharField(source="subject.code", read_only=True)
     uploaded_by_id = serializers.UUIDField(read_only=True)
     uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True, default="")
+    published_by_name = serializers.CharField(source="published_by.full_name", read_only=True, default="")
     chapter_count = serializers.SerializerMethodField()
     module_count = serializers.SerializerMethodField()
     progress = serializers.SerializerMethodField()
@@ -69,7 +70,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = ["id", "subject_id", "subject_code", "title", "original_name", "file_type", "file_size", "status",
-                  "outline_source", "parse_mode", "error_message", "uploaded_by_id", "uploaded_by_name",
+                  "outline_source", "parse_mode", "error_message", "uploaded_by_id", "uploaded_by_name", "published_by_name",
                   "processed_at", "reviewed_at", "published_at", "unpublished_at", "archived_at",
                   "content_version", "last_edited_at", "chapter_count", "module_count", "progress",
                   "processing_started_at", "created_at", "updated_at"]

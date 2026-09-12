@@ -126,17 +126,24 @@ class StudentQuizListView(APIView):
             qs = qs.filter(module_id=request.query_params["module"])
         if request.query_params.get("subject"):
             qs = qs.filter(subject_id=request.query_params["subject"])
-        attempts = AssessmentAttempt.objects.filter(student=request.user, assessment__in=qs).exclude(status=AttemptStatus.IN_PROGRESS)
-        best = {}
+        attempts = (AssessmentAttempt.objects.filter(student=request.user, assessment__in=qs)
+                    .exclude(status=AttemptStatus.IN_PROGRESS).select_related("assessment"))
+        used, best, pending = {}, {}, {}
         for at in attempts:
+            used[at.assessment_id] = used.get(at.assessment_id, 0) + 1
+            if not at.results_visible:
+                # A held score must not reach the student through the list either.
+                pending[at.assessment_id] = pending.get(at.assessment_id, 0) + 1
+                continue
             cur = best.get(at.assessment_id)
             if cur is None or (at.percentage or 0) > (cur["best_percentage"] or 0):
                 best[at.assessment_id] = {"best_percentage": at.percentage, "passed": at.passed}
-            best[at.assessment_id]["attempts_used"] = best[at.assessment_id].get("attempts_used", 0) + 1
         out = []
         for a in qs:
             row = AssessmentStudentSerializer(a).data
-            row.update(best.get(a.id, {"best_percentage": None, "passed": None, "attempts_used": 0}))
+            row.update(best.get(a.id, {"best_percentage": None, "passed": None}))
+            row["attempts_used"] = used.get(a.id, 0)
+            row["results_pending"] = pending.get(a.id, 0)
             out.append(row)
         return Response(out)
 

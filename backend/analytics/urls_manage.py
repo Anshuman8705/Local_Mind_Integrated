@@ -1,9 +1,10 @@
 from django.urls import path
-from .views import (OverviewView, StudentDetailView, StudentSubjectDetailView, SubjectModulesView, SubjectStudentsView,
+from .views import (OverviewView, StudentDetailView, TeachingActivityView, StudentSubjectDetailView, SubjectModulesView, SubjectStudentsView,
                     SubjectSummaryView, UserSessionsView)
 
 urlpatterns = [
     path("analytics/overview/", OverviewView.as_view(), name="manage-analytics-overview"),
+    path("analytics/activity/", TeachingActivityView.as_view(), name="manage-analytics-activity"),
     path("analytics/subjects/<uuid:subject_id>/", SubjectSummaryView.as_view(), name="manage-analytics-subject"),
     path("analytics/subjects/<uuid:subject_id>/students/", SubjectStudentsView.as_view(), name="manage-analytics-subject-students"),
     path("analytics/subjects/<uuid:subject_id>/modules/", SubjectModulesView.as_view(), name="manage-analytics-subject-modules"),

@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { configurePing, reportOffline, reportOnline } from "@/offline/connectivity";
-import { readEntry, writeEntry } from "@/offline/store";
+import { offlineScope, readEntry, writeEntry } from "@/offline/store";
 import { getItem, migrateLegacy, setItem } from "./storage";
 
 export class ApiError extends Error {
@@ -31,7 +31,16 @@ export const BASE_URL = resolveBaseUrl();
 
 let tokens: Tokens | null = null;
 let onSessionLost: (() => void) | null = null;
-let refreshing: Promise<boolean> | null = null;
+let refreshing: { session: number; promise: Promise<boolean> } | null = null;
+
+/**
+ * Which sign-in the client is on. It changes whenever tokens are replaced by a sign-in or removed by a
+ * sign-out (not when a refresh renews them). A refresh or request that started under an earlier number
+ * belongs to someone who is no longer signed in: its tokens are never stored, its response is never
+ * cached or shown, and it cannot sign the current person out.
+ */
+let session = 0;
+export const currentSession = () => session;
 
 export const tokenStore = {
   get: () => tokens,
@@ -43,26 +52,43 @@ export const tokenStore = {
     return tokens;
   },
   async set(t: Tokens | null) {
-    tokens = t;
-    await Promise.all([setItem(K.access, t?.access ?? null), setItem(K.refresh, t?.refresh ?? null), setItem(K.session, t?.session_id ?? null)]);
+    session += 1;
+    refreshing = null;
+    await writeTokens(t);
   },
   setSessionLostHandler(fn: (() => void) | null) { onSessionLost = fn; },
 };
 
+async function writeTokens(t: Tokens | null) {
+  tokens = t;
+  await Promise.all([setItem(K.access, t?.access ?? null), setItem(K.refresh, t?.refresh ?? null), setItem(K.session, t?.session_id ?? null)]);
+}
+
 async function refreshTokens(): Promise<boolean> {
   if (!tokens?.refresh) return false;
-  if (!refreshing) {
-    refreshing = (async () => {
+  if (!refreshing || refreshing.session !== session) {
+    const mine = session;
+    const started = tokens;
+    let promise: Promise<boolean> | null = null;
+    promise = (async () => {
       try {
-        const res = await fetch(`${BASE_URL}/api/auth/refresh/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh: tokens!.refresh }) });
+        const res = await fetch(`${BASE_URL}/api/auth/refresh/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh: started.refresh }) });
+        // Signed out, or someone else signed in, while this was on its way: drop it.
+        if (session !== mine || tokens !== started) return false;
         if (!res.ok) return false;
         const data = await res.json();
-        await tokenStore.set({ ...tokens!, access: data.access, refresh: data.refresh ?? tokens!.refresh });
+        if (session !== mine || tokens !== started) return false;
+        await writeTokens({ ...started, access: data.access, refresh: data.refresh ?? started.refresh });
         return true;
-      } catch { return false; } finally { refreshing = null; }
+      } catch { return false; } finally { if (refreshing?.promise === promise) refreshing = null; }
     })();
+    refreshing = { session: mine, promise: promise! };
   }
-  return refreshing;
+  return refreshing.promise;
+}
+
+export class SessionChangedError extends Error {
+  constructor() { super("The account on this device changed while the request was running."); this.name = "SessionChangedError"; }
 }
 
 interface Options {
@@ -86,6 +112,9 @@ export function offlineKey(path: string, query?: Options["query"]): string {
 export async function api<T = unknown>(path: string, opts: Options = {}): Promise<T> {
   const { method = "GET", body, form, query, auth = true, retry = true } = opts;
   const cacheable = method === "GET" && (opts.cacheOffline ?? OFFLINE_READABLE.test(path));
+  // Whose request this is (sign-in and offline copy) is fixed when it starts.
+  const owner = offlineScope();
+  const mine = session;
   let url = `${BASE_URL}/api${path}`;
   if (query) {
     const qs = Object.entries(query).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("&");
@@ -107,8 +136,13 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
       : "You are offline. This needs a connection to the LocalMind server; try again when you are back online.");
   }
   reportOnline();
+  if (session !== mine) throw new SessionChangedError();
   if (res.status === 401 && auth && retry && tokens) {
-    if (await refreshTokens()) return api<T>(path, { ...opts, retry: false });
+    if (await refreshTokens()) {
+      if (session !== mine) throw new SessionChangedError();
+      return api<T>(path, { ...opts, retry: false });
+    }
+    if (session !== mine) throw new SessionChangedError();
     await tokenStore.set(null); onSessionLost?.();
   }
   if (res.status === 204) return undefined as T;
@@ -119,7 +153,8 @@ export async function api<T = unknown>(path: string, opts: Options = {}): Promis
     const err = data?.error ?? {};
     throw new ApiError(res.status, err.code ?? "HTTP_ERROR", err.message ?? `Request failed (${res.status})`, err.details);
   }
-  if (cacheable) void writeEntry(offlineKey(path, query), data);
+  if (session !== mine) throw new SessionChangedError();
+  if (cacheable) void writeEntry(offlineKey(path, query), data, owner).catch(() => {});
   return data as T;
 }
 

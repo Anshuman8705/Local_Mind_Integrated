@@ -1,8 +1,37 @@
-import { api } from "./client";
+import { ApiError, api } from "./client";
 import type * as T from "./types";
 
 type Q = Record<string, string | number | undefined | null>;
 const list = <X>(d: T.Paginated<X> | X[]): X[] => (Array.isArray(d) ? d : d.results);
+
+/** A list that could not be fully loaded (offline, or an unusually large result). */
+export type ListRows<X> = X[] & { incomplete?: { loaded: number; total: number | null; reason: "offline" | "limit" } };
+
+/**
+ * Every row of a paginated list. The first page is requested exactly as before, so its offline copy still
+ * answers without a connection. Later pages are fetched only while online; if one cannot be loaded (for
+ * example the device went offline, where only the first page was saved), the rows already loaded are
+ * returned and marked `incomplete` so the screen can say so, instead of the whole list failing.
+ */
+async function allPages<X>(path: string, query: Q = {}): Promise<ListRows<X>> {
+  const first = await api<T.Paginated<X> | X[]>(path, { query });
+  if (Array.isArray(first)) return first;
+  const rows: ListRows<X> = [...first.results];
+  let next = first.next;
+  const MAX_PAGES = 2000;
+  for (let page = 2; next; page += 1) {
+    if (page > MAX_PAGES) { rows.incomplete = { loaded: rows.length, total: first.count ?? null, reason: "limit" }; break; }
+    let more: T.Paginated<X>;
+    try { more = await api<T.Paginated<X>>(path, { query: { ...query, page }, cacheOffline: false }); }
+    catch (e) {
+      if (e instanceof ApiError && e.code === "NETWORK") { rows.incomplete = { loaded: rows.length, total: first.count ?? null, reason: "offline" }; break; }
+      throw e;
+    }
+    rows.push(...more.results);
+    next = more.next;
+  }
+  return rows;
+}
 
 export const auth = {
   login: (role: T.Role, email: string, password: string) =>
@@ -35,12 +64,12 @@ export const student = {
   submitAttempt: (attemptId: string, submitted_answers: Record<string, string>) =>
     api<T.Attempt>(`/student/quiz-attempts/${attemptId}/submit/`, { method: "POST", body: { submitted_answers } }),
   attempt: (id: string) => api<T.Attempt>(`/student/quiz-attempts/${id}/`),
-  scores: (q: Q = {}) => api<T.Paginated<T.Attempt>>("/student/scores/", { query: q }).then(list),
+  scores: (q: Q = {}) => allPages<T.Attempt>("/student/scores/", q),
   remediation: (attemptId: string) => api<{ overview: string; items: { question: string; explanation: string; source_reference?: string }[]; generator: string }>(`/student/quiz-attempts/${attemptId}/remediation/`, { method: "POST" }),
   assignments: (q: Q = {}) => api<T.Assignment[]>("/student/assignments/", { query: q }),
   submitAssignment: (id: string, content: string, time_spent_seconds: number) =>
     api<T.Submission>(`/student/assignments/${id}/submissions/`, { method: "POST", body: { content, time_spent_seconds } }),
-  submissions: () => api<T.Paginated<T.Submission>>("/student/assignment-submissions/").then(list),
+  submissions: () => allPages<T.Submission>("/student/assignment-submissions/"),
   overview: () => api<any>("/student/analytics/overview/"),
   subjectAnalytics: (id: string) => api<any>(`/student/analytics/subjects/${id}/`),
 };
@@ -53,7 +82,7 @@ export const manage = {
   discontinueEnrollment: (subjectId: string, studentId: string) => api(`/faculty/subjects/${subjectId}/students/${studentId}/discontinue/`, { method: "POST" }),
   searchStudents: (q: string, subject?: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/faculty/students/search/", { query: { q, subject } }),
 
-  documents: (q: Q = {}) => api<T.Paginated<T.Document>>("/faculty/documents/", { query: q }).then(list),
+  documents: (q: Q = {}) => allPages<T.Document>("/faculty/documents/", q),
   document: (id: string) => api<T.Document>(`/faculty/documents/${id}/`),
   upload: (form: FormData) => api<T.Document>("/faculty/documents/", { method: "POST", form }),
   process: (id: string) => api<T.Document>(`/faculty/documents/${id}/process/`, { method: "POST" }),
@@ -71,31 +100,32 @@ export const manage = {
     api<T.LessonSummary & { queued: number }>(`/faculty/documents/${documentId}/lessons/`, { method: "POST", body: { force } }),
   transition: (id: string, action: "ready" | "publish" | "unpublish" | "archive") => api<T.Document>(`/faculty/documents/${id}/${action}/`, { method: "POST" }),
   deleteDocument: (id: string) => api<{ detail: string }>(`/faculty/documents/${id}/`, { method: "DELETE" }),
+  module: (id: string) => api<T.ModuleFull & { chapter_title?: string; document_id?: string; document_title?: string }>(`/faculty/modules/${id}/`),
   editModule: (id: string, body: { title?: string; source_text?: string }) => api<T.ModuleFull>(`/faculty/modules/${id}/`, { method: "PATCH", body }),
   moduleAvailability: (id: string, availability: T.ModuleAvailability) => api<T.ModuleFull>(`/faculty/modules/${id}/availability/`, { method: "POST", body: { availability } }),
   chapterAvailability: (id: string, availability: T.ModuleAvailability) => api(`/faculty/chapters/${id}/availability/`, { method: "POST", body: { availability } }),
 
-  quizzes: (q: Q = {}) => api<T.Paginated<T.Quiz>>("/faculty/quizzes/", { query: q }).then(list),
+  quizzes: (q: Q = {}) => allPages<T.Quiz>("/faculty/quizzes/", q),
   quiz: (id: string) => api<T.Quiz>(`/faculty/quizzes/${id}/`),
   createQuiz: (body: Record<string, unknown>) => api<T.Quiz>("/faculty/quizzes/", { method: "POST", body }),
   generateQuiz: (body: Record<string, unknown>) => api<T.Quiz>("/faculty/quizzes/generate/", { method: "POST", body }),
   updateQuiz: (id: string, body: Record<string, unknown>) => api<T.Quiz>(`/faculty/quizzes/${id}/`, { method: "PATCH", body }),
   quizStatus: (id: string, status: string) => api<T.Quiz>(`/faculty/quizzes/${id}/status/`, { method: "POST", body: { status } }),
   deleteQuiz: (id: string) => api<{ detail: string }>(`/faculty/quizzes/${id}/`, { method: "DELETE" }),
-  quizAttempts: (id: string) => api<T.Paginated<T.Attempt>>(`/faculty/quizzes/${id}/attempts/`).then(list),
+  quizAttempts: (id: string) => allPages<T.Attempt>(`/faculty/quizzes/${id}/attempts/`),
   releaseQuizResults: (id: string, attemptId?: string) =>
     api<{ released: number; pending: number }>(`/faculty/quizzes/${id}/release-results/`, { method: "POST", body: attemptId ? { attempt_id: attemptId } : {} }),
   reEvaluate: (attemptId: string, overrides?: Record<string, { score_awarded: number; feedback?: string }>) =>
     api<T.Attempt>(`/faculty/quiz-attempts/${attemptId}/re-evaluate/`, { method: "POST", body: overrides ? { overrides } : {} }),
 
-  assignments: (q: Q = {}) => api<T.Paginated<T.Assignment>>("/faculty/assignments/", { query: q }).then(list),
+  assignments: (q: Q = {}) => allPages<T.Assignment>("/faculty/assignments/", q),
   assignment: (id: string) => api<T.Assignment>(`/faculty/assignments/${id}/`),
   createAssignment: (body: Record<string, unknown>) => api<T.Assignment>("/faculty/assignments/", { method: "POST", body }),
   generateAssignment: (body: Record<string, unknown>) => api<T.Assignment>("/faculty/assignments/generate/", { method: "POST", body }),
   updateAssignment: (id: string, body: Record<string, unknown>) => api<T.Assignment>(`/faculty/assignments/${id}/`, { method: "PATCH", body }),
   assignmentStatus: (id: string, status: string) => api<T.Assignment>(`/faculty/assignments/${id}/status/`, { method: "POST", body: { status } }),
   deleteAssignment: (id: string) => api<{ detail: string }>(`/faculty/assignments/${id}/`, { method: "DELETE" }),
-  submissions: (id: string) => api<T.Paginated<T.Submission>>(`/faculty/assignments/${id}/submissions/`).then(list),
+  submissions: (id: string) => allPages<T.Submission>(`/faculty/assignments/${id}/submissions/`),
   releaseAssignmentResults: (id: string, submissionId?: string) =>
     api<{ released: number; pending: number }>(`/faculty/assignments/${id}/release-results/`, { method: "POST", body: submissionId ? { submission_id: submissionId } : {} }),
   evaluate: (submissionId: string, body: { score: number; feedback: string }) => api<T.Submission>(`/faculty/assignment-submissions/${submissionId}/evaluate/`, { method: "POST", body }),
@@ -105,10 +135,12 @@ export const manage = {
   subjectStudentsAnalytics: (id: string) => api<any>(`/faculty/analytics/subjects/${id}/students/`),
   subjectModules: (id: string) => api<any>(`/faculty/analytics/subjects/${id}/modules/`),
   studentAnalytics: (id: string) => api<any>(`/faculty/analytics/students/${id}/`),
+  studentSubjectAnalytics: (id: string, subjectId: string) => api<any>(`/faculty/analytics/students/${id}/subjects/${subjectId}/`),
+  teachingActivity: () => api<{ items: { kind: string; title: string; detail: string; subject: string; at: string; target_id: string }[]; window_days: number }>("/faculty/analytics/activity/"),
 };
 
 export const admin = {
-  subjects: (q: Q = {}) => api<T.Paginated<T.Subject>>("/admin/subjects/", { query: q }).then(list),
+  subjects: (q: Q = {}) => allPages<T.Subject>("/admin/subjects/", q),
   subject: (id: string) => api<T.Subject & { faculty: { faculty_id: string; email: string; full_name: string; status: string }[]; active_students?: number }>(`/admin/subjects/${id}/`),
   createSubject: (body: { name: string; code: string; description?: string }) => api<T.Subject>("/admin/subjects/", { method: "POST", body }),
   updateSubject: (id: string, body: Record<string, unknown>) => api<T.Subject>(`/admin/subjects/${id}/`, { method: "PATCH", body }),
@@ -121,7 +153,7 @@ export const admin = {
   discontinueEnrollment: (subjectId: string, studentId: string) => api(`/admin/subjects/${subjectId}/students/${studentId}/discontinue/`, { method: "POST" }),
   searchStudents: (q: string, subject?: string) => api<{ id: string; email: string; full_name: string; roll_number: string }[]>("/admin/students/search/", { query: { q, subject } }),
 
-  users: (kind: "faculty" | "students", q: Q = {}) => api<T.Paginated<T.User>>(`/admin/${kind}/`, { query: q }).then(list),
+  users: (kind: "faculty" | "students", q: Q = {}) => allPages<T.User>(`/admin/${kind}/`, q),
   user: (kind: "faculty" | "students", id: string) => api<T.User>(`/admin/${kind}/${id}/`),
   createUser: (kind: "faculty" | "students", body: Record<string, unknown>) => api<T.CreatedUser>(`/admin/${kind}/`, { method: "POST", body }),
   resetPassword: (kind: "faculty" | "students", id: string) => api<T.PasswordReset>(`/admin/${kind}/${id}/reset-password/`, { method: "POST", body: {} }),

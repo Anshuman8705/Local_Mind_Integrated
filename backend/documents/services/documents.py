@@ -118,19 +118,34 @@ def _processing_is_stale(document):
 
 def claim_for_processing(document):
     """Atomically move to PROCESSING; returns False if someone else already did
-    and is still within the stale window."""
+    and is still within the stale window.
+
+    The move is a single conditional UPDATE that names the row's current state, so the database decides
+    the winner: of several simultaneous requests exactly one changes a row, and the others see zero rows
+    changed and step aside. ``select_for_update`` alone was not enough, because SQLite ignores it and both
+    transactions could read the same "not processing yet" row.
+    """
     with transaction.atomic():
         locked = Document.objects.select_for_update().get(pk=document.pk)
+        now = timezone.now()
         if locked.status == DocumentStatus.PROCESSING:
             if not _processing_is_stale(locked):
                 return False
-            logger.warning("Reclaiming document %s: processing started at %s and never finished", locked.pk, locked.processing_started_at)
+            # Reclaim only the run we just judged stale, by naming the start time we saw.
+            claimed = Document.objects.filter(pk=locked.pk, status=DocumentStatus.PROCESSING,
+                                              processing_started_at=locked.processing_started_at).update(
+                status=DocumentStatus.PROCESSING, error_message="", processing_started_at=now, updated_at=now)
+            if claimed:
+                logger.warning("Reclaiming document %s: processing started at %s and never finished", locked.pk, locked.processing_started_at)
         elif locked.status not in REPROCESSABLE_STATUSES:
             raise Conflict(f"A document in state '{locked.status}' cannot be processed.", code="INVALID_STATE")
-        locked.status = DocumentStatus.PROCESSING
-        locked.error_message = ""
-        locked.processing_started_at = timezone.now()
-        locked.save(update_fields=["status", "error_message", "processing_started_at", "updated_at"])
+        else:
+            claimed = Document.objects.filter(pk=locked.pk, status=locked.status).update(
+                status=DocumentStatus.PROCESSING, error_message="", processing_started_at=now, updated_at=now)
+        if not claimed:
+            return False
+        document.status = DocumentStatus.PROCESSING
+        document.processing_started_at = now
     return True
 
 

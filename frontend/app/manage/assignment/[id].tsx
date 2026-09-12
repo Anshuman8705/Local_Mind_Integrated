@@ -1,9 +1,8 @@
 import { useLocalSearchParams } from "expo-router";
 import React from "react";
-import AssignmentWorkspace from "@/screens/AssignmentWorkspace";
+import { AssignmentDetailPage, type Tab } from "@/screens/AssignmentWorkspace";
 
-/** A direct link to one assignment opens the workspace with it selected. */
 export default function AssignmentScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  return <AssignmentWorkspace initialId={id} />;
+  const { id, tab } = useLocalSearchParams<{ id: string; tab?: Tab }>();
+  return <AssignmentDetailPage id={id} initialTab={tab} />;
 }

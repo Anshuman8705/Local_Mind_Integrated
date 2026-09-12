@@ -1,268 +1,305 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Platform, ScrollView, Text, View } from "react-native";
+import { AppState, ScrollView, Text, TextInput, View } from "react-native";
 import { ApiError } from "@/api/client";
 import { student } from "@/api/endpoints";
-import type { Message, TeachResponse } from "@/api/types";
+import type { Message, ModuleFull, Quiz } from "@/api/types";
+import { useAuth } from "@/auth/AuthContext";
 import { useAction, useAsync } from "@/hooks/useAsync";
-import { Badge, Button, Card, Chip, ErrorBanner, H1, H2, Input, Loading, Notice, P, Row, Screen, colors, pct, space } from "@/ui";
-import { LessonView } from "@/ui/LessonView";
 import { useOnline } from "@/offline/connectivity";
+import { Avatar, Badge, Button, Card, CardHead, Chip, DetailList, Empty, ErrorBanner, Eyebrow, FormFooter, Loading, Notice, PageHeading, PageTabs, Screen, Spinner, Split, StepList, TextLink, TileIcon, colors, pct } from "@/ui";
+import { LessonView } from "@/ui/LessonView";
 
 type Tab = "read" | "lesson" | "ask";
+const statusLabel = (st?: string) => (st === "completed" ? "Completed" : st === "in_progress" ? "In progress" : st === "needs_review" ? "Needs review" : "Not started");
 
-export default function ModuleScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export default function StudentModule() {
+  const { id, tab: tabParam } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("read");
+  const navigation = useNavigation();
+  const [tab, setTab] = useState<Tab>(tabParam === "lesson" || tabParam === "ask" ? tabParam : "read");
+  useEffect(() => { if (tabParam === "lesson" || tabParam === "ask" || tabParam === "read") setTab(tabParam); }, [tabParam, id]);
+  const [large, setLarge] = useState(false);
   const mod = useAsync(() => student.module(id), [id]);
   const quizzes = useAsync(() => student.quizzes({ module: id }), [id]);
-  // The back arrow belongs to the book this module sits in. It cannot be set
-  // in the layout because the book is only known once the module has loaded.
-  const navigation = useNavigation();
-  const documentId = mod.data?.document_id;
-  useEffect(() => {
-    navigation.setOptions({ backTo: documentId ? `/student/document/${documentId}` : "/student" });
-  }, [navigation, documentId]);
+  const m = mod.data;
+  const context = useAsync(async () => {
+    if (!m?.document_id) return null;
+    const tree = await student.document(m.document_id);
+    return (await student.subjects()).find((s) => s.id === tree.subject_id) ?? null;
+  }, [m?.document_id]);
+  const teach = useAsync(() => student.teach(id), [id]);
 
-  // Reading time: accumulate foreground seconds, flush every 60s and on unmount.
+  // The breadcrumb's section link goes back to the book this module belongs to.
+  useEffect(() => {
+    if (m?.document_id) navigation.setOptions({ backTo: `/student/document/${m.document_id}` });
+  }, [navigation, m?.document_id]);
+
+  // Reading time: foreground seconds, sent every minute and when leaving.
   const acc = useRef(0);
   useEffect(() => {
     let last = Date.now(); let active = true;
-    const tick = setInterval(() => { if (active) { acc.current += (Date.now() - last) / 1000; } last = Date.now(); if (acc.current >= 60) flush(); }, 5000);
-    const flush = () => { const s = Math.round(acc.current); if (s > 0) { acc.current = 0; student.reportTime(id, s).catch(() => {}); } };
+    const flush = () => { const sec = Math.round(acc.current); if (sec > 0) { acc.current = 0; student.reportTime(id, sec).catch(() => {}); } };
+    const tick = setInterval(() => { if (active) acc.current += (Date.now() - last) / 1000; last = Date.now(); if (acc.current >= 60) flush(); }, 5000);
     const sub = AppState.addEventListener("change", (st) => { active = st === "active"; last = Date.now(); if (!active) flush(); });
     return () => { clearInterval(tick); sub.remove(); flush(); };
   }, [id]);
 
-  // Book and chapter often carry the same title, in which case printing both
-  // reads as a stutter.
-  const crumbs = [mod.data?.document_title, mod.data?.chapter_title].filter(Boolean);
-  const trail = [...new Set(crumbs)].join(" · ");
+  // Lessons are prepared in the background; while one is queued, look again quietly.
+  const { setData: setTeach } = teach;
+  useEffect(() => {
+    if (teach.data?.status !== "preparing") return;
+    const timer = setTimeout(async () => { try { setTeach(await student.teach(id)); } catch { /* next focus retries */ } }, LESSON_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [teach.data, id, setTeach]);
 
+  const eyebrow = context.data ? `${context.data.code} · ${context.data.name}`.toUpperCase() : undefined;
+
+  if (mod.errorCode === "MODULE_LOCKED") {
+    return (
+      <Screen>
+        <LockedHeading moduleId={id} />
+        <Card>
+          <Empty icon="lock-closed-outline" title="This module is not open yet." text="Your faculty decides when this module becomes available. Continue with an open module in the meantime."
+            action={<Button title="See available modules" icon="arrow-forward" onPress={() => router.replace("/student/subjects")} />} />
+        </Card>
+      </Screen>
+    );
+  }
+
+  const trail = m ? [...new Set([m.document_title, m.chapter_title].filter(Boolean))].join(" / ") : "";
+  const number = m?.module_number ?? m?.order;
+  const side = m ? <ModuleSide module={m} quizzes={quizzes.data ?? []} onQuiz={(qid) => router.push(`/student/quiz/${qid}`)} onOffline={() => router.push("/student/offline")} /> : null;
+  const lessonState = teach.data?.status;
   return (
-    <Screen scroll={tab !== "ask"} padded={tab !== "ask"}>
-      {mod.error ? <ErrorBanner message={mod.error} onRetry={mod.reload} /> : null}
-      {mod.loading && !mod.data ? <Loading /> : null}
-      {mod.data ? (
+    <Screen refreshing={mod.loading} onRefresh={() => { mod.reload(); teach.reload(); }}>
+      <ErrorBanner message={mod.error} onRetry={mod.reload} />
+      {mod.loading && !m ? <Loading /> : null}
+      {m ? (
         <>
-          <View style={{ padding: tab === "ask" ? space.lg : 0, paddingBottom: tab === "ask" ? 0 : undefined, gap: 8 }}>
-            {trail ? <P muted small>{trail}</P> : null}
-            <H1>{mod.data.title}</H1>
-            <Row>
-              <Chip label="Read" selected={tab === "read"} onPress={() => setTab("read")} />
-              <Chip label="Lesson" selected={tab === "lesson"} onPress={() => setTab("lesson")} />
-              <Chip label="Ask a doubt" selected={tab === "ask"} onPress={() => setTab("ask")} />
-            </Row>
-          </View>
-          {/* Reading and the lesson keep a readable measure, and everything
-              that used to sit underneath the text moves alongside it so a wide
-              window is used rather than left blank. The aside wraps below on a
-              narrow screen. */}
-          {tab === "ask" ? <AskTab moduleId={id} /> : (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg, alignItems: "flex-start" }}>
-              <View style={{ flex: 1, minWidth: 320, maxWidth: 840, gap: space.md }}>
-                {tab === "read" ? <Card><P>{mod.data.source_text}</P></Card> : <LessonTab moduleId={id} onRead={() => setTab("read")} />}
+          <PageHeading eyebrow={eyebrow} title={m.title} subtitle={`${trail ? `${trail} / ` : ""}Module ${number}`}
+            right={m.document_id ? <Button title="Back to book" variant="secondary" icon="arrow-back" onPress={() => router.push(`/student/document/${m.document_id}`)} /> : null} />
+          <PageTabs<Tab> value={tab} onChange={setTab} tabs={[{ key: "read", label: "Read" }, { key: "lesson", label: "Lesson" }, { key: "ask", label: "Ask a doubt" }]} />
+          {tab === "read" ? <Split main={<ReadCard module={m} large={large} onToggleSize={() => setLarge((v) => !v)} onLesson={() => setTab("lesson")} />} side={side} /> : null}
+          {tab === "lesson" && teach.loading && !teach.data ? <Loading /> : null}
+          {tab === "lesson" ? <ErrorBanner message={teach.error} onRetry={teach.reload} /> : null}
+          {tab === "lesson" && lessonState === "preparing" ? (
+            <Card>
+              <Empty icon="hourglass-outline" title="Your lesson is being prepared." text="The source text is ready to read. The guided lesson will appear here after generation completes; there is no need to refresh."
+                action={<Button title="Read the module" icon="book-outline" onPress={() => setTab("read")} />} />
+              <View style={{ gap: 10, marginTop: 8 }}>
+                <View style={{ height: 12, borderRadius: 6, backgroundColor: "#EAF0E6", width: "40%" }} />
+                <View style={{ height: 12, borderRadius: 6, backgroundColor: "#EAF0E6" }} />
+                <View style={{ height: 12, borderRadius: 6, backgroundColor: "#EAF0E6", width: "80%" }} />
               </View>
-              <View style={{ width: 300, flexGrow: 1, minWidth: 260, maxWidth: 360, gap: space.md }}>
-                <Card>
-                  <H2 icon="stats-chart-outline">This module</H2>
-                  <Row style={{ justifyContent: "space-between" }}>
-                    <P muted small>Status</P>
-                    <Badge value={mod.data.progress?.status ?? "not_started"} />
-                  </Row>
-                  {mod.data.progress?.best_quiz_percentage != null ? (
-                    <Row style={{ justifyContent: "space-between" }}>
-                      <P muted small>Best quiz</P>
-                      <P small>{pct(mod.data.progress.best_quiz_percentage)}</P>
-                    </Row>
-                  ) : null}
-                  {mod.data.start_page ? (
-                    <Row style={{ justifyContent: "space-between" }}>
-                      <P muted small>Pages</P>
-                      <P small>{mod.data.start_page}{mod.data.end_page && mod.data.end_page !== mod.data.start_page ? `–${mod.data.end_page}` : ""}</P>
-                    </Row>
-                  ) : null}
-                </Card>
-                <Card>
-                  <H2 icon="help-circle-outline">Quizzes</H2>
-                  {quizzes.data?.length ? quizzes.data.map((qz) => (
-                    <Card key={qz.id} onPress={() => router.push(`/student/quiz/${qz.id}`)} style={{ gap: 4 }}>
-                      <Row style={{ justifyContent: "space-between" }}>
-                        <P small style={{ flex: 1, fontWeight: "600" }}>{qz.title}</P>
-                        <Badge value={qz.passed ? "passed" : qz.attempts_used ? "attempted" : "new"} color={qz.passed ? colors.success : colors.primary} />
-                      </Row>
-                      <P muted small>{qz.question_count} questions · pass {qz.pass_percentage}% · best {qz.best_percentage ?? "—"}{qz.best_percentage != null ? "%" : ""}</P>
-                    </Card>
-                  )) : <P muted small>No quiz has been set for this module yet.</P>}
-                </Card>
-              </View>
-            </View>
-          )}
+            </Card>
+          ) : null}
+          {tab === "lesson" && lessonState === "unavailable" ? (
+            <>
+              <Notice tone="warning" title="The guided lesson is not available right now." message="Here is the original module text, so you can keep learning. The lesson appears here once the tutor has written it."
+                action={<Button title="Try again" small variant="secondary" icon="refresh" onPress={() => teach.reload()} />} />
+              <ReadCard module={m} large={large} onToggleSize={() => setLarge((v) => !v)} />
+            </>
+          ) : null}
+          {tab === "lesson" && lessonState === "ready" && teach.data?.lesson ? (
+            <Split side={side} main={
+              <LessonView lesson={teach.data.lesson} footer={
+                <FormFooter note="Lesson based on this module’s source material.">
+                  {quizzes.data?.[0] ? <Button title="Check my understanding" icon="help-circle-outline" onPress={() => router.push(`/student/quiz/${quizzes.data![0].id}`)} /> : null}
+                </FormFooter>
+              } />
+            } />
+          ) : null}
+          {tab === "ask" ? <Split main={<AskTab moduleId={id} />} side={<AskTips />} /> : null}
         </>
       ) : null}
     </Screen>
   );
 }
 
-/** How often the Lesson tab looks again while a lesson is being prepared. */
-const LESSON_POLL_MS = 8000;
+/** A locked module's own title comes from the book outline, which lists locked modules too. */
+function LockedHeading({ moduleId }: { moduleId: string }) {
+  const found = useAsync(async () => {
+    for (const s of await student.subjects()) {
+      for (const d of await student.documents(s.id)) {
+        const tree = await student.document(d.id);
+        const all = tree.chapters.flatMap((c) => c.modules);
+        const index = all.findIndex((x) => x.id === moduleId);
+        if (index >= 0) return { title: all[index].title, book: tree.title, number: index + 1 };
+      }
+    }
+    return null;
+  }, [moduleId]);
+  const f = found.data;
+  return <PageHeading eyebrow="YOUR LEARNING PATH" title={f?.title ?? "Locked module"} subtitle={f ? `${f.book} · Module ${f.number}` : null} />;
+}
 
-function LessonTab({ moduleId, onRead }: { moduleId: string; onRead: () => void }) {
-  const q = useAsync(() => student.teach(moduleId), [moduleId]);
-  const d: TeachResponse | null = q.data;
-  // Lessons are generated in the background. While this one is queued the tab
-  // checks back by itself, quietly (no spinner over what is already shown).
-  const { setData } = q;
-  useEffect(() => {
-    if (d?.status !== "preparing") return;
-    const t = setTimeout(async () => {
-      try { setData(await student.teach(moduleId)); } catch { /* the next focus or retry will show the error */ }
-    }, LESSON_POLL_MS);
-    return () => clearTimeout(t);
-  }, [d, moduleId, setData]);
-  const ahead = d?.queue_position && d.queue_position > 1 ? d.queue_position - 1 : 0;
+function ReadCard({ module, large, onToggleSize, onLesson }: { module: ModuleFull; large: boolean; onToggleSize: () => void; onLesson?: () => void }) {
+  const blocks = module.source_text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const size = large ? 18 : 15;
+  return (
+    <Card style={{ paddingHorizontal: 36, paddingVertical: 28 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+        <Text style={{ fontSize: 11, color: colors.muted }}>Reading view · Your faculty’s source material</Text>
+        <Button title={large ? "Normal text" : "Text size"} small variant="secondary" onPress={onToggleSize} accessibilityLabel={large ? "Use normal text size" : "Use larger text"} />
+      </View>
+      <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 18 }}>
+        <Eyebrow>{`${module.document_title ?? "Module"} · Module ${String(module.module_number ?? module.order).padStart(2, "0")}`}</Eyebrow>
+      </View>
+      <View style={{ maxWidth: 750, gap: 15, marginTop: 6 }}>
+        {blocks.length === 0 ? <Text style={{ color: colors.muted }}>This module has no text yet.</Text> : blocks.map((b, i) => b.startsWith("#")
+          ? <Text key={i} style={{ fontSize: large ? 20 : 17, fontWeight: "600", color: colors.ink, marginTop: 10 }}>{b.replace(/^#+\s*/, "")}</Text>
+          : <Text key={i} style={{ fontSize: size, lineHeight: Math.round(size * 1.9), color: "#3F5045" }}>{b.replace(/\s*\n\s*/g, " ")}</Text>)}
+      </View>
+      {onLesson ? <FormFooter note="Continue at your own pace."><Button title="Explore the lesson" icon="arrow-forward" onPress={onLesson} /></FormFooter> : null}
+    </Card>
+  );
+}
+
+function ModuleSide({ module, quizzes, onQuiz, onOffline }: { module: ModuleFull; quizzes: Quiz[]; onQuiz: (id: string) => void; onOffline: () => void }) {
+  const q = quizzes[0];
+  const pages = module.start_page ? `${module.start_page}${module.end_page && module.end_page !== module.start_page ? `–${module.end_page}` : ""}` : null;
+  const st = module.progress?.status;
   return (
     <>
-      <ErrorBanner message={q.error} onRetry={q.reload} />
-      {q.loading && !d ? <Loading /> : null}
-      {d?.status === "preparing" ? (
-        <Card>
-          <Row style={{ gap: space.md }}>
-            <ActivityIndicator color={colors.primary} />
-            <View style={{ flex: 1, gap: 4 }}>
-              <H2>Your lesson is being prepared</H2>
-              <P muted small>
-                {d.queue_position === 0
-                  ? "The tutor is writing it now."
-                  : ahead
-                    ? `The tutor is working through ${ahead} other lesson${ahead === 1 ? "" : "s"} first.`
-                    : "It is next in line."}{" "}
-                It appears here by itself; there is no need to refresh.
-              </P>
-            </View>
-          </Row>
-          <Button title="Read the Module Meanwhile" icon="book-outline" small variant="secondary" onPress={onRead} />
-        </Card>
-      ) : null}
-      {d?.lesson ? (
-        <>
-          {d.status === "unavailable" ? (
-            <Notice tone="warning" message={d.retry_scheduled
-              ? "The tutor's lesson for this module is not ready yet, so this is a plain version made from the source text. The full lesson is being retried and will replace this."
-              : "The tutor's lesson for this module is not available, so this is a plain version made from the source text."} />
-          ) : null}
-          <LessonView lesson={d.lesson} />
-        </>
-      ) : null}
+      <Card>
+        <Text style={{ fontSize: 18, fontWeight: "600", color: colors.ink }}>About this module</Text>
+        <View style={{ flexDirection: "row" }}><Badge value={statusLabel(st)} tone={st === "completed" ? "green" : st === "in_progress" ? "blue" : "neutral"} /></View>
+        <DetailList items={[
+          ["Book", module.document_title ?? "—"],
+          ["Module", module.module_number && module.module_count ? `${module.module_number} of ${module.module_count}` : `Module ${module.order}`],
+          ...(pages ? [["Source pages", pages] as [string, string]] : []),
+          ...(module.faculty_names?.length ? [["Faculty", module.faculty_names.join(", ")] as [string, string]] : []),
+          ...(module.progress?.best_quiz_percentage != null ? [["Best quiz", pct(module.progress.best_quiz_percentage)] as [string, string]] : []),
+        ]} />
+      </Card>
+      <Card>
+        <CardHead title="Ready to check yourself?" subtitle={q ? "Put your understanding into practice." : "No quiz has been set for this module yet."} />
+        {q ? (
+          <>
+            <DetailList items={[["Questions", String(q.question_count ?? "—")], ["Pass mark", `${q.pass_percentage}%`], ["Attempts allowed", q.max_attempts ? String(q.max_attempts) : "Unlimited"]]} />
+            <Button title={q.attempts_used ? "Open the quiz" : "Take the quiz"} icon="arrow-forward" full onPress={() => onQuiz(q.id)} />
+            {quizzes.length > 1 ? quizzes.slice(1).map((x) => <TextLink key={x.id} title={x.title} onPress={() => onQuiz(x.id)} />) : null}
+          </>
+        ) : null}
+      </Card>
+      <Card>
+        <CardHead title="Keep learning offline" subtitle="Saved reading and ready lessons remain available when the server is unreachable. New questions and quiz submissions need a connection." />
+        <TextLink title="Offline availability" icon="download-outline" onPress={onOffline} />
+      </Card>
     </>
   );
 }
 
+const LESSON_POLL_MS = 8000;
+
 function AskTab({ moduleId }: { moduleId: string }) {
   const online = useOnline();
+  const userName = useAuth().user?.full_name ?? "";
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [question, setQuestion] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [restoring, setRestoring] = useState(true);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
   const scroll = useRef<ScrollView>(null);
-  // Pick up where the student left off: the newest conversation on this
-  // module is reloaded so earlier questions and answers stay on screen
-  // instead of vanishing every time the tab is reopened.
+
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const convs = await student.conversations(moduleId);
-        const latest = convs[0];
+        const latest = (await student.conversations(moduleId))[0];
         if (!latest || !alive) return;
         const full = await student.conversation(latest.id);
         if (!alive) return;
-        setConversationId(full.id);
-        setMessages(full.messages ?? []);
-      } catch { /* a missing history is not an error worth showing */ }
-      finally { if (alive) setRestoring(false); }
+        setConversationId(full.id); setMessages(full.messages ?? []);
+      } catch { /* no history is fine */ } finally { if (alive) setRestoring(false); }
     })();
     return () => { alive = false; };
   }, [moduleId]);
-  // The question whose answer failed, so the student can ask it again with
-  // one tap. The server keeps the question and does not store it twice.
-  const [failed, setFailed] = useState<string | null>(null);
+
   const ask = useAction(async (text: string) => {
     setFailed(null); setQuestion(""); setSuggestions([]);
-    setMessages((m) => {
-      const last = m[m.length - 1];
-      if (last && last.role === "user" && last.content === text) return m; // asking again: already on screen
-      const mine: Message = { id: `local-${Date.now()}`, role: "user", content: text, grounded: true, source_reference: "", created_at: new Date().toISOString() };
-      return [...m, mine];
+    setMessages((cur) => {
+      const last = cur[cur.length - 1];
+      if (last && last.role === "user" && last.content === text) return cur;
+      return [...cur, { id: `local-${Date.now()}`, role: "user", content: text, grounded: true, source_reference: "", created_at: new Date().toISOString() }];
     });
     try {
       const res = await student.ask(moduleId, text, conversationId);
-      setConversationId(res.conversation_id); setMessages((m) => [...m, res.message]); setSuggestions(res.follow_up_suggestions ?? []);
+      setConversationId(res.conversation_id); setMessages((cur) => [...cur, res.message]); setSuggestions(res.follow_up_suggestions ?? []);
     } catch (e) {
-      // The server opened (or continued) the conversation before the model
-      // failed; stay in it so asking again continues the same thread.
       const conv = e instanceof ApiError ? (e.details?.conversation_id as string | undefined) : undefined;
       if (conv) setConversationId(conv);
       setFailed(text);
       throw e;
     }
   });
-  // A tutor answer on a laptop CPU can take a minute or more, longer when the
-  // model is finishing another task first. Say so instead of spinning silently.
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    if (!ask.busy) { setSlow(false); return; }
-    const t = setTimeout(() => setSlow(true), 15000);
-    return () => clearTimeout(t);
-  }, [ask.busy]);
-  const scrollToEnd = () => scroll.current?.scrollToEnd({ animated: true });
-  useEffect(() => { const t = setTimeout(scrollToEnd, 60); return () => clearTimeout(t); }, [messages.length, ask.busy, suggestions.length]);
+  useEffect(() => { if (!ask.busy) { setSlow(false); return; } const t = setTimeout(() => setSlow(true), 15000); return () => clearTimeout(t); }, [ask.busy]);
+  useEffect(() => { const t = setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 60); return () => clearTimeout(t); }, [messages.length, ask.busy]);
+  const send = (text: string) => { const v = text.trim(); if (v && online && !ask.busy) void ask.run(v); };
+
   return (
-    <View style={{ flex: 1, minHeight: 0 }}>
-      <ScrollView
-        ref={scroll}
-        style={[{ flex: 1, minHeight: 0 }, Platform.OS === "web" && ({ overflowY: "auto" } as any)]}
-        contentContainerStyle={{ padding: space.lg, gap: 10, width: "100%", maxWidth: 900, alignSelf: "center" }}
-        showsVerticalScrollIndicator
-        persistentScrollbar
-        keyboardShouldPersistTaps="handled"
-        onContentSizeChange={scrollToEnd}
-      >
-        {restoring ? <Loading /> : null}
-        {!online ? <Notice tone="warning" message="You are offline. Earlier questions and answers are shown; asking something new needs a connection to the LocalMind server." /> : null}
-        {!restoring && messages.length === 0 && online ? <Notice message="Ask anything about this module. Answers are grounded in the module text and cite it." /> : null}
-        {messages.map((m) => {
-          // An answer the module could not support is guidance, not a reply,
-          // so it is styled as a note rather than dressed up as an answer.
-          const offTopic = m.role === "assistant" && m.grounded === false;
+    <Card style={{ minHeight: 475 }}>
+      <ScrollView ref={scroll} style={{ maxHeight: 510 }} contentContainerStyle={{ gap: 22, paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
+        {restoring ? <Spinner /> : null}
+        {!online ? <Notice tone="warning" title="You are offline" message="Earlier questions and answers are shown. Asking something new needs a connection to the LocalMind server." icon="cloud-offline-outline" /> : null}
+        {!restoring && messages.length === 0 ? (
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TileIcon icon="sparkles-outline" size={32} />
+            <View style={styles.bubble}>
+              <Eyebrow>YOUR LOCALMIND TUTOR</Eyebrow>
+              <Text style={styles.bubbleText}>Ask anything about this module in your own words. My answers stay within the module and point back to the part of the text they use.</Text>
+            </View>
+          </View>
+        ) : null}
+        {messages.map((msg) => {
+          const mine = msg.role === "user";
+          const offTopic = !mine && msg.grounded === false;
           return (
-            <View key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "80%", backgroundColor: m.role === "user" ? colors.primary : offTopic ? colors.yellowTint : colors.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: m.role === "user" ? colors.primary : offTopic ? `${colors.warning}66` : colors.border }}>
-              {offTopic ? (
-                <Row style={{ gap: 6, marginBottom: 4 }}>
-                  <Ionicons name="information-circle-outline" size={15} color={colors.warning} />
-                  <Text style={{ color: colors.warning, fontSize: 12, fontWeight: "700" }}>Outside this module</Text>
-                </Row>
-              ) : null}
-              <Text style={{ color: m.role === "user" ? colors.primaryText : colors.text, fontSize: 15, lineHeight: 21 }}>{m.content}</Text>
-              {m.role === "assistant" && m.source_reference ? <Text style={{ color: colors.muted, fontSize: 12, marginTop: 6 }}>Source: {m.source_reference}</Text> : null}
+            <View key={msg.id} style={{ flexDirection: mine ? "row-reverse" : "row", gap: 10, alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "90%" }}>
+              {mine ? <Avatar name={userName} size={32} /> : <TileIcon icon={offTopic ? "information-circle-outline" : "sparkles-outline"} tone={offTopic ? "amber" : "green"} size={32} />}
+              <View style={[styles.bubble, mine && styles.mine, offTopic && { backgroundColor: "#FFFAEC", borderColor: "#EBDFBD" }]}>
+                {!mine ? <Eyebrow color={offTopic ? colors.warning : undefined}>{offTopic ? "OUTSIDE THIS MODULE" : "YOUR LOCALMIND TUTOR"}</Eyebrow> : null}
+                <Text style={[styles.bubbleText, mine && { color: "#FFFFFF" }]} selectable>{msg.content}</Text>
+                {!mine && msg.source_reference ? <Text style={styles.source}>From the module: {msg.source_reference}</Text> : null}
+              </View>
             </View>
           );
         })}
-        {ask.busy ? <Loading /> : null}
-        {ask.busy && slow ? <P muted small>The tutor is still working on this. Answers can take a minute or two on this computer; you can keep reading meanwhile.</P> : null}
-        {ask.error ? <Notice tone="warning" message={ask.error} /> : null}
-        {failed && !ask.busy ? <Row><Button title="Ask Again" icon="refresh-outline" small variant="secondary" onPress={() => ask.run(failed)} /></Row> : null}
-        {suggestions.length ? <Row>{suggestions.map((s) => <Chip key={s} label={s} onPress={() => ask.run(s)} />)}</Row> : null}
+        {ask.busy ? <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}><TileIcon icon="sparkles-outline" size={32} /><Text style={{ fontSize: 12, color: colors.muted }}>{slow ? "Still working on it. Answers can take a minute or two on this computer; you can keep reading meanwhile." : "Thinking…"}</Text></View> : null}
+        {ask.error ? <Notice tone="warning" title="The tutor could not answer" message={ask.error} action={failed ? <Button title="Ask again" small variant="secondary" icon="refresh" onPress={() => ask.run(failed)} /> : undefined} /> : null}
       </ScrollView>
-      <View style={{ borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
-        <View style={{ flexDirection: "row", gap: 8, padding: space.md, width: "100%", maxWidth: 900, alignSelf: "center" }}>
-        <View style={{ flex: 1 }}><Input value={question} onChangeText={setQuestion} placeholder={online ? "Type your question" : "Offline: asking needs a connection"} onSubmitEditing={() => online && question.trim() && ask.run(question.trim())} blurOnSubmit={false} editable={!ask.busy && online} /></View>
-        <Button title="Ask" onPress={() => ask.run(question.trim())} disabled={!question.trim() || !online} busy={ask.busy} />
-        </View>
+      {suggestions.length ? <View style={{ flexDirection: "row", gap: 7, flexWrap: "wrap" }}>{suggestions.map((sg) => <Chip key={sg} label={sg} onPress={() => send(sg)} />)}</View> : null}
+      <View style={{ flexDirection: "row", gap: 10, paddingTop: 17, borderTopWidth: 1, borderTopColor: colors.border }}>
+        <TextInput value={question} onChangeText={setQuestion} placeholder={online ? "What would you like to understand?" : "Offline: asking needs a connection"} placeholderTextColor={colors.faint}
+          editable={online && !ask.busy} onSubmitEditing={() => send(question)} blurOnSubmit={false} accessibilityLabel="Your question"
+          style={{ flex: 1, borderWidth: 1, borderColor: "#D8E0D7", borderRadius: 7, paddingHorizontal: 12, minHeight: 41, fontSize: 13, color: colors.ink, backgroundColor: "#FFFFFF" }} />
+        <Button title="Ask" icon="send" onPress={() => send(question)} disabled={!question.trim() || !online} busy={ask.busy} />
       </View>
-    </View>
+      <Text style={{ fontSize: 11, color: colors.muted }}>Answers stay within this module.</Text>
+    </Card>
   );
 }
+
+function AskTips() {
+  return (
+    <Card>
+      <CardHead title="A little help goes a long way" />
+      <StepList steps={[
+        ["Ask in your own words", "There is no special way to phrase a question."],
+        ["Go one idea at a time", "Follow up with “why?” or ask for a simpler explanation."],
+        ["Use the source", "Every grounded answer points back to the module."],
+      ]} />
+      <Notice title="Beyond this module?" message="Your faculty is the right person to ask about topics outside the book." />
+    </Card>
+  );
+}
+
+const styles = {
+  bubble: { flexShrink: 1, backgroundColor: "#F3F6F0", borderWidth: 1, borderColor: "#E3EADF", borderTopLeftRadius: 0, borderRadius: 12, paddingHorizontal: 19, paddingVertical: 16, gap: 7 },
+  mine: { backgroundColor: colors.primary, borderColor: colors.primary, borderTopLeftRadius: 12, borderTopRightRadius: 0 },
+  bubbleText: { fontSize: 13, lineHeight: 23, color: colors.text },
+  source: { fontSize: 11, paddingTop: 10, marginTop: 4, borderTopWidth: 1, borderTopColor: colors.border, color: colors.muted },
+} as const;

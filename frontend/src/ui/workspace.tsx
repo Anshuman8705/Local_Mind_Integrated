@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Notice, PageTabs } from "./index";
 import { colors, radius, radiusSm, space } from "./theme";
 
 /**
@@ -65,27 +66,14 @@ export function ListItem({ title, meta, selected, warn, onPress }: {
   );
 }
 
-/** Underlined tabs, used for status filters and for the panes of a quiz. */
-export function Tabs({ tabs, value, onChange, big }: {
+/** Underlined tabs (status filters and the sections of a quiz or assignment). */
+export function Tabs({ tabs, value, onChange }: {
   tabs: { key: string; label: string; count?: number | null }[];
   value: string;
   onChange: (key: string) => void;
   big?: boolean;
 }) {
-  return (
-    <View style={[w.tabs, big && w.tabsBig]}>
-      {tabs.map((t) => (
-        <Pressable key={t.key} onPress={() => onChange(t.key)} accessibilityRole="button" style={({ pressed }) => [pressed && { opacity: 0.8 }]}>
-          <View style={[w.tab, big && w.tabBig, value === t.key && w.tabOn]}>
-            <Text style={[big ? w.tabTextBig : w.tabText, value === t.key && { color: colors.primary }]}>
-              {t.label}
-              {t.count !== undefined && t.count !== null ? <Text style={w.tabCount}>  {t.count}</Text> : null}
-            </Text>
-          </View>
-        </Pressable>
-      ))}
-    </View>
-  );
+  return <PageTabs tabs={tabs.map((t) => ({ key: t.key, label: t.label, count: t.count }))} value={value} onChange={onChange} />;
 }
 
 /** The right column. */
@@ -93,12 +81,9 @@ export function DetailPane({ children }: { children: React.ReactNode }) {
   return <View style={w.pane}>{children}</View>;
 }
 
+/** The body of a quiz or assignment page; the page itself scrolls. */
 export function PaneScroll({ children }: { children: React.ReactNode }) {
-  return (
-    <ScrollView style={scrollFix} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl, gap: space.md }} keyboardShouldPersistTaps="handled">
-      {children}
-    </ScrollView>
-  );
+  return <View style={{ gap: 16 }}>{children}</View>;
 }
 
 /** A bordered table of label-and-control rows: the house style for settings. */
@@ -125,12 +110,7 @@ export function Hint({ children }: { children: React.ReactNode }) {
 
 /** A one-line strip above the content, for the thing that needs doing. */
 export function Strip({ text, tone = "warning", action }: { text: string; tone?: "warning" | "info"; action?: React.ReactNode }) {
-  return (
-    <View style={[w.strip, { borderLeftColor: tone === "info" ? colors.accent : colors.warning }]}>
-      <Text style={w.stripText}>{text}</Text>
-      {action}
-    </View>
-  );
+  return <Notice tone={tone} message={text} action={action} />;
 }
 
 /** The bar pinned to the bottom of the right pane. */
@@ -161,8 +141,8 @@ export const w = StyleSheet.create({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm },
   listTitle: { fontSize: 15, fontWeight: "700", color: colors.text },
   listMeta: { fontSize: 12, color: colors.faint, lineHeight: 17 },
-  item: { padding: 11, borderRadius: radiusSm, borderWidth: 1, borderColor: "transparent", marginBottom: 1 },
-  itemOn: { backgroundColor: colors.tealTint, borderColor: `${colors.primary}33` },
+  item: { padding: 11, borderRadius: 7, borderWidth: 1, borderColor: "transparent", marginBottom: 2 },
+  itemOn: { backgroundColor: "#EAF2E6", borderColor: "#D8E6D3" },
   itemTitle: { fontSize: 14, color: colors.text },
   itemMeta: { fontSize: 12, color: colors.faint, marginTop: 3 },
   tabs: { flexDirection: "row", gap: space.lg, flexWrap: "wrap" },
@@ -174,16 +154,16 @@ export const w = StyleSheet.create({
   tabTextBig: { fontSize: 14, color: colors.muted, fontWeight: "600" },
   tabCount: { fontSize: 12, color: colors.faint, fontWeight: "400" },
   pane: { flex: 1, minWidth: 0, minHeight: 0 },
-  rows: { borderWidth: 1, borderColor: colors.border, borderRadius: radius, overflow: "hidden" },
-  row: { flexDirection: "row", alignItems: "center", gap: space.lg, paddingVertical: 11, paddingHorizontal: space.md, borderBottomWidth: 1, borderColor: colors.border },
-  rowLabel: { width: 170, fontSize: 13.5, color: colors.muted },
+  rows: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, overflow: "hidden", backgroundColor: "#FFFFFF" },
+  row: { flexDirection: "row", alignItems: "center", gap: space.lg, paddingVertical: 13, paddingHorizontal: 18, borderBottomWidth: 1, borderColor: colors.rowLine, flexWrap: "wrap" },
+  rowLabel: { width: 180, fontSize: 12, color: colors.ink, fontWeight: "600" },
   rowValue: { flex: 1, flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap", minWidth: 0 },
-  section: { fontSize: 12.5, color: colors.muted, fontWeight: "600" },
-  hint: { fontSize: 12.5, color: colors.faint, lineHeight: 18 },
+  section: { fontSize: 15, color: colors.ink, fontWeight: "600", marginTop: 6 },
+  hint: { fontSize: 11, color: colors.muted, lineHeight: 17 },
   strip: { flexDirection: "row", alignItems: "center", gap: space.md, flexWrap: "wrap", padding: space.md, borderRadius: radiusSm, backgroundColor: colors.surface2, borderLeftWidth: 3 },
   stripText: { flex: 1, minWidth: 200, fontSize: 13.5, color: colors.muted },
-  foot: { flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap", paddingVertical: 13, paddingHorizontal: space.lg, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  footState: { fontSize: 12.5, color: colors.faint },
+  foot: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap", paddingVertical: 13, paddingHorizontal: 18, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: "#FFFFFFF2", marginTop: 8 },
+  footState: { fontSize: 12, color: colors.muted },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: space.xxl, gap: space.sm },
   emptyTitle: { fontSize: 17, fontWeight: "700", color: colors.text },
   emptyText: { fontSize: 14, color: colors.faint, textAlign: "center", maxWidth: 340, lineHeight: 20 },

@@ -33,7 +33,7 @@ def student_visible(student):
             .exclude(available_from__gt=now).select_related("subject", "module", "chapter").distinct())
 
 
-OPTION_FIELDS = ("available_from", "due_at", "allow_late", "allow_resubmission", "results_release", "results_release_at")
+OPTION_FIELDS = ("available_from", "due_at", "allow_late", "allow_resubmission", "max_attempts", "results_release", "results_release_at")
 
 
 def _require_manage(actor, subject):
@@ -166,8 +166,13 @@ def update(actor, a, request=None, **fields):
     max_score = fields.get("max_score", a.max_score)
     for key in ("title", "description", "instructions", "max_score", "available_from", "due_at", "allow_late",
                 "allow_resubmission", "results_release", "results_release_at"):
-        if key in fields and fields[key] is not None and fields[key] != getattr(a, key):
-            setattr(a, key, fields[key]); changes[key] = True
+        if key not in fields or fields[key] == getattr(a, key):
+            continue
+        if fields[key] is None and key not in ("available_from", "due_at", "results_release_at"):
+            continue  # null clears dates; other fields keep their value
+        setattr(a, key, fields[key]); changes[key] = True
+    if "max_attempts" in fields and fields["max_attempts"] != a.max_attempts:
+        a.max_attempts = fields["max_attempts"]; changes["max_attempts"] = True
     if "rubric" in fields and fields["rubric"] is not None:
         a.rubric = _normalize_rubric(fields["rubric"], max_score); changes["rubric"] = True
     if changes:
@@ -228,6 +233,8 @@ def submit(student, assignment_id, content, time_spent_seconds=0, request=None):
     existing = AssignmentSubmission.objects.filter(assignment=a, student=student).count()
     if existing and not a.allow_resubmission:
         raise Conflict("You have already submitted this assignment.", code="ALREADY_SUBMITTED")
+    if existing and a.max_attempts and existing >= a.max_attempts:
+        raise Conflict(f"You have used all {a.max_attempts} submissions for this assignment.", code="ATTEMPT_LIMIT")
     cap = settings.LOCALMIND["MAX_QUIZ_DURATION_HOURS"] * 3600
     sub = AssignmentSubmission.objects.create(assignment=a, student=student, attempt_number=existing + 1, content=content,
                                               is_late=late, time_spent_seconds=max(0, min(int(time_spent_seconds or 0), cap)))

@@ -1,68 +1,53 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { Pressable, PressableStateCallbackType, Text, View } from "react-native";
 import { BASE_URL } from "@/api/client";
-import { Gradient, bp, colors, space } from "@/ui";
-import { Brand } from "@/ui/Shell";
+import { clearSessionExpired, useSessionExpired } from "@/auth/sessionNotice";
+import { Button, Eyebrow, Notice, TileIcon, colors } from "@/ui";
+import { AuthLayout } from "@/ui/AuthLayout";
 
+type PressState = PressableStateCallbackType & { hovered?: boolean };
 const PORTALS = [
-  { href: "/login/student", title: "Student", blurb: "Learn from published books, take quizzes and submit assignments.", icon: "school-outline", color: colors.primary },
-  { href: "/login/faculty", title: "Faculty", blurb: "Upload books, open modules, set quizzes and evaluate work.", icon: "book-outline", color: colors.accent },
-  { href: "/login/admin", title: "Administrator", blurb: "Manage faculty, students, subjects and platform reports.", icon: "shield-half-outline", color: colors.purple },
+  { href: "/login/student", title: "I’m a student", text: "Read, learn, take quizzes, and see your progress.", icon: "school-outline" },
+  { href: "/login/faculty", title: "I’m faculty", text: "Organize books, create quizzes, and guide students.", icon: "book-outline" },
+  { href: "/login/admin", title: "I’m an administrator", text: "Manage people, subjects, and platform health.", icon: "shield-half-outline" },
 ] as const;
 
 export default function ChoosePortal() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const wide = width >= bp.desktop;
+  const expired = useSessionExpired();
+  if (expired) {
+    return (
+      <AuthLayout>
+        <TileIcon icon="lock-closed-outline" tone="amber" size={40} />
+        <Text style={{ fontSize: 28, fontWeight: "600", letterSpacing: -0.7, color: colors.ink }} accessibilityRole="header">Please sign in again.</Text>
+        <Text style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>Your session has ended. Sign in to continue using your workspace.</Text>
+        <Notice title="Your account is still there." message="Signing in again does not change your saved work on the server. Reading saved on this device stays available until you sign out." />
+        <Button title="Go to sign in" icon="arrow-forward" full onPress={clearSessionExpired} />
+      </AuthLayout>
+    );
+  }
   return (
-    <Gradient name="hero" direction="vertical" style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={[s.wrap, wide && s.wrapWide]}>
-          <View style={[s.hero, wide && { flex: 1, paddingRight: 48 }]}>
-            <Brand />
-            <Text style={s.title}>Learning that stays{"\n"}on your own machine.</Text>
-            <Text style={s.lead}>A private AI tutor grounded in your course books. Nothing leaves the classroom server.</Text>
-            <View style={s.pills}>
-              {["Local AI", "Role-based", "Offline-first"].map((t) => <View key={t} style={s.pill}><Text style={s.pillText}>{t}</Text></View>)}
+    <AuthLayout>
+      <Eyebrow>WELCOME TO LOCALMIND</Eyebrow>
+      <Text style={{ fontSize: 28, fontWeight: "600", letterSpacing: -0.7, color: colors.ink }} accessibilityRole="header">Let’s get you to the right place.</Text>
+      <Text style={{ fontSize: 13, color: colors.muted, marginBottom: 12 }}>Choose your role to continue.</Text>
+      {PORTALS.map((p) => (
+        <Pressable key={p.href} onPress={() => router.push(p.href)} accessibilityRole="link" accessibilityLabel={p.title}>
+          {(st: PressState) => (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 17, padding: 21, borderWidth: 1, borderColor: st.hovered ? "#A4C0A3" : colors.border, borderRadius: 12, backgroundColor: "#FFFFFF", transform: [{ translateX: st.hovered ? 3 : 0 }] }}>
+              <TileIcon icon={p.icon} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: "600", color: colors.ink }}>{p.title}</Text>
+                <Text style={{ fontSize: 12, color: colors.muted, marginTop: 3 }}>{p.text}</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={17} color={colors.muted} />
             </View>
-          </View>
-          <View style={[s.cards, wide && { width: 420 }]}>
-            <Text style={s.choose}>Choose your portal</Text>
-            {PORTALS.map((p) => (
-              <Pressable key={p.href} onPress={() => router.push(p.href)} style={({ pressed }) => [s.card, pressed && { borderColor: p.color, opacity: 0.9 }]}>
-                <View style={[s.cardIcon, { backgroundColor: `${p.color}22` }]}><Ionicons name={p.icon} size={22} color={p.color} /></View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={s.cardTitle}>{p.title}</Text>
-                  <Text style={s.cardBlurb}>{p.blurb}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.faint} />
-              </Pressable>
-            ))}
-            <Text style={s.server}>Server · {BASE_URL}</Text>
-          </View>
-        </View>
-      </SafeAreaView>
-    </Gradient>
+          )}
+        </Pressable>
+      ))}
+      <Text style={{ marginTop: 12, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.border, fontSize: 11, color: colors.muted, textAlign: "center" }}>Connected to {BASE_URL.replace(/^https?:\/\//, "")}</Text>
+    </AuthLayout>
   );
 }
-
-const s = StyleSheet.create({
-  wrap: { flex: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 32, gap: 28, maxWidth: 1040, width: "100%", alignSelf: "center" },
-  wrapWide: { flexDirection: "row", alignItems: "center", gap: 48, paddingHorizontal: 48 },
-  hero: { gap: 16 },
-  title: { color: colors.text, fontSize: 32, lineHeight: 38, fontWeight: "800", letterSpacing: -0.6, marginTop: 8 },
-  lead: { color: colors.muted, fontSize: 15, lineHeight: 22, maxWidth: 460 },
-  pills: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
-  pill: { borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: "rgba(255,255,255,0.03)" },
-  pillText: { color: colors.text, fontSize: 12, fontWeight: "600" },
-  cards: { gap: 12 },
-  choose: { color: colors.muted, fontSize: 12, fontWeight: "700", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 },
-  card: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 14, padding: 16 },
-  cardIcon: { width: 46, height: 46, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  cardTitle: { color: colors.text, fontSize: 16, fontWeight: "800" },
-  cardBlurb: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 2 },
-  server: { color: colors.faint, fontSize: 11, textAlign: "center", marginTop: space.sm },
-});
