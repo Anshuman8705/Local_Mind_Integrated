@@ -1,3 +1,17 @@
+# LocalMind V1
+
+This branch integrates **Private library**, simple admin/faculty book sharing and
+**Offline AI** into the existing classroom application. Students can import books,
+recognise scanned English PDFs locally, retain original tables/diagrams as source
+images, and generate private lessons, quizzes and doubts on their device.
+
+Start with [Integrated private study and scanned books](docs/INTEGRATED_PRIVATE_LIBRARY.md).
+The older `student-runtime/` and signed-package documentation describe the earlier
+architecture; they are not required for this integrated user flow. Native exports
+do not establish real-device installation, performance or model-quality acceptance.
+
+---
+
 # LocalMind Backend
 
 A role-based academic learning platform (backend plus an Expo client for iOS, Android and web): administrators manage people and subjects, faculty publish source material and author assessments, students learn from published modules with a source-grounded local AI tutor. Django 5.2, Django REST Framework, JWT authentication, PostgreSQL in production (SQLite for development), an embedded llama.cpp model (Qwen3 1.7B GGUF) for AI with graceful fallback when it is unavailable, and Ollama as an optional alternative provider.
